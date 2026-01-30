@@ -1,0 +1,6 @@
+{
+  "framework": "expo",
+  "buildCommand": "npx expo export:web",
+  "outputDirectory": "dist",
+  "cleanUrls": true
+}
