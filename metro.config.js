@@ -2,7 +2,7 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
-// Cette option permet de gérer correctement les fichiers de certaines bibliothèques comme Supabase
+// Supabase et certaines libs modernes utilisent l'extension .mjs
 config.resolver.sourceExts.push('mjs');
 
 module.exports = config;
