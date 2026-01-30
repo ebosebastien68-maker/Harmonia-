@@ -9,9 +9,8 @@ import {
   Dimensions,
   ImageBackground 
 } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router'; // Ajout de Stack ici
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { StatusBar } from 'expo-status-bar';
 
 const { width } = Dimensions.get('window');
@@ -19,7 +18,6 @@ const { width } = Dimensions.get('window');
 export default function LandingPage() {
   const router = useRouter();
 
-  // Fonction pour naviguer vers la connexion
   const navigateToLogin = () => {
     router.push('/login');
   };
@@ -28,18 +26,24 @@ export default function LandingPage() {
     <View style={styles.mainContainer}>
       <StatusBar style="dark" />
       
-      {/* ScrollView remplace le <body> pour permettre le défilement */}
+      {/* --- CONFIGURATION DU TITRE DE LA PAGE --- */}
+      <Stack.Screen 
+        options={{ 
+          title: 'Accueil-Harmonia', // Titre affiché dans l'onglet et l'entête
+          headerShown: false // On le cache car on a notre propre logo dans le Hero
+        }} 
+      />
+      
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         
         {/* --- HERO SECTION --- */}
-        {/* On utilise l'image 1.png en fond du haut */}
         <ImageBackground 
           source={require('../assets/1.png')} 
           style={styles.heroBackground}
-          imageStyle={{ opacity: 0.15 }} // Légère transparence pour le style
+          imageStyle={{ opacity: 0.15 }}
         >
           <View style={styles.heroContent}>
             <Text style={styles.logoText}>✨ HARMONIA</Text>
@@ -54,7 +58,7 @@ export default function LandingPage() {
 
             <TouchableOpacity onPress={navigateToLogin} activeOpacity={0.8}>
               <LinearGradient
-                colors={['#FF0080', '#FF8C00']} // Dégradé Rouge/Orange moderne
+                colors={['#FF0080', '#FF8C00']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.ctaButton}
@@ -97,7 +101,6 @@ export default function LandingPage() {
           </Text>
 
           <View style={styles.gridContainer}>
-            {/* Cartes des fonctionnalités */}
             <FeatureCard title="🎮 Gaming" desc="Tournois mondiaux" color={['#4facfe', '#00f2fe']} />
             <FeatureCard title="🎨 Arts" desc="Exposez votre génie" color={['#f093fb', '#f5576c']} />
             <FeatureCard title="💻 Tech" desc="Innovations futures" color={['#43e97b', '#38f9d7']} />
@@ -112,7 +115,7 @@ export default function LandingPage() {
 
           <TouchableOpacity onPress={navigateToLogin} style={{marginTop: 20}}>
             <LinearGradient
-              colors={['#11998e', '#38ef7d']} // Dégradé Vert
+              colors={['#11998e', '#38ef7d']}
               style={styles.ctaButtonSmall}
             >
               <Text style={styles.ctaTextSmall}>Participez aux Concours</Text>
@@ -149,7 +152,7 @@ export default function LandingPage() {
           
           <TouchableOpacity onPress={navigateToLogin} activeOpacity={0.8}>
             <LinearGradient
-              colors={['#00c6ff', '#0072ff']} // Dégradé Bleu
+              colors={['#00c6ff', '#0072ff']}
               style={[styles.ctaButton, { marginTop: 20 }]}
             >
               <Text style={styles.ctaText}>🌟 Inscrivez-Vous Maintenant</Text>
@@ -168,7 +171,6 @@ export default function LandingPage() {
   );
 }
 
-// Composant pour les petites cartes de la grille
 const FeatureCard = ({ title, desc, color }: { title: string, desc: string, color: string[] }) => (
   <View style={styles.featureCard}>
     <LinearGradient colors={color} style={styles.iconPlaceholder} />
@@ -178,200 +180,36 @@ const FeatureCard = ({ title, desc, color }: { title: string, desc: string, colo
 );
 
 const styles = StyleSheet.create({
-  // --- LAYOUT GLOBAL ---
-  mainContainer: {
-    flex: 1,
-    backgroundColor: '#F5F5F5', // BLANC CASSÉ demandé
-  },
-  scrollContent: {
-    paddingBottom: 40,
-  },
-
-  // --- HERO SECTION ---
-  heroBackground: {
-    width: width,
-    height: 500, // Hauteur de la zone d'intro
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  heroContent: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginTop: 60,
-  },
-  logoText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    letterSpacing: 2,
-    color: '#8A2BE2', // Violet Harmonia
-    marginBottom: 20,
-  },
-  heroTitle: {
-    fontSize: 36,
-    fontWeight: '800',
-    textAlign: 'center',
-    color: '#333',
-    lineHeight: 44,
-    marginBottom: 10,
-  },
-  heroSubtitle: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 30,
-    fontStyle: 'italic',
-  },
-  
-  // --- TEXTES COLORÉS ---
+  mainContainer: { flex: 1, backgroundColor: '#F5F5F5' },
+  scrollContent: { paddingBottom: 40 },
+  heroBackground: { width: width, height: 500, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  heroContent: { alignItems: 'center', paddingHorizontal: 20, marginTop: 60 },
+  logoText: { fontSize: 18, fontWeight: 'bold', letterSpacing: 2, color: '#8A2BE2', marginBottom: 20 },
+  heroTitle: { fontSize: 36, fontWeight: '800', textAlign: 'center', color: '#333', lineHeight: 44, marginBottom: 10 },
+  heroSubtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 30, fontStyle: 'italic' },
   textGradientBlue: { color: '#0072ff' },
   textGradientGreen: { color: '#11998e' },
   textGradientRed: { color: '#FF0080' },
   boldHighlight: { fontWeight: 'bold', color: '#333' },
-
-  // --- BOUTONS ---
-  ctaButton: {
-    paddingVertical: 15,
-    paddingHorizontal: 40,
-    borderRadius: 30,
-    shadowColor: '#FF0080',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  ctaText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-  },
-  ctaButtonSmall: {
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    borderRadius: 25,
-  },
-  ctaTextSmall: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-
-  // --- SECTIONS ---
-  sectionContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 40,
-  },
-  sectionTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  sectionTitleSmall: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-  },
-  paragraph: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#555',
-    marginBottom: 15,
-    textAlign: 'justify',
-  },
-  paragraphCenter: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#555',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-
-  // --- CARTES & IMAGES ---
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 15,
-    elevation: 2,
-  },
-  highlightCard: {
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(138,43,226,0.1)',
-  },
-  contentImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 15,
-    marginTop: 10,
-  },
-
-  // --- GRILLE ---
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  featureCard: {
-    width: '48%',
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  iconPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginBottom: 10,
-  },
-  featureTitle: {
-    fontWeight: 'bold',
-    fontSize: 16,
-    marginBottom: 5,
-    color: '#333',
-  },
-  featureDesc: {
-    fontSize: 12,
-    color: '#777',
-    textAlign: 'center',
-  },
-
-  // --- FIN & FOOTER ---
-  finalTitle: {
-    fontSize: 30,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 10,
-    color: '#333',
-  },
-  footer: {
-    backgroundColor: '#fff',
-    padding: 30,
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  footerText: {
-    fontWeight: 'bold',
-    color: '#8A2BE2',
-    marginBottom: 5,
-  },
-  footerSubText: {
-    color: '#999',
-    fontSize: 12,
-  },
+  ctaButton: { paddingVertical: 15, paddingHorizontal: 40, borderRadius: 30, elevation: 5 },
+  ctaText: { color: '#fff', fontSize: 18, fontWeight: 'bold', textTransform: 'uppercase' },
+  ctaButtonSmall: { paddingVertical: 12, paddingHorizontal: 30, borderRadius: 25 },
+  ctaTextSmall: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  sectionContainer: { paddingHorizontal: 20, marginBottom: 40 },
+  sectionTitle: { fontSize: 28, fontWeight: 'bold', color: '#333', marginBottom: 15, textAlign: 'center' },
+  sectionTitleSmall: { fontSize: 22, fontWeight: 'bold', color: '#333', marginBottom: 10 },
+  paragraph: { fontSize: 16, lineHeight: 24, color: '#555', marginBottom: 15, textAlign: 'justify' },
+  paragraphCenter: { fontSize: 16, lineHeight: 24, color: '#555', marginBottom: 20, textAlign: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 20, padding: 20, elevation: 2 },
+  highlightCard: { borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(138,43,226,0.1)' },
+  contentImage: { width: '100%', height: 200, borderRadius: 15, marginTop: 10 },
+  gridContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  featureCard: { width: '48%', backgroundColor: '#fff', borderRadius: 15, padding: 15, marginBottom: 15, alignItems: 'center', elevation: 2 },
+  iconPlaceholder: { width: 40, height: 40, borderRadius: 20, marginBottom: 10 },
+  featureTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 5, color: '#333' },
+  featureDesc: { fontSize: 12, color: '#777', textAlign: 'center' },
+  finalTitle: { fontSize: 30, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, color: '#333' },
+  footer: { backgroundColor: '#fff', padding: 30, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#eee' },
+  footerText: { fontWeight: 'bold', color: '#8A2BE2', marginBottom: 5 },
+  footerSubText: { color: '#999', fontSize: 12 },
 });
