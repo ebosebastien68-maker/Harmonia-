@@ -8,7 +8,7 @@ import {
   RefreshControl,
   Modal,
   Dimensions,
-  Platform, // Import ajouté
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,8 +28,15 @@ import Animated, {
 const { width } = Dimensions.get('window');
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 
-// Détection de la plateforme pour désactiver les animations lourdes sur le Web
+// --- CONFIGURATION WEB SAFE ---
 const isWeb = Platform.OS === 'web';
+
+// Sur Web, on utilise des composants View normaux pour éviter les crashs Reanimated
+// Sur Mobile, on garde Animated.View
+const AnimatedViewInfo = isWeb ? View : Animated.View;
+const AnimatedViewStory = isWeb ? View : Animated.View;
+const AnimatedViewPost = isWeb ? View : Animated.View;
+const AnimatedViewHeader = isWeb ? View : Animated.View;
 
 interface Story {
   id: string;
@@ -70,7 +77,16 @@ export default function ActuScreen() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
+  // Hooks Reanimated (On les laisse s'exécuter mais on ne les utilise pas sur le web)
   const headerOpacity = useSharedValue(1);
+
+  // Style animé safe : retourne un objet vide sur le web pour éviter l'erreur #310
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    if (isWeb) return {}; // Ne rien faire sur le web
+    return {
+      opacity: headerOpacity.value,
+    };
+  });
 
   useEffect(() => {
     loadFeedData();
@@ -107,25 +123,18 @@ export default function ActuScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (!isWeb) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await loadFeedData();
     setRefreshing(false);
   };
 
   const handleLongPress = (post: Post) => {
-    if (!isWeb) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSelectedPost(post);
   };
 
   const handleLike = async (postId: string) => {
-    if (!isWeb) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    // TODO: Implémenter like
+    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const formatTimeAgo = (dateString: string) => {
@@ -143,15 +152,10 @@ export default function ActuScreen() {
     return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
   };
 
-  // Sur Web, on garde l'opacité à 1 (statique) pour éviter les glitchs de rendu
-  const headerAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: isWeb ? 1 : headerOpacity.value,
-  }));
-
   return (
     <View style={styles.container}>
-      {/* Header Compact - SANS TITRE */}
-      <Animated.View style={headerAnimatedStyle}>
+      {/* Header : On utilise AnimatedViewHeader (qui est une View normale sur Web) */}
+      <AnimatedViewHeader style={isWeb ? undefined : headerAnimatedStyle}>
         <LinearGradient
           colors={['#8A2BE2', '#4B0082']}
           style={styles.header}
@@ -167,13 +171,12 @@ export default function ActuScreen() {
                 }}
               >
                 <Ionicons name="notifications-outline" size={24} color="#fff" />
-                <Animated.View 
+                <AnimatedViewInfo 
                   style={styles.notifBadge}
-                  // Désactiver l'animation d'entrée sur le Web
                   entering={isWeb ? undefined : FadeIn}
                 >
                   <Text style={styles.notifBadgeText}>5</Text>
-                </Animated.View>
+                </AnimatedViewInfo>
               </TouchableOpacity>
               <View style={styles.balanceContainer}>
                 <Ionicons name="wallet-outline" size={18} color="#FFD700" />
@@ -184,7 +187,7 @@ export default function ActuScreen() {
             </View>
           </View>
         </LinearGradient>
-      </Animated.View>
+      </AnimatedViewHeader>
 
       <ScrollView
         style={styles.scrollView}
@@ -193,8 +196,7 @@ export default function ActuScreen() {
         }
         showsVerticalScrollIndicator={false}
         onScroll={(e) => {
-          // Désactiver la logique de scroll animation sur le web
-          if (isWeb) return;
+          if (isWeb) return; // STRICTEMENT RIEN sur le web
           const offsetY = e.nativeEvent.contentOffset.y;
           headerOpacity.value = withTiming(offsetY > 50 ? 0.8 : 1);
         }}
@@ -214,9 +216,8 @@ export default function ActuScreen() {
               </View>
             ) : (
               stories.map((story, index) => (
-                <Animated.View
+                <AnimatedViewStory
                   key={story.id}
-                  // Animation uniquement sur Mobile
                   entering={isWeb ? undefined : SlideInRight.delay(index * 100)}
                 >
                   <TouchableOpacity 
@@ -251,7 +252,7 @@ export default function ActuScreen() {
                     </Text>
                     {story.isActive && <View style={styles.activeIndicator} />}
                   </TouchableOpacity>
-                </Animated.View>
+                </AnimatedViewStory>
               ))
             )}
           </ScrollView>
@@ -260,28 +261,25 @@ export default function ActuScreen() {
         {/* Posts Section */}
         <View style={styles.postsSection}>
           {posts.length === 0 ? (
-            <Animated.View 
+            <AnimatedViewPost 
               style={styles.emptyPosts}
-              // Animation uniquement sur Mobile
               entering={isWeb ? undefined : FadeIn.delay(300)}
             >
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
               <Text style={styles.emptyText}>Aucune publication</Text>
               <Text style={styles.emptySubtext}>Ajoutez des amis pour voir leurs publications !</Text>
-            </Animated.View>
+            </AnimatedViewPost>
           ) : (
             posts.map((post, index) => (
-              <Animated.View
+              <AnimatedViewPost
                 key={post.id}
-                // Animation uniquement sur Mobile
                 entering={isWeb ? undefined : FadeIn.delay(index * 100)}
               >
                 <TouchableOpacity
                   style={styles.postCard}
                   activeOpacity={0.95}
                   onLongPress={() => handleLongPress(post)}
-                  // Désactiver le délai du long press sur web pour éviter les conflits de clic droit
-                  delayLongPress={isWeb ? 500 : 500}
+                  delayLongPress={500}
                 >
                   {/* Post Header */}
                   <View style={styles.postHeader}>
@@ -342,13 +340,13 @@ export default function ActuScreen() {
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
-              </Animated.View>
+              </AnimatedViewPost>
             ))
           )}
         </View>
       </ScrollView>
 
-      {/* Modal Info Appui Long */}
+      {/* Modal Info */}
       {selectedPost && (
         <Modal
           visible={!!selectedPost}
@@ -361,9 +359,8 @@ export default function ActuScreen() {
             activeOpacity={1}
             onPress={() => setSelectedPost(null)}
           >
-            <Animated.View 
+            <AnimatedViewInfo 
               style={styles.modalContent}
-              // Animation uniquement sur Mobile. Sur Web, l'affichage est instantané (plus pro que rien du tout ou un crash)
               entering={isWeb ? undefined : withSpring}
             >
               <Text style={styles.modalTitle}>📊 Détails</Text>
@@ -389,7 +386,7 @@ export default function ActuScreen() {
               >
                 <Text style={styles.modalButtonText}>Fermer</Text>
               </TouchableOpacity>
-            </Animated.View>
+            </AnimatedViewInfo>
           </TouchableOpacity>
         </Modal>
       )}
@@ -425,6 +422,7 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     position: 'relative',
+    cursor: 'pointer',
   },
   notifBadge: {
     position: 'absolute',
@@ -475,7 +473,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 8,
     width: 70,
-    cursor: 'pointer', // Ajout curseur pour web
+    cursor: 'pointer',
   },
   storyBorder: {
     padding: 3,
@@ -544,7 +542,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    cursor: 'pointer', // Ajout curseur pour web
+    cursor: 'pointer',
   },
   postHeader: {
     flexDirection: 'row',
@@ -601,7 +599,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    cursor: 'pointer', // Ajout curseur pour web
+    cursor: 'pointer',
   },
   actionText: {
     fontSize: 12,
@@ -656,7 +654,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 10,
-    cursor: 'pointer', // Ajout curseur pour web
+    cursor: 'pointer',
   },
   modalButtonText: {
     color: '#fff',
