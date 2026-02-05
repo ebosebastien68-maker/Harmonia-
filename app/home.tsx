@@ -4,19 +4,14 @@ import {
   View,
   TouchableOpacity,
   Platform,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 
 // Import des écrans depuis app/
 import ActuScreen from './actu';
@@ -27,20 +22,11 @@ import ProfileScreen from './profile';
 
 type TabName = 'actu' | 'games' | 'messages' | 'friends' | 'profile';
 
-const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
-
 export default function HomePage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabName>('actu');
   const [userSession, setUserSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-
-  // Animations pour chaque tab
-  const actuScale = useSharedValue(1);
-  const gamesScale = useSharedValue(1);
-  const messagesScale = useSharedValue(1);
-  const friendsScale = useSharedValue(1);
-  const profileScale = useSharedValue(1);
 
   useEffect(() => {
     checkAuth();
@@ -66,27 +52,10 @@ export default function HomePage() {
   };
 
   const handleTabPress = (tab: TabName) => {
-    // Animation bounce
-    const scaleMap = {
-      actu: actuScale,
-      games: gamesScale,
-      messages: messagesScale,
-      friends: friendsScale,
-      profile: profileScale,
-    };
-
-    const scale = scaleMap[tab];
-    scale.value = withSpring(0.8, { damping: 10, stiffness: 200 }, () => {
-      scale.value = withSpring(1);
-    });
-
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     setActiveTab(tab);
-  };
-
-  const getAnimatedStyle = (scale: Animated.SharedValue<number>) => {
-    return useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }],
-    }));
   };
 
   const renderContent = () => {
@@ -109,19 +78,13 @@ export default function HomePage() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <Animated.View 
-          style={{
-            transform: [{ scale: withTiming(1.2, { duration: 1000 }) }]
-          }}
-        >
-          <Ionicons name="sync" size={40} color="#8A2BE2" />
-        </Animated.View>
+        <Ionicons name="sync" size={40} color="#8A2BE2" />
       </View>
     );
   }
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar style="light" />
 
       {/* Contenu principal */}
@@ -137,8 +100,8 @@ export default function HomePage() {
         >
           <View style={styles.tabs}>
             {/* Actu Tab */}
-            <AnimatedTouchable
-              style={[styles.tab, getAnimatedStyle(actuScale)]}
+            <TouchableOpacity
+              style={styles.tab}
               onPress={() => handleTabPress('actu')}
               activeOpacity={0.7}
             >
@@ -147,17 +110,12 @@ export default function HomePage() {
                 size={26}
                 color={activeTab === 'actu' ? '#FFD700' : '#E0D0FF'}
               />
-              {activeTab === 'actu' && (
-                <Animated.View 
-                  style={styles.activeIndicator}
-                  entering={withSpring}
-                />
-              )}
-            </AnimatedTouchable>
+              {activeTab === 'actu' && <View style={styles.activeIndicator} />}
+            </TouchableOpacity>
 
             {/* Games Tab */}
-            <AnimatedTouchable
-              style={[styles.tab, getAnimatedStyle(gamesScale)]}
+            <TouchableOpacity
+              style={styles.tab}
               onPress={() => handleTabPress('games')}
               activeOpacity={0.7}
             >
@@ -166,14 +124,12 @@ export default function HomePage() {
                 size={26}
                 color={activeTab === 'games' ? '#FFD700' : '#E0D0FF'}
               />
-              {activeTab === 'games' && (
-                <Animated.View style={styles.activeIndicator} />
-              )}
-            </AnimatedTouchable>
+              {activeTab === 'games' && <View style={styles.activeIndicator} />}
+            </TouchableOpacity>
 
             {/* Messages Tab */}
-            <AnimatedTouchable
-              style={[styles.tab, getAnimatedStyle(messagesScale)]}
+            <TouchableOpacity
+              style={styles.tab}
               onPress={() => handleTabPress('messages')}
               activeOpacity={0.7}
             >
@@ -182,22 +138,15 @@ export default function HomePage() {
                 size={26}
                 color={activeTab === 'messages' ? '#FFD700' : '#E0D0FF'}
               />
-              {activeTab === 'messages' && (
-                <Animated.View style={styles.activeIndicator} />
-              )}
+              {activeTab === 'messages' && <View style={styles.activeIndicator} />}
               <View style={styles.badge}>
-                <Animated.Text 
-                  style={styles.badgeText}
-                  entering={withSpring}
-                >
-                  3
-                </Animated.Text>
+                <Animated.Text style={styles.badgeText}>3</Animated.Text>
               </View>
-            </AnimatedTouchable>
+            </TouchableOpacity>
 
             {/* Friends Tab */}
-            <AnimatedTouchable
-              style={[styles.tab, getAnimatedStyle(friendsScale)]}
+            <TouchableOpacity
+              style={styles.tab}
               onPress={() => handleTabPress('friends')}
               activeOpacity={0.7}
             >
@@ -206,14 +155,12 @@ export default function HomePage() {
                 size={26}
                 color={activeTab === 'friends' ? '#FFD700' : '#E0D0FF'}
               />
-              {activeTab === 'friends' && (
-                <Animated.View style={styles.activeIndicator} />
-              )}
-            </AnimatedTouchable>
+              {activeTab === 'friends' && <View style={styles.activeIndicator} />}
+            </TouchableOpacity>
 
             {/* Profile Tab */}
-            <AnimatedTouchable
-              style={[styles.tab, getAnimatedStyle(profileScale)]}
+            <TouchableOpacity
+              style={styles.tab}
               onPress={() => handleTabPress('profile')}
               activeOpacity={0.7}
             >
@@ -222,14 +169,12 @@ export default function HomePage() {
                 size={26}
                 color={activeTab === 'profile' ? '#FFD700' : '#E0D0FF'}
               />
-              {activeTab === 'profile' && (
-                <Animated.View style={styles.activeIndicator} />
-              )}
-            </AnimatedTouchable>
+              {activeTab === 'profile' && <View style={styles.activeIndicator} />}
+            </TouchableOpacity>
           </View>
         </LinearGradient>
       </View>
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -261,6 +206,9 @@ const styles = StyleSheet.create({
       },
       android: {
         elevation: 12,
+      },
+      web: {
+        boxShadow: '0 -4px 8px rgba(0, 0, 0, 0.15)',
       },
     }),
   },
