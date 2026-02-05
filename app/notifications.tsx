@@ -6,11 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeIn, SlideInRight } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
 interface Notification {
@@ -70,7 +70,9 @@ export default function NotificationsPage() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     setTimeout(() => {
       setRefreshing(false);
     }, 1000);
@@ -94,7 +96,9 @@ export default function NotificationsPage() {
   };
 
   const markAsRead = (id: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     setNotifications(prev =>
       prev.map(notif =>
         notif.id === id ? { ...notif, read: true } : notif
@@ -106,7 +110,7 @@ export default function NotificationsPage() {
 
   return (
     <View style={styles.container}>
-      {/* Header Compact SANS TITRE */}
+      {/* Header Compact */}
       <LinearGradient
         colors={['#8A2BE2', '#4B0082']}
         style={styles.header}
@@ -115,7 +119,9 @@ export default function NotificationsPage() {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (Platform.OS !== 'web') {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }
               router.back();
             }}
           >
@@ -124,12 +130,9 @@ export default function NotificationsPage() {
           <Text style={styles.headerTitle}>Notifications</Text>
           <View style={styles.headerRight}>
             {unreadCount > 0 && (
-              <Animated.View 
-                style={styles.unreadBadge}
-                entering={FadeIn}
-              >
+              <View style={styles.unreadBadge}>
                 <Text style={styles.unreadText}>{unreadCount}</Text>
-              </Animated.View>
+              </View>
             )}
           </View>
         </View>
@@ -143,41 +146,34 @@ export default function NotificationsPage() {
         }
       >
         {notifications.length === 0 ? (
-          <Animated.View 
-            style={styles.emptyContainer}
-            entering={FadeIn}
-          >
+          <View style={styles.emptyContainer}>
             <Ionicons name="notifications-off-outline" size={80} color="#CCC" />
             <Text style={styles.emptyText}>Aucune notification</Text>
             <Text style={styles.emptySubtext}>Vous êtes à jour !</Text>
-          </Animated.View>
+          </View>
         ) : (
-          notifications.map((notif, index) => {
+          notifications.map((notif) => {
             const icon = getIcon(notif.type);
             return (
-              <Animated.View
+              <TouchableOpacity
                 key={notif.id}
-                entering={SlideInRight.delay(index * 50)}
+                style={[
+                  styles.notifCard,
+                  !notif.read && styles.notifCardUnread
+                ]}
+                onPress={() => markAsRead(notif.id)}
+                activeOpacity={0.7}
               >
-                <TouchableOpacity
-                  style={[
-                    styles.notifCard,
-                    !notif.read && styles.notifCardUnread
-                  ]}
-                  onPress={() => markAsRead(notif.id)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.iconContainer, { backgroundColor: `${icon.color}15` }]}>
-                    <Ionicons name={icon.name as any} size={24} color={icon.color} />
-                  </View>
-                  <View style={styles.notifContent}>
-                    <Text style={styles.notifTitle}>{notif.title}</Text>
-                    <Text style={styles.notifMessage}>{notif.message}</Text>
-                    <Text style={styles.notifTime}>{notif.time}</Text>
-                  </View>
-                  {!notif.read && <View style={styles.unreadDot} />}
-                </TouchableOpacity>
-              </Animated.View>
+                <View style={[styles.iconContainer, { backgroundColor: `${icon.color}15` }]}>
+                  <Ionicons name={icon.name as any} size={24} color={icon.color} />
+                </View>
+                <View style={styles.notifContent}>
+                  <Text style={styles.notifTitle}>{notif.title}</Text>
+                  <Text style={styles.notifMessage}>{notif.message}</Text>
+                  <Text style={styles.notifTime}>{notif.time}</Text>
+                </View>
+                {!notif.read && <View style={styles.unreadDot} />}
+              </TouchableOpacity>
             );
           })
         )}
