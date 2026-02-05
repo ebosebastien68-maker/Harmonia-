@@ -5,24 +5,17 @@ import {
   View,
   ScrollView,
   TouchableOpacity,
+  Image,
   RefreshControl,
   Modal,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  FadeIn,
-  SlideInRight,
-} from 'react-native-reanimated';
 
 const { width } = Dimensions.get('window');
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
@@ -66,8 +59,6 @@ export default function ActuScreen() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
-  const headerOpacity = useSharedValue(1);
-
   useEffect(() => {
     loadFeedData();
   }, []);
@@ -103,18 +94,24 @@ export default function ActuScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     await loadFeedData();
     setRefreshing(false);
   };
 
   const handleLongPress = (post: Post) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
     setSelectedPost(post);
   };
 
   const handleLike = async (postId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     // TODO: Implémenter like
   };
 
@@ -133,46 +130,39 @@ export default function ActuScreen() {
     return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
   };
 
-  const headerAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: headerOpacity.value,
-  }));
-
   return (
     <View style={styles.container}>
-      {/* Header Compact - SANS TITRE */}
-      <Animated.View style={headerAnimatedStyle}>
-        <LinearGradient
-          colors={['#8A2BE2', '#4B0082']}
-          style={styles.header}
-        >
-          <View style={styles.headerContent}>
-            <Text style={styles.logoText}>✨ HARMONIA</Text>
-            <View style={styles.headerRight}>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => {
+      {/* Header Compact */}
+      <LinearGradient
+        colors={['#8A2BE2', '#4B0082']}
+        style={styles.header}
+      >
+        <View style={styles.headerContent}>
+          <Text style={styles.logoText}>✨ HARMONIA</Text>
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.push('/notifications');
-                }}
-              >
-                <Ionicons name="notifications-outline" size={24} color="#fff" />
-                <Animated.View 
-                  style={styles.notifBadge}
-                  entering={FadeIn}
-                >
-                  <Text style={styles.notifBadgeText}>5</Text>
-                </Animated.View>
-              </TouchableOpacity>
-              <View style={styles.balanceContainer}>
-                <Ionicons name="wallet-outline" size={18} color="#FFD700" />
-                <Text style={styles.balanceText}>
-                  {userProfile?.solde_cfa?.toLocaleString() || '0'} CFA
-                </Text>
+                }
+                router.push('/notifications');
+              }}
+            >
+              <Ionicons name="notifications-outline" size={24} color="#fff" />
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>5</Text>
               </View>
+            </TouchableOpacity>
+            <View style={styles.balanceContainer}>
+              <Ionicons name="wallet-outline" size={18} color="#FFD700" />
+              <Text style={styles.balanceText}>
+                {userProfile?.solde_cfa?.toLocaleString() || '0'} CFA
+              </Text>
             </View>
           </View>
-        </LinearGradient>
-      </Animated.View>
+        </View>
+      </LinearGradient>
 
       <ScrollView
         style={styles.scrollView}
@@ -180,11 +170,6 @@ export default function ActuScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         showsVerticalScrollIndicator={false}
-        onScroll={(e) => {
-          const offsetY = e.nativeEvent.contentOffset.y;
-          headerOpacity.value = withTiming(offsetY > 50 ? 0.8 : 1);
-        }}
-        scrollEventThrottle={16}
       >
         {/* Stories Section */}
         <View style={styles.storiesSection}>
@@ -199,42 +184,40 @@ export default function ActuScreen() {
                 <Text style={styles.emptyText}>Aucun ami actif</Text>
               </View>
             ) : (
-              stories.map((story, index) => (
-                <Animated.View
+              stories.map((story) => (
+                <TouchableOpacity 
                   key={story.id}
-                  entering={SlideInRight.delay(index * 100)}
+                  style={styles.storyItem}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                  }}
                 >
-                  <TouchableOpacity 
-                    style={styles.storyItem}
-                    onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  <LinearGradient
+                    colors={story.isActive ? ['#FF0080', '#FFD700'] : ['#E0E0E0', '#E0E0E0']}
+                    style={styles.storyBorder}
                   >
-                    <LinearGradient
-                      colors={story.isActive ? ['#FF0080', '#FFD700'] : ['#E0E0E0', '#E0E0E0']}
-                      style={styles.storyBorder}
-                    >
-                      <View style={styles.storyAvatar}>
-                        {story.user.avatar_url ? (
-                          <Image
-                            source={{ uri: story.user.avatar_url }}
-                            style={styles.avatar}
-                            contentFit="cover"
-                            transition={300}
-                          />
-                        ) : (
-                          <View style={styles.avatarPlaceholder}>
-                            <Text style={styles.avatarText}>
-                              {getInitials(story.user.nom, story.user.prenom)}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    </LinearGradient>
-                    <Text style={styles.storyName} numberOfLines={1}>
-                      {story.user.prenom}
-                    </Text>
-                    {story.isActive && <View style={styles.activeIndicator} />}
-                  </TouchableOpacity>
-                </Animated.View>
+                    <View style={styles.storyAvatar}>
+                      {story.user.avatar_url ? (
+                        <Image
+                          source={{ uri: story.user.avatar_url }}
+                          style={styles.avatar}
+                        />
+                      ) : (
+                        <View style={styles.avatarPlaceholder}>
+                          <Text style={styles.avatarText}>
+                            {getInitials(story.user.nom, story.user.prenom)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </LinearGradient>
+                  <Text style={styles.storyName} numberOfLines={1}>
+                    {story.user.prenom}
+                  </Text>
+                  {story.isActive && <View style={styles.activeIndicator} />}
+                </TouchableOpacity>
               ))
             )}
           </ScrollView>
@@ -243,85 +226,76 @@ export default function ActuScreen() {
         {/* Posts Section */}
         <View style={styles.postsSection}>
           {posts.length === 0 ? (
-            <Animated.View 
-              style={styles.emptyPosts}
-              entering={FadeIn.delay(300)}
-            >
+            <View style={styles.emptyPosts}>
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
               <Text style={styles.emptyText}>Aucune publication</Text>
               <Text style={styles.emptySubtext}>Ajoutez des amis pour voir leurs publications !</Text>
-            </Animated.View>
+            </View>
           ) : (
-            posts.map((post, index) => (
-              <Animated.View
+            posts.map((post) => (
+              <TouchableOpacity
                 key={post.id}
-                entering={FadeIn.delay(index * 100)}
+                style={styles.postCard}
+                activeOpacity={0.95}
+                onLongPress={() => handleLongPress(post)}
               >
-                <TouchableOpacity
-                  style={styles.postCard}
-                  activeOpacity={0.95}
-                  onLongPress={() => handleLongPress(post)}
-                >
-                  {/* Post Header */}
-                  <View style={styles.postHeader}>
-                    <View style={styles.postAuthor}>
-                      {post.author.avatar_url ? (
-                        <Image
-                          source={{ uri: post.author.avatar_url }}
-                          style={styles.postAvatar}
-                          contentFit="cover"
-                          transition={300}
-                        />
-                      ) : (
-                        <View style={styles.postAvatarPlaceholder}>
-                          <Text style={styles.postAvatarText}>
-                            {getInitials(post.author.nom, post.author.prenom)}
-                          </Text>
-                        </View>
-                      )}
-                      <View>
-                        <Text style={styles.postAuthorName}>
-                          {post.author.prenom} {post.author.nom}
-                        </Text>
-                        <Text style={styles.postTime}>
-                          {formatTimeAgo(post.created_at)}
+                {/* Post Header */}
+                <View style={styles.postHeader}>
+                  <View style={styles.postAuthor}>
+                    {post.author.avatar_url ? (
+                      <Image
+                        source={{ uri: post.author.avatar_url }}
+                        style={styles.postAvatar}
+                      />
+                    ) : (
+                      <View style={styles.postAvatarPlaceholder}>
+                        <Text style={styles.postAvatarText}>
+                          {getInitials(post.author.nom, post.author.prenom)}
                         </Text>
                       </View>
+                    )}
+                    <View>
+                      <Text style={styles.postAuthorName}>
+                        {post.author.prenom} {post.author.nom}
+                      </Text>
+                      <Text style={styles.postTime}>
+                        {formatTimeAgo(post.created_at)}
+                      </Text>
                     </View>
-                    <TouchableOpacity>
-                      <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
-                    </TouchableOpacity>
                   </View>
+                  <TouchableOpacity>
+                    <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
 
-                  {/* Post Content */}
-                  <Text style={styles.postContent}>{post.content}</Text>
+                {/* Post Content */}
+                <Text style={styles.postContent}>{post.content}</Text>
 
-                  {/* Post Actions */}
-                  <View style={styles.postActions}>
-                    <TouchableOpacity 
-                      style={styles.actionButton}
-                      onPress={() => handleLike(post.id)}
-                    >
-                      <Ionicons name="heart-outline" size={22} color="#FF0080" />
-                      <Text style={styles.actionText}>{post.reactions.likes}</Text>
-                    </TouchableOpacity>
+                {/* Post Actions */}
+                <View style={styles.postActions}>
+                  <TouchableOpacity 
+                    style={styles.actionButton}
+                    onPress={() => handleLike(post.id)}
+                  >
+                    <Ionicons name="heart-outline" size={22} color="#FF0080" />
+                    <Text style={styles.actionText}>{post.reactions.likes}</Text>
+                  </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButton}>
-                      <Ionicons name="chatbubble-outline" size={20} color="#8A2BE2" />
-                      <Text style={styles.actionText}>{post.reactions.comments}</Text>
-                    </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionButton}>
+                    <Ionicons name="chatbubble-outline" size={20} color="#8A2BE2" />
+                    <Text style={styles.actionText}>{post.reactions.comments}</Text>
+                  </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButton}>
-                      <Ionicons name="repeat-outline" size={22} color="#10B981" />
-                      <Text style={styles.actionText}>{post.reactions.shares}</Text>
-                    </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionButton}>
+                    <Ionicons name="repeat-outline" size={22} color="#10B981" />
+                    <Text style={styles.actionText}>{post.reactions.shares}</Text>
+                  </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButton}>
-                      <Ionicons name="share-outline" size={20} color="#666" />
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-              </Animated.View>
+                  <TouchableOpacity style={styles.actionButton}>
+                    <Ionicons name="share-outline" size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
             ))
           )}
         </View>
@@ -340,10 +314,7 @@ export default function ActuScreen() {
             activeOpacity={1}
             onPress={() => setSelectedPost(null)}
           >
-            <Animated.View 
-              style={styles.modalContent}
-              entering={withSpring}
-            >
+            <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>📊 Détails</Text>
               <View style={styles.modalInfo}>
                 <Text style={styles.modalLabel}>Auteur :</Text>
@@ -367,7 +338,7 @@ export default function ActuScreen() {
               >
                 <Text style={styles.modalButtonText}>Fermer</Text>
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           </TouchableOpacity>
         </Modal>
       )}
