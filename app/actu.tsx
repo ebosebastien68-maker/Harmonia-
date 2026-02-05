@@ -8,7 +8,6 @@ import {
   RefreshControl,
   Modal,
   Dimensions,
-  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,16 +26,6 @@ import Animated, {
 
 const { width } = Dimensions.get('window');
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
-
-// --- CONFIGURATION WEB SAFE ---
-const isWeb = Platform.OS === 'web';
-
-// Sur Web, on utilise des composants View normaux pour éviter les crashs Reanimated
-// Sur Mobile, on garde Animated.View
-const AnimatedViewInfo = isWeb ? View : Animated.View;
-const AnimatedViewStory = isWeb ? View : Animated.View;
-const AnimatedViewPost = isWeb ? View : Animated.View;
-const AnimatedViewHeader = isWeb ? View : Animated.View;
 
 interface Story {
   id: string;
@@ -77,16 +66,7 @@ export default function ActuScreen() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
-  // Hooks Reanimated (On les laisse s'exécuter mais on ne les utilise pas sur le web)
   const headerOpacity = useSharedValue(1);
-
-  // Style animé safe : retourne un objet vide sur le web pour éviter l'erreur #310
-  const headerAnimatedStyle = useAnimatedStyle(() => {
-    if (isWeb) return {}; // Ne rien faire sur le web
-    return {
-      opacity: headerOpacity.value,
-    };
-  });
 
   useEffect(() => {
     loadFeedData();
@@ -123,18 +103,19 @@ export default function ActuScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await loadFeedData();
     setRefreshing(false);
   };
 
   const handleLongPress = (post: Post) => {
-    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSelectedPost(post);
   };
 
   const handleLike = async (postId: string) => {
-    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // TODO: Implémenter like
   };
 
   const formatTimeAgo = (dateString: string) => {
@@ -152,10 +133,14 @@ export default function ActuScreen() {
     return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
   };
 
+  const headerAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: headerOpacity.value,
+  }));
+
   return (
     <View style={styles.container}>
-      {/* Header : On utilise AnimatedViewHeader (qui est une View normale sur Web) */}
-      <AnimatedViewHeader style={isWeb ? undefined : headerAnimatedStyle}>
+      {/* Header Compact - SANS TITRE */}
+      <Animated.View style={headerAnimatedStyle}>
         <LinearGradient
           colors={['#8A2BE2', '#4B0082']}
           style={styles.header}
@@ -166,17 +151,17 @@ export default function ActuScreen() {
               <TouchableOpacity 
                 style={styles.headerButton}
                 onPress={() => {
-                  if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   router.push('/notifications');
                 }}
               >
                 <Ionicons name="notifications-outline" size={24} color="#fff" />
-                <AnimatedViewInfo 
+                <Animated.View 
                   style={styles.notifBadge}
-                  entering={isWeb ? undefined : FadeIn}
+                  entering={FadeIn}
                 >
                   <Text style={styles.notifBadgeText}>5</Text>
-                </AnimatedViewInfo>
+                </Animated.View>
               </TouchableOpacity>
               <View style={styles.balanceContainer}>
                 <Ionicons name="wallet-outline" size={18} color="#FFD700" />
@@ -187,7 +172,7 @@ export default function ActuScreen() {
             </View>
           </View>
         </LinearGradient>
-      </AnimatedViewHeader>
+      </Animated.View>
 
       <ScrollView
         style={styles.scrollView}
@@ -196,7 +181,6 @@ export default function ActuScreen() {
         }
         showsVerticalScrollIndicator={false}
         onScroll={(e) => {
-          if (isWeb) return; // STRICTEMENT RIEN sur le web
           const offsetY = e.nativeEvent.contentOffset.y;
           headerOpacity.value = withTiming(offsetY > 50 ? 0.8 : 1);
         }}
@@ -216,15 +200,13 @@ export default function ActuScreen() {
               </View>
             ) : (
               stories.map((story, index) => (
-                <AnimatedViewStory
+                <Animated.View
                   key={story.id}
-                  entering={isWeb ? undefined : SlideInRight.delay(index * 100)}
+                  entering={SlideInRight.delay(index * 100)}
                 >
                   <TouchableOpacity 
                     style={styles.storyItem}
-                    onPress={() => {
-                        if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
+                    onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
                   >
                     <LinearGradient
                       colors={story.isActive ? ['#FF0080', '#FFD700'] : ['#E0E0E0', '#E0E0E0']}
@@ -252,7 +234,7 @@ export default function ActuScreen() {
                     </Text>
                     {story.isActive && <View style={styles.activeIndicator} />}
                   </TouchableOpacity>
-                </AnimatedViewStory>
+                </Animated.View>
               ))
             )}
           </ScrollView>
@@ -261,25 +243,24 @@ export default function ActuScreen() {
         {/* Posts Section */}
         <View style={styles.postsSection}>
           {posts.length === 0 ? (
-            <AnimatedViewPost 
+            <Animated.View 
               style={styles.emptyPosts}
-              entering={isWeb ? undefined : FadeIn.delay(300)}
+              entering={FadeIn.delay(300)}
             >
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
               <Text style={styles.emptyText}>Aucune publication</Text>
               <Text style={styles.emptySubtext}>Ajoutez des amis pour voir leurs publications !</Text>
-            </AnimatedViewPost>
+            </Animated.View>
           ) : (
             posts.map((post, index) => (
-              <AnimatedViewPost
+              <Animated.View
                 key={post.id}
-                entering={isWeb ? undefined : FadeIn.delay(index * 100)}
+                entering={FadeIn.delay(index * 100)}
               >
                 <TouchableOpacity
                   style={styles.postCard}
                   activeOpacity={0.95}
                   onLongPress={() => handleLongPress(post)}
-                  delayLongPress={500}
                 >
                   {/* Post Header */}
                   <View style={styles.postHeader}>
@@ -340,13 +321,13 @@ export default function ActuScreen() {
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
-              </AnimatedViewPost>
+              </Animated.View>
             ))
           )}
         </View>
       </ScrollView>
 
-      {/* Modal Info */}
+      {/* Modal Info Appui Long */}
       {selectedPost && (
         <Modal
           visible={!!selectedPost}
@@ -359,9 +340,9 @@ export default function ActuScreen() {
             activeOpacity={1}
             onPress={() => setSelectedPost(null)}
           >
-            <AnimatedViewInfo 
+            <Animated.View 
               style={styles.modalContent}
-              entering={isWeb ? undefined : withSpring}
+              entering={withSpring}
             >
               <Text style={styles.modalTitle}>📊 Détails</Text>
               <View style={styles.modalInfo}>
@@ -386,7 +367,7 @@ export default function ActuScreen() {
               >
                 <Text style={styles.modalButtonText}>Fermer</Text>
               </TouchableOpacity>
-            </AnimatedViewInfo>
+            </Animated.View>
           </TouchableOpacity>
         </Modal>
       )}
@@ -422,7 +403,6 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     position: 'relative',
-    cursor: 'pointer',
   },
   notifBadge: {
     position: 'absolute',
@@ -473,7 +453,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 8,
     width: 70,
-    cursor: 'pointer',
   },
   storyBorder: {
     padding: 3,
@@ -542,7 +521,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    cursor: 'pointer',
   },
   postHeader: {
     flexDirection: 'row',
@@ -599,7 +577,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    cursor: 'pointer',
   },
   actionText: {
     fontSize: 12,
@@ -654,7 +631,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 10,
-    cursor: 'pointer',
   },
   modalButtonText: {
     color: '#fff',
