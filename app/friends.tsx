@@ -454,7 +454,6 @@ export default function FriendsScreen() {
           )}
           <View style={styles.userDetails}>
             <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
-            <Text style={styles.userRole}>{user.role}</Text>
           </View>
         </View>
         {showSendButton && (
@@ -487,7 +486,7 @@ export default function FriendsScreen() {
       }}
       scrollEventThrottle={400}
     >
-      <Text style={styles.sectionTitle}>Suggestions ({suggestions.length}/100)</Text>
+      <Text style={styles.sectionTitle}>Suggestions d'amis</Text>
       {loading && suggestions.length === 0 ? (
         <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
       ) : suggestions.length === 0 ? (
