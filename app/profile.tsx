@@ -1,17 +1,16 @@
 import React from 'react';
 import { StyleSheet, Text, View, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeIn } from 'react-native-reanimated';
 
 export default function ProfileScreen() {
   return (
     <View style={styles.container}>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <Animated.View entering={FadeIn} style={styles.iconContainer}>
+        <View style={styles.iconContainer}>
           <Ionicons name="person-outline" size={80} color="#8A2BE2" />
           <Text style={styles.title}>Profil</Text>
           <Text style={styles.subtitle}>À développer prochainement</Text>
-        </Animated.View>
+        </View>
       </ScrollView>
     </View>
   );
