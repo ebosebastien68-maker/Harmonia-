@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+names's' React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -14,7 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends';
+const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends-';
 const DEFAULT_AVATAR = 'https://ui-avatars.com/api/?background=8A2BE2&color=fff&name=';
 
 type Tab = 'discover' | 'requests' | 'groups';
