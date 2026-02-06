@@ -17,9 +17,7 @@ export default function RootLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: '#F5F5F5' }, // Ton blanc cassé
-        headerTintColor: '#000',
-        headerTitleStyle: { fontWeight: 'bold' },
+        headerShown: false, // 🔥 CACHE TOUS LES HEADERS DÉFINITIVEMENT
       }}
     />
   );
