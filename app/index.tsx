@@ -207,4 +207,3 @@ const styles = StyleSheet.create({
   footerText: { fontWeight: 'bold', color: '#8A2BE2', marginBottom: 5 },
   footerSubText: { color: '#999', fontSize: 12 },
 });
-              
