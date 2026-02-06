@@ -1,4 +1,4 @@
-names's' React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -7,24 +7,25 @@ import {
   TouchableOpacity,
   TextInput,
   Image,
-  ActivityIndicator,
   RefreshControl,
+  ActivityIndicator,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends-';
-const DEFAULT_AVATAR = 'https://ui-avatars.com/api/?background=8A2BE2&color=fff&name=';
+const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends';
 
-type Tab = 'discover' | 'requests' | 'groups';
-type RequestTab = 'received' | 'sent';
+type TabName = 'suggestions' | 'search' | 'requests' | 'groups';
 
 interface User {
   id: string;
   nom: string;
   prenom: string;
-  avatar_url?: string;
+  avatar_url: string | null;
+  role: string;
   created_at: string;
 }
 
@@ -32,97 +33,77 @@ interface FriendRequest {
   id: string;
   requester_id: string;
   receiver_id: string;
-  status: 'envoye' | 'recu' | 'accepte';
+  status: string;
   created_at: string;
-  requester?: User;
-  receiver?: User;
+  requester: User;
+  receiver: User;
 }
 
 interface Group {
   id: string;
   name: string;
-  description?: string;
+  description: string | null;
   created_by: string;
   created_at: string;
   member_count: number;
   is_member: boolean;
 }
 
-interface StatusMessage {
-  type: 'success' | 'error' | 'info';
-  text: string;
-  visible: boolean;
-}
-
 export default function FriendsScreen() {
-  const [activeTab, setActiveTab] = useState<Tab>('discover');
-  const [requestTab, setRequestTab] = useState<RequestTab>('received');
-  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabName>('suggestions');
   const [refreshing, setRefreshing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<StatusMessage>({
-    type: 'info',
-    text: '',
-    visible: false,
-  });
-
-  const [users, setUsers] = useState<User[]>([]);
-  const [usersPage, setUsersPage] = useState(1);
-  const [hasMoreUsers, setHasMoreUsers] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
 
+  // Suggestions
+  const [suggestions, setSuggestions] = useState<User[]>([]);
+  const [suggestionsOffset, setSuggestionsOffset] = useState(0);
+  const [hasMoreSuggestions, setHasMoreSuggestions] = useState(true);
+
+  // Search
+  const [searchResults, setSearchResults] = useState<User[]>([]);
+
+  // Requests
   const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([]);
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
 
+  // Groups
   const [groups, setGroups] = useState<Group[]>([]);
-  const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
 
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    initUser();
-  }, []);
+  // Pending actions
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (currentUserId) {
-      loadInitialData();
+    loadInitialData();
+  }, [activeTab]);
+
+  const loadInitialData = async () => {
+    setLoading(true);
+    try {
+      switch (activeTab) {
+        case 'suggestions':
+          await loadSuggestions(0);
+          break;
+        case 'requests':
+          await loadRequests();
+          break;
+        case 'groups':
+          await loadGroups();
+          break;
+      }
+    } finally {
+      setLoading(false);
     }
-  }, [activeTab, currentUserId]);
+  };
 
-  useEffect(() => {
-    if (statusMessage.visible) {
-      const timer = setTimeout(() => {
-        setStatusMessage(prev => ({ ...prev, visible: false }));
-      }, 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [statusMessage.visible]);
-
-  const initUser = async () => {
+  const loadSuggestions = async (offset: number) => {
     try {
       const session = await AsyncStorage.getItem('harmonia_session');
-      if (session) {
-        const parsed = JSON.parse(session);
-        setCurrentUserId(parsed.user.id);
-      }
-    } catch (error) {
-      console.error('Error loading user:', error);
-    }
-  };
+      if (!session) return;
 
-  const showMessage = (type: 'success' | 'error' | 'info', text: string) => {
-    setStatusMessage({ type, text, visible: true });
-  };
+      const parsed = JSON.parse(session);
 
-  // ⚡ APPEL API ULTRA-SIMPLIFIÉ (pas de JWT, juste user_id dans body)
-  const apiCall = async (action: string, data: any = {}) => {
-    if (!currentUserId) {
-      showMessage('error', 'Non authentifié');
-      return null;
-    }
-
-    try {
       const response = await fetch(API_BASE, {
         method: 'POST',
         headers: {
@@ -130,210 +111,359 @@ export default function FriendsScreen() {
           'Origin': 'https://harmonia-world.vercel.app',
         },
         body: JSON.stringify({
-          action,
-          user_id: currentUserId,
-          ...data,
+          action: 'get-suggestions',
+          user_id: parsed.user.id,
+          offset: offset,
+          limit: 20,
         }),
       });
 
-      const result = await response.json();
+      const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Erreur réseau');
+      if (data.success && data.users) {
+        if (offset === 0) {
+          setSuggestions(data.users);
+        } else {
+          setSuggestions(prev => [...prev, ...data.users]);
+        }
+        setSuggestionsOffset(offset);
+        setHasMoreSuggestions(data.users.length === 20);
       }
-
-      return result;
-    } catch (error: any) {
-      console.error(`API Error (${action}):`, error);
-      showMessage('error', error.message || 'Erreur de connexion');
-      return null;
+    } catch (error) {
+      console.error('Error loading suggestions:', error);
     }
   };
 
-  const loadInitialData = async () => {
-    if (activeTab === 'discover') {
-      await loadUsers(1);
-    } else if (activeTab === 'requests') {
-      await loadRequests();
-    } else if (activeTab === 'groups') {
-      await loadGroups();
-    }
+  const loadMoreSuggestions = async () => {
+    if (!hasMoreSuggestions || loadingMore) return;
+
+    setLoadingMore(true);
+    await loadSuggestions(suggestionsOffset + 20);
+    setLoadingMore(false);
   };
 
-  const loadUsers = async (page: number, append: boolean = false) => {
-    if (loading) return;
-
-    setLoading(true);
-    const result = await apiCall('list_users', { page, limit: 20 });
-    setLoading(false);
-
-    if (result && result.users) {
-      if (append) {
-        setUsers(prev => [...prev, ...result.users]);
-      } else {
-        setUsers(result.users);
-      }
-      setUsersPage(page);
-      setHasMoreUsers(result.users.length === 20);
-    }
-  };
-
-  const loadMoreUsers = () => {
-    if (hasMoreUsers && !loading) {
-      loadUsers(usersPage + 1, true);
-    }
-  };
-
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query);
-
-    if (query.trim().length < 2) {
+  const searchUsers = async () => {
+    if (!searchQuery.trim()) {
       setSearchResults([]);
       return;
     }
 
-    setIsSearching(true);
-    const result = await apiCall('search_users', { query: query.trim() });
-    setIsSearching(false);
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
 
-    if (result && result.users) {
-      setSearchResults(result.users);
-    }
-  };
+      const parsed = JSON.parse(session);
 
-  const sendFriendRequest = async (receiverId: string) => {
-    if (processingIds.has(receiverId)) return;
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'search-users',
+          user_id: parsed.user.id,
+          query: searchQuery.trim(),
+        }),
+      });
 
-    setProcessingIds(prev => new Set(prev).add(receiverId));
-    const result = await apiCall('send_request', { receiver_id: receiverId });
-    setProcessingIds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(receiverId);
-      return newSet;
-    });
+      const data = await response.json();
 
-    if (result && result.success) {
-      showMessage('success', 'Invitation envoyée !');
-      await loadUsers(1);
+      if (data.success && data.users) {
+        setSearchResults(data.users);
+      }
+    } catch (error) {
+      console.error('Error searching users:', error);
     }
   };
 
   const loadRequests = async () => {
-    setLoading(true);
-    const result = await apiCall('list_requests');
-    setLoading(false);
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
 
-    if (result) {
-      setReceivedRequests(result.received || []);
-      setSentRequests(result.sent || []);
-    }
-  };
+      const parsed = JSON.parse(session);
 
-  const acceptRequest = async (requestId: string) => {
-    if (processingIds.has(requestId)) return;
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'get-requests',
+          user_id: parsed.user.id,
+        }),
+      });
 
-    setProcessingIds(prev => new Set(prev).add(requestId));
-    const result = await apiCall('accept_request', { request_id: requestId });
-    setProcessingIds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(requestId);
-      return newSet;
-    });
+      const data = await response.json();
 
-    if (result && result.success) {
-      showMessage('success', 'Invitation acceptée !');
-      await loadRequests();
-    }
-  };
-
-  const declineRequest = async (requestId: string) => {
-    if (processingIds.has(requestId)) return;
-
-    setProcessingIds(prev => new Set(prev).add(requestId));
-    const result = await apiCall('decline_request', { request_id: requestId });
-    setProcessingIds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(requestId);
-      return newSet;
-    });
-
-    if (result && result.success) {
-      showMessage('info', 'Invitation refusée');
-      await loadRequests();
-    }
-  };
-
-  const cancelRequest = async (requestId: string) => {
-    if (processingIds.has(requestId)) return;
-
-    setProcessingIds(prev => new Set(prev).add(requestId));
-    const result = await apiCall('cancel_request', { request_id: requestId });
-    setProcessingIds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(requestId);
-      return newSet;
-    });
-
-    if (result && result.success) {
-      showMessage('info', 'Invitation annulée');
-      await loadRequests();
+      if (data.success) {
+        setReceivedRequests(data.received || []);
+        setSentRequests(data.sent || []);
+      }
+    } catch (error) {
+      console.error('Error loading requests:', error);
     }
   };
 
   const loadGroups = async () => {
-    setLoading(true);
-    const result = await apiCall('list_groups');
-    setLoading(false);
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
 
-    if (result && result.groups) {
-      setGroups(result.groups);
+      const parsed = JSON.parse(session);
+
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'get-groups',
+          user_id: parsed.user.id,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.groups) {
+        setGroups(data.groups);
+      }
+    } catch (error) {
+      console.error('Error loading groups:', error);
+    }
+  };
+
+  const sendFriendRequest = async (targetUserId: string) => {
+    if (pendingActions.has(targetUserId)) return;
+
+    setPendingActions(prev => new Set(prev).add(targetUserId));
+
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
+
+      const parsed = JSON.parse(session);
+
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'send-request',
+          user_id: parsed.user.id,
+          target_user_id: targetUserId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        loadInitialData();
+      }
+    } catch (error) {
+      console.error('Error sending friend request:', error);
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev);
+        next.delete(targetUserId);
+        return next;
+      });
+    }
+  };
+
+  const acceptFriendRequest = async (requestId: string) => {
+    if (pendingActions.has(requestId)) return;
+
+    setPendingActions(prev => new Set(prev).add(requestId));
+
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
+
+      const parsed = JSON.parse(session);
+
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'accept-request',
+          user_id: parsed.user.id,
+          request_id: requestId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        loadRequests();
+      }
+    } catch (error) {
+      console.error('Error accepting request:', error);
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  };
+
+  const cancelRequest = async (requestId: string) => {
+    if (pendingActions.has(requestId)) return;
+
+    setPendingActions(prev => new Set(prev).add(requestId));
+
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
+
+      const parsed = JSON.parse(session);
+
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'cancel-request',
+          user_id: parsed.user.id,
+          request_id: requestId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        loadRequests();
+      }
+    } catch (error) {
+      console.error('Error canceling request:', error);
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev);
+        next.delete(requestId);
+        return next;
+      });
     }
   };
 
   const joinGroup = async (groupId: string) => {
-    if (processingIds.has(groupId)) return;
+    if (pendingActions.has(groupId)) return;
 
-    setProcessingIds(prev => new Set(prev).add(groupId));
-    const result = await apiCall('join_group', { group_id: groupId });
-    setProcessingIds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(groupId);
-      return newSet;
-    });
+    setPendingActions(prev => new Set(prev).add(groupId));
 
-    if (result && result.success) {
-      showMessage('success', 'Groupe rejoint !');
-      await loadGroups();
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (!session) return;
+
+      const parsed = JSON.parse(session);
+
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app',
+        },
+        body: JSON.stringify({
+          action: 'join-group',
+          user_id: parsed.user.id,
+          group_id: groupId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        loadGroups();
+      }
+    } catch (error) {
+      console.error('Error joining group:', error);
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev);
+        next.delete(groupId);
+        return next;
+      });
     }
   };
 
-  const onRefresh = useCallback(async () => {
+  const onRefresh = async () => {
     setRefreshing(true);
     await loadInitialData();
     setRefreshing(false);
-  }, [activeTab]);
-
-  const renderAvatar = (user: User) => {
-    const avatarUrl = user.avatar_url || `${DEFAULT_AVATAR}${user.prenom}+${user.nom}`;
-    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
   };
 
-  const renderUserCard = (user: User, showAction: boolean = true) => {
-    const isProcessing = processingIds.has(user.id);
+  const handleTabPress = (tab: TabName) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setActiveTab(tab);
+  };
+
+  const getInitials = (nom: string, prenom: string) => {
+    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
+  };
+
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'supreme': return '#FF0080';
+      case 'adminpro': return '#FFD700';
+      case 'admin': return '#8A2BE2';
+      case 'userpro': return '#10B981';
+      default: return '#999';
+    }
+  };
+
+  const renderUserCard = (user: User, showSendButton: boolean = true) => {
+    const isPending = pendingActions.has(user.id);
 
     return (
       <View key={user.id} style={styles.userCard}>
-        {renderAvatar(user)}
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
+          {user.avatar_url ? (
+            <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />
+          ) : (
+            <View style={[styles.userAvatarPlaceholder, { backgroundColor: getRoleColor(user.role) }]}>
+              <Text style={styles.userAvatarText}>{getInitials(user.nom, user.prenom)}</Text>
+            </View>
+          )}
+          <View style={styles.userDetails}>
+            <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
+            <Text style={styles.userRole}>{user.role}</Text>
+          </View>
         </View>
-        {showAction && (
+        {showSendButton && (
           <TouchableOpacity
+            style={[styles.sendButton, isPending && styles.sendButtonDisabled]}
             onPress={() => sendFriendRequest(user.id)}
-            disabled={isProcessing}
-            style={[styles.actionButton, isProcessing && styles.actionButtonDisabled]}
+            disabled={isPending}
           >
-            {isProcessing ? (
+            {isPending ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <Ionicons name="person-add" size={20} color="#fff" />
@@ -344,150 +474,285 @@ export default function FriendsScreen() {
     );
   };
 
-  const renderRequestCard = (request: FriendRequest, type: 'received' | 'sent') => {
-    const user = type === 'received' ? request.requester : request.receiver;
-    if (!user) return null;
-
-    const isProcessing = processingIds.has(request.id);
-
-    return (
-      <View key={request.id} style={styles.requestCard}>
-        {renderAvatar(user)}
-        <View style={styles.requestInfo}>
-          <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
-          <Text style={styles.requestDate}>
-            {new Date(request.created_at).toLocaleDateString('fr-FR')}
-          </Text>
+  const renderSuggestions = () => (
+    <ScrollView
+      style={styles.tabContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      onScroll={({ nativeEvent }) => {
+        const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+        const paddingToBottom = 20;
+        if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
+          loadMoreSuggestions();
+        }
+      }}
+      scrollEventThrottle={400}
+    >
+      <Text style={styles.sectionTitle}>Suggestions ({suggestions.length}/100)</Text>
+      {loading && suggestions.length === 0 ? (
+        <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
+      ) : suggestions.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="people-outline" size={60} color="#CCC" />
+          <Text style={styles.emptyText}>Aucune suggestion</Text>
         </View>
-        <View style={styles.requestActions}>
-          {type === 'received' ? (
-            <>
-              <TouchableOpacity
-                onPress={() => acceptRequest(request.id)}
-                disabled={isProcessing}
-                style={[styles.acceptButton, isProcessing && styles.actionButtonDisabled]}
-              >
-                {isProcessing ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name="checkmark" size={20} color="#fff" />
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => declineRequest(request.id)}
-                disabled={isProcessing}
-                style={[styles.declineButton, isProcessing && styles.actionButtonDisabled]}
-              >
-                <Ionicons name="close" size={20} color="#fff" />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              onPress={() => cancelRequest(request.id)}
-              disabled={isProcessing}
-              style={[styles.cancelButton, isProcessing && styles.actionButtonDisabled]}
-            >
-              {isProcessing ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Ionicons name="close" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
+      ) : (
+        <>
+          {suggestions.map(user => renderUserCard(user))}
+          {loadingMore && (
+            <ActivityIndicator size="small" color="#8A2BE2" style={styles.loaderMore} />
           )}
-        </View>
-      </View>
-    );
-  };
-
-  const renderGroupCard = (group: Group) => {
-    const isProcessing = processingIds.has(group.id);
-
-    return (
-      <View key={group.id} style={styles.groupCard}>
-        <View style={styles.groupIcon}>
-          <Ionicons name="people" size={32} color="#8A2BE2" />
-        </View>
-        <View style={styles.groupInfo}>
-          <Text style={styles.groupName}>{group.name}</Text>
-          {group.description && (
-            <Text style={styles.groupDescription} numberOfLines={2}>
-              {group.description}
-            </Text>
+          {!hasMoreSuggestions && suggestions.length >= 20 && (
+            <Text style={styles.endText}>Fin des suggestions</Text>
           )}
-          <Text style={styles.groupMembers}>
-            {group.member_count} membre{group.member_count > 1 ? 's' : ''}
-          </Text>
-        </View>
-        {!group.is_member && (
-          <TouchableOpacity
-            onPress={() => joinGroup(group.id)}
-            disabled={isProcessing}
-            style={[styles.joinButton, isProcessing && styles.actionButtonDisabled]}
-          >
-            {isProcessing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.joinButtonText}>Rejoindre</Text>
-            )}
+        </>
+      )}
+    </ScrollView>
+  );
+
+  const renderSearch = () => (
+    <View style={styles.tabContent}>
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Rechercher un utilisateur..."
+          placeholderTextColor="#999"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onSubmitEditing={searchUsers}
+          returnKeyType="search"
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+            <Ionicons name="close-circle" size={20} color="#999" />
           </TouchableOpacity>
         )}
-        {group.is_member && (
-          <View style={styles.memberBadge}>
-            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-          </View>
-        )}
       </View>
-    );
-  };
+      <TouchableOpacity style={styles.searchButton} onPress={searchUsers}>
+        <Text style={styles.searchButtonText}>Rechercher</Text>
+      </TouchableOpacity>
+      <ScrollView style={styles.searchResults}>
+        {searchResults.length === 0 && searchQuery.length > 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="search-outline" size={60} color="#CCC" />
+            <Text style={styles.emptyText}>Aucun résultat</Text>
+          </View>
+        ) : (
+          searchResults.map(user => renderUserCard(user))
+        )}
+      </ScrollView>
+    </View>
+  );
+
+  const renderRequests = () => (
+    <ScrollView
+      style={styles.tabContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      {/* Demandes reçues */}
+      <Text style={styles.sectionTitle}>Demandes reçues ({receivedRequests.length})</Text>
+      {receivedRequests.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="mail-outline" size={60} color="#CCC" />
+          <Text style={styles.emptyText}>Aucune demande reçue</Text>
+        </View>
+      ) : (
+        receivedRequests.map(req => {
+          const isPending = pendingActions.has(req.id);
+          return (
+            <View key={req.id} style={styles.requestCard}>
+              <View style={styles.userInfo}>
+                {req.requester.avatar_url ? (
+                  <Image source={{ uri: req.requester.avatar_url }} style={styles.userAvatar} />
+                ) : (
+                  <View style={styles.userAvatarPlaceholder}>
+                    <Text style={styles.userAvatarText}>
+                      {getInitials(req.requester.nom, req.requester.prenom)}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.userDetails}>
+                  <Text style={styles.userName}>
+                    {req.requester.prenom} {req.requester.nom}
+                  </Text>
+                  <Text style={styles.requestTime}>
+                    {new Date(req.created_at).toLocaleDateString()}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.requestActions}>
+                <TouchableOpacity
+                  style={[styles.acceptButton, isPending && styles.buttonDisabled]}
+                  onPress={() => acceptFriendRequest(req.id)}
+                  disabled={isPending}
+                >
+                  <Ionicons name="checkmark" size={20} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.rejectButton, isPending && styles.buttonDisabled]}
+                  onPress={() => cancelRequest(req.id)}
+                  disabled={isPending}
+                >
+                  <Ionicons name="close" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })
+      )}
+
+      {/* Demandes envoyées */}
+      <Text style={styles.sectionTitle}>Demandes envoyées ({sentRequests.length})</Text>
+      {sentRequests.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="paper-plane-outline" size={60} color="#CCC" />
+          <Text style={styles.emptyText}>Aucune demande envoyée</Text>
+        </View>
+      ) : (
+        sentRequests.map(req => {
+          const isPending = pendingActions.has(req.id);
+          return (
+            <View key={req.id} style={styles.sentCard}>
+              <View style={styles.userInfo}>
+                {req.receiver.avatar_url ? (
+                  <Image source={{ uri: req.receiver.avatar_url }} style={styles.userAvatar} />
+                ) : (
+                  <View style={styles.userAvatarPlaceholder}>
+                    <Text style={styles.userAvatarText}>
+                      {getInitials(req.receiver.nom, req.receiver.prenom)}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.userDetails}>
+                  <Text style={styles.userName}>
+                    {req.receiver.prenom} {req.receiver.nom}
+                  </Text>
+                  <Text style={styles.requestTime}>En attente...</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.cancelButton, isPending && styles.buttonDisabled]}
+                onPress={() => cancelRequest(req.id)}
+                disabled={isPending}
+              >
+                <Text style={styles.cancelButtonText}>Annuler</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })
+      )}
+    </ScrollView>
+  );
+
+  const renderGroups = () => (
+    <ScrollView
+      style={styles.tabContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      <Text style={styles.sectionTitle}>Groupes Messenger ({groups.length})</Text>
+      {loading ? (
+        <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
+      ) : groups.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
+          <Text style={styles.emptyText}>Aucun groupe</Text>
+        </View>
+      ) : (
+        groups.map(group => {
+          const isPending = pendingActions.has(group.id);
+          return (
+            <View key={group.id} style={styles.groupCard}>
+              <View style={styles.groupIcon}>
+                <Ionicons name="people" size={30} color="#8A2BE2" />
+              </View>
+              <View style={styles.groupInfo}>
+                <Text style={styles.groupName}>{group.name}</Text>
+                {group.description && (
+                  <Text style={styles.groupDescription} numberOfLines={2}>
+                    {group.description}
+                  </Text>
+                )}
+                <Text style={styles.groupMembers}>
+                  {group.member_count} membre{group.member_count > 1 ? 's' : ''}
+                </Text>
+              </View>
+              {!group.is_member && (
+                <TouchableOpacity
+                  style={[styles.joinButton, isPending && styles.buttonDisabled]}
+                  onPress={() => joinGroup(group.id)}
+                  disabled={isPending}
+                >
+                  {isPending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.joinButtonText}>Rejoindre</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              {group.is_member && (
+                <View style={styles.memberBadge}>
+                  <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+                </View>
+              )}
+            </View>
+          );
+        })
+      )}
+    </ScrollView>
+  );
 
   return (
     <View style={styles.container}>
-      {statusMessage.visible && (
-        <View style={[styles.statusMessage, styles[`statusMessage${statusMessage.type.charAt(0).toUpperCase() + statusMessage.type.slice(1)}` as keyof typeof styles]]}>
-          <Ionicons
-            name={
-              statusMessage.type === 'success' ? 'checkmark-circle' :
-              statusMessage.type === 'error' ? 'close-circle' :
-              'information-circle'
-            }
-            size={20}
-            color="#fff"
-            style={styles.statusIcon}
-          />
-          <Text style={styles.statusText}>{statusMessage.text}</Text>
-        </View>
-      )}
+      {/* Header */}
+      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
+        <Text style={styles.headerTitle}>Amis & Groupes</Text>
+      </LinearGradient>
 
+      {/* Tabs */}
       <View style={styles.tabs}>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'discover' && styles.tabActive]}
-          onPress={() => setActiveTab('discover')}
+          style={[styles.tab, activeTab === 'suggestions' && styles.activeTab]}
+          onPress={() => handleTabPress('suggestions')}
         >
           <Ionicons
-            name="people-outline"
-            size={24}
-            color={activeTab === 'discover' ? '#8A2BE2' : '#999'}
+            name="people"
+            size={20}
+            color={activeTab === 'suggestions' ? '#8A2BE2' : '#999'}
           />
-          <Text style={[styles.tabText, activeTab === 'discover' && styles.tabTextActive]}>
-            Découvrir
+          <Text style={[styles.tabText, activeTab === 'suggestions' && styles.activeTabText]}>
+            Suggestions
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'requests' && styles.tabActive]}
-          onPress={() => setActiveTab('requests')}
+          style={[styles.tab, activeTab === 'search' && styles.activeTab]}
+          onPress={() => handleTabPress('search')}
         >
           <Ionicons
-            name="mail-outline"
-            size={24}
+            name="search"
+            size={20}
+            color={activeTab === 'search' ? '#8A2BE2' : '#999'}
+          />
+          <Text style={[styles.tabText, activeTab === 'search' && styles.activeTabText]}>
+            Recherche
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'requests' && styles.activeTab]}
+          onPress={() => handleTabPress('requests')}
+        >
+          <Ionicons
+            name="mail"
+            size={20}
             color={activeTab === 'requests' ? '#8A2BE2' : '#999'}
           />
-          <Text style={[styles.tabText, activeTab === 'requests' && styles.tabTextActive]}>
-            Invitations
+          <Text style={[styles.tabText, activeTab === 'requests' && styles.activeTabText]}>
+            Demandes
           </Text>
-          {(receivedRequests.length > 0 || sentRequests.length > 0) && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
+          {(receivedRequests.length + sentRequests.length) > 0 && (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>
                 {receivedRequests.length + sentRequests.length}
               </Text>
             </View>
@@ -495,253 +760,339 @@ export default function FriendsScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'groups' && styles.tabActive]}
-          onPress={() => setActiveTab('groups')}
+          style={[styles.tab, activeTab === 'groups' && styles.activeTab]}
+          onPress={() => handleTabPress('groups')}
         >
           <Ionicons
-            name="chatbubbles-outline"
-            size={24}
+            name="chatbubbles"
+            size={20}
             color={activeTab === 'groups' ? '#8A2BE2' : '#999'}
           />
-          <Text style={[styles.tabText, activeTab === 'groups' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, activeTab === 'groups' && styles.activeTabText]}>
             Groupes
           </Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        style={styles.content}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        {activeTab === 'discover' && (
-          <View style={styles.section}>
-            <View style={styles.searchBar}>
-              <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Rechercher un utilisateur..."
-                placeholderTextColor="#999"
-                value={searchQuery}
-                onChangeText={handleSearch}
-              />
-              {isSearching && <ActivityIndicator size="small" color="#8A2BE2" />}
-            </View>
-
-            {searchQuery.length >= 2 && (
-              <View style={styles.searchResults}>
-                <Text style={styles.sectionTitle}>
-                  {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''}
-                </Text>
-                {searchResults.map(user => renderUserCard(user))}
-              </View>
-            )}
-
-            {searchQuery.length < 2 && (
-              <>
-                <Text style={styles.sectionTitle}>Suggestions d'amis</Text>
-                {users.map(user => renderUserCard(user))}
-
-                {loading && <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />}
-
-                {hasMoreUsers && !loading && (
-                  <TouchableOpacity
-                    style={styles.loadMoreButton}
-                    onPress={loadMoreUsers}
-                  >
-                    <Text style={styles.loadMoreText}>Voir plus</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </View>
-        )}
-
-        {activeTab === 'requests' && (
-          <View style={styles.section}>
-            <View style={styles.subTabs}>
-              <TouchableOpacity
-                style={[styles.subTab, requestTab === 'received' && styles.subTabActive]}
-                onPress={() => setRequestTab('received')}
-              >
-                <Text style={[styles.subTabText, requestTab === 'received' && styles.subTabTextActive]}>
-                  Reçues ({receivedRequests.length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.subTab, requestTab === 'sent' && styles.subTabActive]}
-                onPress={() => setRequestTab('sent')}
-              >
-                <Text style={[styles.subTabText, requestTab === 'sent' && styles.subTabTextActive]}>
-                  Envoyées ({sentRequests.length})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {requestTab === 'received' && (
-              <>
-                {receivedRequests.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Ionicons name="mail-open-outline" size={64} color="#DDD" />
-                    <Text style={styles.emptyText}>Aucune invitation reçue</Text>
-                  </View>
-                ) : (
-                  receivedRequests.map(req => renderRequestCard(req, 'received'))
-                )}
-              </>
-            )}
-
-            {requestTab === 'sent' && (
-              <>
-                {sentRequests.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Ionicons name="paper-plane-outline" size={64} color="#DDD" />
-                    <Text style={styles.emptyText}>Aucune invitation envoyée</Text>
-                  </View>
-                ) : (
-                  sentRequests.map(req => renderRequestCard(req, 'sent'))
-                )}
-              </>
-            )}
-
-            {loading && <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />}
-          </View>
-        )}
-
-        {activeTab === 'groups' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Groupes Messenger</Text>
-            {loading ? (
-              <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
-            ) : groups.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="chatbubbles-outline" size={64} color="#DDD" />
-                <Text style={styles.emptyText}>Aucun groupe disponible</Text>
-              </View>
-            ) : (
-              groups.map(group => renderGroupCard(group))
-            )}
-          </View>
-        )}
-      </ScrollView>
+      {/* Content */}
+      {activeTab === 'suggestions' && renderSuggestions()}
+      {activeTab === 'search' && renderSearch()}
+      {activeTab === 'requests' && renderRequests()}
+      {activeTab === 'groups' && renderGroups()}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  statusMessage: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 10,
-    left: 20,
-    right: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    zIndex: 1000,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84 },
-      android: { elevation: 5 },
-      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
-    }),
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
   },
-  statusMessageSuccess: { backgroundColor: '#10B981' },
-  statusMessageError: { backgroundColor: '#EF4444' },
-  statusMessageInfo: { backgroundColor: '#3B82F6' },
-  statusIcon: { marginRight: 8 },
-  statusText: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
-  tabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E0E0E0', ...Platform.select({ ios: { paddingTop: 10 } }) },
-  tab: { flex: 1, flexDirection: 'column', alignItems: 'center', paddingVertical: 12, position: 'relative' },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: '#8A2BE2' },
-  tabText: { fontSize: 12, color: '#999', marginTop: 4 },
-  tabTextActive: { color: '#8A2BE2', fontWeight: '600' },
-  badge: { position: 'absolute', top: 5, right: 15, backgroundColor: '#EF4444', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  content: { flex: 1 },
-  section: { padding: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 16 },
-  searchBar: {
+  header: {
+    paddingTop: 50,
+    paddingBottom: 15,
+    paddingHorizontal: 20,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  tabs: {
     flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: Platform.OS === 'ios' ? 12 : 8,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
-  searchIcon: { marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 16, color: '#333' },
-  searchResults: { marginBottom: 20 },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    gap: 5,
+    position: 'relative',
+  },
+  activeTab: {
+    borderBottomWidth: 3,
+    borderBottomColor: '#8A2BE2',
+  },
+  tabText: {
+    fontSize: 12,
+    color: '#999',
+    fontWeight: '600',
+  },
+  activeTabText: {
+    color: '#8A2BE2',
+  },
+  tabBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 10,
+    backgroundColor: '#FF0080',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tabBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  tabContent: {
+    flex: 1,
+    paddingBottom: 100,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    padding: 15,
+    backgroundColor: '#F5F5F5',
+  },
   userCard: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: Platform.OS === 'ios' ? 12 : 8,
-    padding: 12,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-    }),
+    padding: 15,
+    marginHorizontal: 15,
+    marginVertical: 5,
+    borderRadius: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
-  avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#E0E0E0' },
-  userInfo: { flex: 1, marginLeft: 12 },
-  userName: { fontSize: 16, fontWeight: '600', color: '#333' },
-  actionButton: { backgroundColor: '#8A2BE2', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  actionButtonDisabled: { opacity: 0.5 },
-  requestCard: {
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  userAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+  },
+  userAvatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#8A2BE2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  userDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  userName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  userRole: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
+  },
+  sendButton: {
+    backgroundColor: '#8A2BE2',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    opacity: 0.5,
+  },
+  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: Platform.OS === 'ios' ? 12 : 8,
-    padding: 12,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-    }),
+    margin: 15,
+    paddingHorizontal: 15,
+    borderRadius: 25,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
-  requestInfo: { flex: 1, marginLeft: 12 },
-  requestDate: { fontSize: 12, color: '#999', marginTop: 4 },
-  requestActions: { flexDirection: 'row', gap: 8 },
-  acceptButton: { backgroundColor: '#10B981', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  declineButton: { backgroundColor: '#EF4444', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  cancelButton: { backgroundColor: '#999', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  subTabs: { flexDirection: 'row', marginBottom: 20, backgroundColor: '#fff', borderRadius: 12, padding: 4 },
-  subTab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-  subTabActive: { backgroundColor: '#8A2BE2' },
-  subTabText: { fontSize: 14, color: '#999', fontWeight: '500' },
-  subTabTextActive: { color: '#fff', fontWeight: '600' },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#333',
+  },
+  searchButton: {
+    backgroundColor: '#8A2BE2',
+    marginHorizontal: 15,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  searchButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  searchResults: {
+    flex: 1,
+    marginTop: 10,
+  },
+  requestCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 15,
+    marginHorizontal: 15,
+    marginVertical: 5,
+    borderRadius: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  requestTime: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 2,
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  acceptButton: {
+    backgroundColor: '#10B981',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rejectButton: {
+    backgroundColor: '#EF4444',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  sentCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFF8E1',
+    padding: 15,
+    marginHorizontal: 15,
+    marginVertical: 5,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FFD700',
+  },
+  cancelButton: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   groupCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: Platform.OS === 'ios' ? 12 : 8,
-    padding: 16,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-    }),
+    padding: 15,
+    marginHorizontal: 15,
+    marginVertical: 5,
+    borderRadius: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
-  groupIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#F0E6FF', justifyContent: 'center', alignItems: 'center' },
-  groupInfo: { flex: 1, marginLeft: 12 },
-  groupName: { fontSize: 16, fontWeight: '600', color: '#333' },
-  groupDescription: { fontSize: 14, color: '#666', marginTop: 4 },
-  groupMembers: { fontSize: 12, color: '#999', marginTop: 4 },
-  joinButton: { backgroundColor: '#8A2BE2', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-  joinButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  memberBadge: { padding: 8 },
-  emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  emptyText: { fontSize: 16, color: '#999', marginTop: 16 },
-  loader: { marginVertical: 20 },
-  loadMoreButton: { backgroundColor: '#8A2BE2', paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginTop: 16 },
-  loadMoreText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  groupIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#F0E6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  groupInfo: {
+    flex: 1,
+  },
+  groupName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  groupDescription: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 3,
+  },
+  groupMembers: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 3,
+  },
+  joinButton: {
+    backgroundColor: '#8A2BE2',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  joinButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  memberBadge: {
+    marginLeft: 10,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 10,
+  },
+  loader: {
+    marginTop: 50,
+  },
+  loaderMore: {
+    marginVertical: 20,
+  },
+  endText: {
+    textAlign: 'center',
+    color: '#999',
+    fontSize: 12,
+    paddingVertical: 20,
+  },
 });
