@@ -9,7 +9,7 @@ import {
   Dimensions,
   ImageBackground 
 } from 'react-native';
-import { useRouter, Stack } from 'expo-router'; // Ajout de Stack ici
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 
@@ -26,13 +26,7 @@ export default function LandingPage() {
     <View style={styles.mainContainer}>
       <StatusBar style="dark" />
       
-      {/* --- CONFIGURATION DU TITRE DE LA PAGE --- */}
-      <Stack.Screen 
-        options={{ 
-          title: 'Accueil-Harmonia', // Titre affiché dans l'onglet et l'entête
-          headerShown: false // On le cache car on a notre propre logo dans le Hero
-        }} 
-      />
+      {/* Header géré automatiquement par _layout.tsx - Plus besoin de Stack.Screen ici */}
       
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
@@ -213,3 +207,4 @@ const styles = StyleSheet.create({
   footerText: { fontWeight: 'bold', color: '#8A2BE2', marginBottom: 5 },
   footerSubText: { color: '#999', fontSize: 12 },
 });
+              
