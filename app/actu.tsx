@@ -140,17 +140,15 @@ export default function ActuScreen() {
         colors={['#8A2BE2', '#4B0082']}
         style={styles.header}
       >
-        {/* Ligne avec logo à gauche et boutons à droite */}
-        <View style={styles.headerRow}>
-          {/* Logo à gauche */}
-          <View style={styles.logoContainer}>
-            <HarmoniaLogo size={36} showText={true} />
-          </View>
+        {/* Logo plus haut (centré) */}
+        <View style={styles.logoRow}>
+          <HarmoniaLogo size={40} showText={true} />
+        </View>
 
-          {/* Boutons à droite */}
-          <View style={styles.headerRight}>
-            {/* Bouton Créer Publication */}
-            <TouchableOpacity 
+        {/* Boutons en dessous */}
+        <View style={styles.buttonsRow}>
+          {/* Bouton Créer Publication */}
+          <TouchableOpacity 
               style={styles.createButton}
               onPress={() => {
                 if (Platform.OS !== 'web') {
@@ -393,17 +391,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
   },
   header: {
-    paddingTop: 50,
+    paddingTop: 55,
     paddingBottom: 12,
     paddingHorizontal: 16,
   },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  logoRow: {
     alignItems: 'center',
+    marginBottom: 12,
   },
-  logoContainer: {
-    flex: 1,
+  buttonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
   },
   headerContent: {
     flexDirection: 'row',
