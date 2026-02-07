@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import HarmoniaLogo from '../components/HarmoniaLogo';
+import CreatePostModal from '../components/CreatePostModal';
 
 const { width } = Dimensions.get('window');
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
@@ -58,6 +60,7 @@ export default function ActuScreen() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     loadFeedData();
@@ -132,14 +135,37 @@ export default function ActuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header Compact */}
+      {/* Header Professionnel avec Logo */}
       <LinearGradient
         colors={['#8A2BE2', '#4B0082']}
         style={styles.header}
       >
         <View style={styles.headerContent}>
-          <Text style={styles.logoText}>✨ HARMONIA</Text>
+          {/* Logo Harmonia */}
+          <HarmoniaLogo size={32} showText={true} />
+          
           <View style={styles.headerRight}>
+            {/* Bouton Créer Publication */}
+            <TouchableOpacity 
+              style={styles.createButton}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                }
+                setShowCreateModal(true);
+              }}
+            >
+              <LinearGradient
+                colors={['#FFD700', '#FF0080']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.createButtonGradient}
+              >
+                <Ionicons name="add" size={22} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Bouton Notifications */}
             <TouchableOpacity 
               style={styles.headerButton}
               onPress={() => {
@@ -154,6 +180,8 @@ export default function ActuScreen() {
                 <Text style={styles.notifBadgeText}>5</Text>
               </View>
             </TouchableOpacity>
+
+            {/* Solde */}
             <View style={styles.balanceContainer}>
               <Ionicons name="wallet-outline" size={18} color="#FFD700" />
               <Text style={styles.balanceText}>
@@ -342,6 +370,15 @@ export default function ActuScreen() {
           </TouchableOpacity>
         </Modal>
       )}
+
+      {/* Modal Création de Publication */}
+      <CreatePostModal
+        visible={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onPostCreated={async () => {
+          await loadFeedData();
+        }}
+      />
     </View>
   );
 }
@@ -371,6 +408,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 15,
+  },
+  createButton: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#FFD700',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.4,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+      web: {
+        boxShadow: '0 2px 8px rgba(255, 215, 0, 0.4)',
+      },
+    }),
+  },
+  createButtonGradient: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerButton: {
     position: 'relative',
