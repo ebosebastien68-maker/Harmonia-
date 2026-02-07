@@ -140,10 +140,13 @@ export default function ActuScreen() {
         colors={['#8A2BE2', '#4B0082']}
         style={styles.header}
       >
+        {/* Logo en haut (seul) */}
+        <View style={styles.logoRow}>
+          <HarmoniaLogo size={36} showText={true} />
+        </View>
+
+        {/* Boutons en dessous */}
         <View style={styles.headerContent}>
-          {/* Logo Harmonia */}
-          <HarmoniaLogo size={32} showText={true} />
-          
           <View style={styles.headerRight}>
             {/* Bouton Créer Publication */}
             <TouchableOpacity 
@@ -389,13 +392,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
   },
   header: {
-    paddingTop: 50,
-    paddingBottom: 12,
+    paddingTop: 45,
+    paddingBottom: 15,
     paddingHorizontal: 20,
+  },
+  logoRow: {
+    alignItems: 'center',
+    marginBottom: 12,
   },
   headerContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
   },
   logoText: {
