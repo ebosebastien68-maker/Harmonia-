@@ -3,297 +3,378 @@ import {
   StyleSheet,
   Text,
   View,
-  Modal,
   TouchableOpacity,
-  TextInput,
+  Image,
   Platform,
-  Dimensions,
-  KeyboardAvoidingView,
-  ScrollView,
-  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 
-const { width } = Dimensions.get('window');
-
-interface CreatePostModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onPostCreated: () => void;
+interface PostCardProps {
+  post: {
+    id: string;
+    author: {
+      nom: string;
+      prenom: string;
+      avatar_url: string | null;
+    };
+    content: string;
+    created_at: string;
+    reactions: {
+      likes: number;
+      comments: number;
+      shares: number;
+    };
+    user_liked?: boolean;
+    user_shared?: boolean;
+    user_saved?: boolean;
+  };
+  userId: string;
+  onLike: (postId: string, liked: boolean) => Promise<void>;
+  onShare: (postId: string, shared: boolean) => Promise<void>;
+  onSave: (postId: string, saved: boolean) => Promise<void>;
+  onComment: (postId: string) => void;
+  onLongPress?: (post: any) => void;
 }
 
-export default function CreatePostModal({ visible, onClose, onPostCreated }: CreatePostModalProps) {
-  const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [charCount, setCharCount] = useState(0);
-  const maxChars = 500;
+export default function PostCard({
+  post,
+  userId,
+  onLike,
+  onShare,
+  onSave,
+  onComment,
+  onLongPress,
+}: PostCardProps) {
+  const [liked, setLiked] = useState(post.user_liked || false);
+  const [shared, setShared] = useState(post.user_shared || false);
+  const [saved, setSaved] = useState(post.user_saved || false);
+  const [likesCount, setLikesCount] = useState(post.reactions.likes);
+  const [sharesCount, setSharesCount] = useState(post.reactions.shares);
+  const [isAnimating, setIsAnimating] = useState(false);
 
-  const handleTextChange = (text: string) => {
-    if (text.length <= maxChars) {
-      setContent(text);
-      setCharCount(text.length);
-    }
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date();
+    const past = new Date(dateString);
+    const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return "À l'instant";
+    if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
+    if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
+    return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
   };
 
-  const handlePublish = async () => {
-    if (!content.trim()) {
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      }
-      return;
-    }
+  const getInitials = (nom: string, prenom: string) => {
+    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
+  };
 
-    setLoading(true);
+  const handleLike = async () => {
+    if (isAnimating) return;
+    setIsAnimating(true);
+
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    const newLiked = !liked;
+    setLiked(newLiked);
+    setLikesCount((prev) => (newLiked ? prev + 1 : prev - 1));
+
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      // TODO: Appeler l'API pour créer le post
-      const response = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
-        body: JSON.stringify({
-          action: 'create-post',
-          user_id: parsed.user.id,
-          content: content.trim(),
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-        setContent('');
-        setCharCount(0);
-        onPostCreated();
-        onClose();
-      } else {
-        throw new Error(data.error || 'Failed to create post');
-      }
+      await onLike(post.id, newLiked);
     } catch (error) {
-      console.error('Error creating post:', error);
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-      // TODO: Afficher un message d'erreur
+      setLiked(!newLiked);
+      setLikesCount((prev) => (newLiked ? prev - 1 : prev + 1));
     } finally {
-      setLoading(false);
+      setTimeout(() => setIsAnimating(false), 300);
     }
   };
 
-  const handleClose = () => {
-    if (!loading) {
-      setContent('');
-      setCharCount(0);
-      onClose();
+  const handleShare = async () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    const newShared = !shared;
+    setShared(newShared);
+    setSharesCount((prev) => (newShared ? prev + 1 : prev - 1));
+
+    try {
+      await onShare(post.id, newShared);
+    } catch (error) {
+      setShared(!newShared);
+      setSharesCount((prev) => (newShared ? prev - 1 : prev + 1));
+    }
+  };
+
+  const handleSave = async () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    const newSaved = !saved;
+    setSaved(newSaved);
+
+    try {
+      await onSave(post.id, newSaved);
+    } catch (error) {
+      setSaved(!newSaved);
     }
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={handleClose}
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.98}
+      onLongPress={() => {
+        if (Platform.OS !== 'web') {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        }
+        onLongPress?.(post);
+      }}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.overlay}
-      >
-        <View style={styles.modalContainer}>
-          {/* Header */}
-          <LinearGradient
-            colors={['#8A2BE2', '#4B0082']}
-            style={styles.header}
-          >
-            <View style={styles.headerContent}>
-              <TouchableOpacity
-                onPress={handleClose}
-                disabled={loading}
-                style={styles.headerButton}
-              >
-                <Ionicons name="close" size={28} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.headerTitle}>Nouvelle publication</Text>
-              <TouchableOpacity
-                onPress={handlePublish}
-                disabled={loading || !content.trim()}
-                style={[
-                  styles.headerButton,
-                  (!content.trim() || loading) && styles.headerButtonDisabled
-                ]}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#FFD700" size="small" />
-                ) : (
-                  <Ionicons
-                    name="checkmark"
-                    size={28}
-                    color={content.trim() ? '#FFD700' : '#999'}
-                  />
-                )}
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-
-          {/* Content */}
-          <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={styles.input}
-                placeholder="Quoi de neuf ?"
-                placeholderTextColor="#999"
-                multiline
-                maxLength={maxChars}
-                value={content}
-                onChangeText={handleTextChange}
-                autoFocus
-                editable={!loading}
-                textAlignVertical="top"
-              />
-            </View>
-
-            {/* Character Counter */}
-            <View style={styles.footer}>
-              <Text style={[
-                styles.charCounter,
-                charCount > maxChars * 0.9 && styles.charCounterWarning,
-                charCount === maxChars && styles.charCounterMax
-              ]}>
-                {charCount}/{maxChars}
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.authorInfo}>
+          {post.author.avatar_url ? (
+            <Image source={{ uri: post.author.avatar_url }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>
+                {getInitials(post.author.nom, post.author.prenom)}
               </Text>
             </View>
-
-            {/* Action Buttons (Future features) */}
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.actionButton} disabled={loading}>
-                <Ionicons name="image-outline" size={24} color="#999" />
-                <Text style={styles.actionButtonText}>Photo</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.actionButton} disabled={loading}>
-                <Ionicons name="location-outline" size={24} color="#999" />
-                <Text style={styles.actionButtonText}>Lieu</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.actionButton} disabled={loading}>
-                <Ionicons name="happy-outline" size={24} color="#999" />
-                <Text style={styles.actionButtonText}>Humeur</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
+          )}
+          <View style={styles.authorDetails}>
+            <Text style={styles.authorName}>
+              {post.author.prenom} {post.author.nom}
+            </Text>
+            <Text style={styles.timestamp}>{formatTimeAgo(post.created_at)}</Text>
+          </View>
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+        <TouchableOpacity style={styles.menuButton}>
+          <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Content */}
+      <Text style={styles.content}>{post.content}</Text>
+
+      {/* Stats Bar */}
+      <View style={styles.statsBar}>
+        <Text style={styles.statsText}>
+          {likesCount} {likesCount === 1 ? 'like' : 'likes'}
+        </Text>
+        <View style={styles.statsRight}>
+          <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
+          <Text style={styles.statsSeparator}>•</Text>
+          <Text style={styles.statsText}>{sharesCount} partages</Text>
+        </View>
+      </View>
+
+      {/* Actions Bar */}
+      <View style={styles.actionsBar}>
+        {/* Like */}
+        <TouchableOpacity
+          style={[styles.actionButton, liked && styles.actionButtonActive]}
+          onPress={handleLike}
+          disabled={isAnimating}
+        >
+          <LinearGradient
+            colors={liked ? ['#FF0080', '#FF0080'] : ['transparent', 'transparent']}
+            style={styles.actionGradient}
+          >
+            <Ionicons
+              name={liked ? 'heart' : 'heart-outline'}
+              size={22}
+              color={liked ? '#FFF' : '#666'}
+            />
+            <Text style={[styles.actionText, liked && styles.actionTextActive]}>
+              {liked ? 'Aimé' : 'Aimer'}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Comment */}
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => {
+            if (Platform.OS !== 'web') {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            onComment(post.id);
+          }}
+        >
+          <Ionicons name="chatbubble-outline" size={20} color="#666" />
+          <Text style={styles.actionText}>Commenter</Text>
+        </TouchableOpacity>
+
+        {/* Share */}
+        <TouchableOpacity
+          style={[styles.actionButton, shared && styles.actionButtonActive]}
+          onPress={handleShare}
+        >
+          <LinearGradient
+            colors={shared ? ['#10B981', '#10B981'] : ['transparent', 'transparent']}
+            style={styles.actionGradient}
+          >
+            <Ionicons
+              name={shared ? 'repeat' : 'repeat-outline'}
+              size={22}
+              color={shared ? '#FFF' : '#666'}
+            />
+            <Text style={[styles.actionText, shared && styles.actionTextActive]}>
+              {shared ? 'Partagé' : 'Partager'}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Save */}
+        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+          <Ionicons
+            name={saved ? 'bookmark' : 'bookmark-outline'}
+            size={22}
+            color={saved ? '#FFD700' : '#666'}
+          />
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '85%',
+  card: {
+    backgroundColor: '#FFF',
+    marginHorizontal: 15,
+    marginVertical: 8,
+    borderRadius: 16,
+    paddingVertical: 16,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.2,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
         shadowRadius: 8,
       },
       android: {
-        elevation: 16,
+        elevation: 4,
       },
       web: {
-        boxShadow: '0 -4px 16px rgba(0, 0, 0, 0.2)',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
       },
     }),
   },
   header: {
-    paddingTop: 20,
-    paddingBottom: 15,
-    paddingHorizontal: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
   },
-  headerButton: {
-    padding: 5,
-    width: 40,
-  },
-  headerButtonDisabled: {
-    opacity: 0.5,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  content: {
+  authorInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
     flex: 1,
   },
-  inputContainer: {
-    padding: 20,
-    minHeight: 200,
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
-  input: {
+  avatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#8A2BE2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    color: '#FFF',
     fontSize: 16,
-    color: '#333',
-    lineHeight: 24,
-    minHeight: 150,
+    fontWeight: 'bold',
   },
-  footer: {
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-    alignItems: 'flex-end',
+  authorDetails: {
+    marginLeft: 12,
+    flex: 1,
   },
-  charCounter: {
-    fontSize: 12,
-    color: '#999',
+  authorName: {
+    fontSize: 15,
     fontWeight: '600',
+    color: '#1A1A1A',
   },
-  charCounterWarning: {
-    color: '#FF9800',
+  timestamp: {
+    fontSize: 13,
+    color: '#999',
+    marginTop: 2,
   },
-  charCounterMax: {
-    color: '#F44336',
+  menuButton: {
+    padding: 8,
   },
-  actionButtons: {
+  content: {
+    fontSize: 15,
+    color: '#333',
+    lineHeight: 22,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  statsBar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    borderTopColor: '#F5F5F5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
+  statsText: {
+    fontSize: 13,
+    color: '#666',
+  },
+  statsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statsSeparator: {
+    color: '#CCC',
+  },
+  actionsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    gap: 4,
   },
   actionButton: {
-    alignItems: 'center',
-    opacity: 0.4,
+    flex: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
   },
-  actionButtonText: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 5,
+  actionButtonActive: {
+    // Style pour les boutons actifs
+  },
+  actionGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  actionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  actionTextActive: {
+    color: '#FFF',
+  },
+  saveButton: {
+    padding: 10,
   },
 });
