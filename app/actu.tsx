@@ -191,7 +191,6 @@ export default function ActuScreen() {
               </Text>
             </View>
           </View>
-        </View>
       </LinearGradient>
 
       <ScrollView
