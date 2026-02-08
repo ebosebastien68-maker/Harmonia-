@@ -40,6 +40,110 @@ interface CommentsModalProps {
   onCommentAdded: () => void;
 }
 
+// ✅ COMPOSANT COMMENTAIRE (au lieu d'une fonction)
+const CommentItem = ({ 
+  comment, 
+  isReply, 
+  onLike, 
+  onReply 
+}: { 
+  comment: Comment; 
+  isReply: boolean;
+  onLike: (commentId: string, liked: boolean) => Promise<void>;
+  onReply: (comment: Comment) => void;
+}) => {
+  const [localLiked, setLocalLiked] = useState(comment.user_liked);
+  const [localLikes, setLocalLikes] = useState(comment.likes);
+
+  const handleLike = async () => {
+    const newLiked = !localLiked;
+    setLocalLiked(newLiked);
+    setLocalLikes(prev => newLiked ? prev + 1 : prev - 1);
+
+    try {
+      await onLike(comment.id, newLiked);
+    } catch (error) {
+      setLocalLiked(!newLiked);
+      setLocalLikes(prev => newLiked ? prev - 1 : prev + 1);
+    }
+  };
+
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date();
+    const past = new Date(dateString);
+    const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return "À l'instant";
+    if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
+    if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
+    return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
+  };
+
+  const getInitials = (nom: string, prenom: string) => {
+    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
+  };
+
+  return (
+    <View style={[styles.commentItem, isReply && styles.replyItem]}>
+      <View style={styles.commentHeader}>
+        {comment.author.avatar_url ? (
+          <Image source={{ uri: comment.author.avatar_url }} style={styles.commentAvatar} />
+        ) : (
+          <View style={styles.commentAvatarPlaceholder}>
+            <Text style={styles.commentAvatarText}>
+              {getInitials(comment.author.nom, comment.author.prenom)}
+            </Text>
+          </View>
+        )}
+        <View style={styles.commentContent}>
+          <View style={styles.commentBubble}>
+            <Text style={styles.commentAuthor}>
+              {comment.author.prenom} {comment.author.nom}
+            </Text>
+            <Text style={styles.commentText}>{comment.content}</Text>
+          </View>
+          <View style={styles.commentActions}>
+            <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
+            <TouchableOpacity
+              style={styles.likeButton}
+              onPress={handleLike}
+            >
+              <Text style={[styles.likeText, localLiked && styles.likeTextActive]}>
+                👍 {localLikes > 0 && localLikes}
+              </Text>
+            </TouchableOpacity>
+            {!isReply && (
+              <TouchableOpacity
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  onReply(comment);
+                }}
+              >
+                <Text style={styles.replyButton}>Répondre</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
+      {comment.replies && comment.replies.length > 0 && (
+        <View style={styles.repliesContainer}>
+          {comment.replies.map(reply => (
+            <CommentItem
+              key={reply.id}
+              comment={reply}
+              isReply={true}
+              onLike={onLike}
+              onReply={onReply}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
+
 export default function CommentsModal({
   visible,
   postId,
@@ -168,91 +272,6 @@ export default function CommentsModal({
     }
   };
 
-  const formatTimeAgo = (dateString: string) => {
-    const now = new Date();
-    const past = new Date(dateString);
-    const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
-
-    if (diffInSeconds < 60) return "À l'instant";
-    if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
-    if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
-    return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
-  };
-
-  const getInitials = (nom: string, prenom: string) => {
-    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
-  };
-
-  const renderComment = (comment: Comment, isReply = false) => {
-    const [localLiked, setLocalLiked] = useState(comment.user_liked);
-    const [localLikes, setLocalLikes] = useState(comment.likes);
-
-    const onLike = async () => {
-      const newLiked = !localLiked;
-      setLocalLiked(newLiked);
-      setLocalLikes(prev => newLiked ? prev + 1 : prev - 1);
-
-      try {
-        await handleLikeComment(comment.id, newLiked);
-      } catch (error) {
-        setLocalLiked(!newLiked);
-        setLocalLikes(prev => newLiked ? prev - 1 : prev + 1);
-      }
-    };
-
-    return (
-      <View key={comment.id} style={[styles.commentItem, isReply && styles.replyItem]}>
-        <View style={styles.commentHeader}>
-          {comment.author.avatar_url ? (
-            <Image source={{ uri: comment.author.avatar_url }} style={styles.commentAvatar} />
-          ) : (
-            <View style={styles.commentAvatarPlaceholder}>
-              <Text style={styles.commentAvatarText}>
-                {getInitials(comment.author.nom, comment.author.prenom)}
-              </Text>
-            </View>
-          )}
-          <View style={styles.commentContent}>
-            <View style={styles.commentBubble}>
-              <Text style={styles.commentAuthor}>
-                {comment.author.prenom} {comment.author.nom}
-              </Text>
-              <Text style={styles.commentText}>{comment.content}</Text>
-            </View>
-            <View style={styles.commentActions}>
-              <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
-              <TouchableOpacity
-                style={styles.likeButton}
-                onPress={onLike}
-              >
-                <Text style={[styles.likeText, localLiked && styles.likeTextActive]}>
-                  👍 {localLikes > 0 && localLikes}
-                </Text>
-              </TouchableOpacity>
-              {!isReply && (
-                <TouchableOpacity
-                  onPress={() => {
-                    if (Platform.OS !== 'web') {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
-                    setReplyingTo(comment);
-                  }}
-                >
-                  <Text style={styles.replyButton}>Répondre</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-        {comment.replies && comment.replies.length > 0 && (
-          <View style={styles.repliesContainer}>
-            {comment.replies.map(reply => renderComment(reply, true))}
-          </View>
-        )}
-      </View>
-    );
-  };
-
   return (
     <Modal
       visible={visible}
@@ -291,7 +310,15 @@ export default function CommentsModal({
                 <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
               </View>
             ) : (
-              comments.map(comment => renderComment(comment))
+              comments.map(comment => (
+                <CommentItem
+                  key={comment.id}
+                  comment={comment}
+                  isReply={false}
+                  onLike={handleLikeComment}
+                  onReply={setReplyingTo}
+                />
+              ))
             )}
           </ScrollView>
 
