@@ -39,7 +39,7 @@ interface Story {
 interface Post {
   id: string;
   author: {
-    id?: string;
+    id: string;  // ✅ OBLIGATOIRE (plus optionnel)
     nom: string;
     prenom: string;
     avatar_url: string | null;
@@ -51,9 +51,9 @@ interface Post {
     comments: number;
     shares: number;
   };
-  user_liked?: boolean;
-  user_shared?: boolean;
-  user_saved?: boolean;
+  user_liked: boolean;  // ✅ OBLIGATOIRE (plus optionnel)
+  user_shared: boolean;  // ✅ OBLIGATOIRE (plus optionnel)
+  user_saved: boolean;  // ✅ OBLIGATOIRE (plus optionnel)
 }
 
 interface UserProfile {
@@ -120,8 +120,13 @@ export default function ActuScreen() {
 
       const data = await response.json();
 
+      console.log('📥 Feed data received:', data); // ✅ DEBUG
+
       if (data.stories) setStories(data.stories);
-      if (data.posts) setPosts(data.posts);
+      if (data.posts) {
+        console.log('📊 Posts count:', data.posts.length); // ✅ DEBUG
+        setPosts(data.posts);
+      }
       if (data.profile) setUserProfile(data.profile);
     } catch (error) {
       console.error('Error loading feed:', error);
@@ -255,9 +260,9 @@ export default function ActuScreen() {
   };
 
   const PostCard = ({ post }: { post: Post }) => {
-    const [liked, setLiked] = useState(post.user_liked || false);
-    const [shared, setShared] = useState(post.user_shared || false);
-    const [saved, setSaved] = useState(post.user_saved || false);
+    const [liked, setLiked] = useState(post.user_liked);  // ✅ Pas de || false
+    const [shared, setShared] = useState(post.user_shared);  // ✅ Pas de || false
+    const [saved, setSaved] = useState(post.user_saved);  // ✅ Pas de || false
     const [likesCount, setLikesCount] = useState(post.reactions.likes);
     const [sharesCount, setSharesCount] = useState(post.reactions.shares);
     const [isAnimating, setIsAnimating] = useState(false);
