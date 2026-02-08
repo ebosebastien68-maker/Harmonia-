@@ -19,6 +19,8 @@ import * as Haptics from 'expo-haptics';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 import CreatePostModal from '../components/CreatePostModal';
 import CommentsModal from '../components/CommentsModal';
+import LikersModal from '../components/LikersModal';
+import EditPostModal from '../components/EditPostModal';
 
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
@@ -37,6 +39,7 @@ interface Story {
 interface Post {
   id: string;
   author: {
+    id?: string;
     nom: string;
     prenom: string;
     avatar_url: string | null;
@@ -68,6 +71,10 @@ export default function ActuScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
+  const [showLikersModal, setShowLikersModal] = useState(false);
+  const [selectedPostForLikers, setSelectedPostForLikers] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
   const [userId, setUserId] = useState<string>('');
 
   useEffect(() => {
@@ -255,6 +262,8 @@ export default function ActuScreen() {
     const [sharesCount, setSharesCount] = useState(post.reactions.shares);
     const [isAnimating, setIsAnimating] = useState(false);
 
+    const isOwnPost = post.author.id === userId;
+
     const onLike = async () => {
       if (isAnimating) return;
       setIsAnimating(true);
@@ -333,17 +342,39 @@ export default function ActuScreen() {
               <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
             </View>
           </View>
-          <TouchableOpacity>
-            <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
-          </TouchableOpacity>
+          {isOwnPost && (
+            <TouchableOpacity
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+                setSelectedPostForEdit({ id: post.id, content: post.content });
+                setShowEditModal(true);
+              }}
+            >
+              <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
         </View>
 
         <Text style={styles.postContent}>{post.content}</Text>
 
         <View style={styles.statsBar}>
-          <Text style={styles.statsText}>
-            {likesCount} {likesCount === 1 ? 'like' : 'likes'}
-          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              if (Platform.OS !== 'web') {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }
+              if (likesCount > 0) {
+                setSelectedPostForLikers(post.id);
+                setShowLikersModal(true);
+              }
+            }}
+          >
+            <Text style={styles.statsText}>
+              {likesCount} {likesCount === 1 ? 'like' : 'likes'}
+            </Text>
+          </TouchableOpacity>
           <View style={styles.statsRight}>
             <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
             <Text style={styles.statsSeparator}>•</Text>
@@ -593,6 +624,29 @@ export default function ActuScreen() {
         }}
         onCommentAdded={() => {
           loadFeedData();
+        }}
+      />
+
+      <LikersModal
+        visible={showLikersModal}
+        postId={selectedPostForLikers}
+        onClose={() => {
+          setShowLikersModal(false);
+          setSelectedPostForLikers(null);
+        }}
+      />
+
+      <EditPostModal
+        visible={showEditModal}
+        postId={selectedPostForEdit?.id || null}
+        userId={userId}
+        initialContent={selectedPostForEdit?.content || ''}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedPostForEdit(null);
+        }}
+        onPostUpdated={async () => {
+          await loadFeedData();
         }}
       />
     </View>
