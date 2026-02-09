@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  RefreshControl,
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -746,9 +745,17 @@ export default function MessagesScreen() {
   };
 
   const onRefresh = async () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
     setRefreshing(true);
     await loadAllData(userId);
     setRefreshing(false);
+    
+    // Feedback de succès
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
   };
 
   const backToList = () => {
@@ -827,10 +834,20 @@ export default function MessagesScreen() {
     return (
       <View style={styles.container}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-          <Text style={styles.headerTitle}>💬 Messages</Text>
-          <View style={styles.realtimeBadge}>
-            <View style={styles.realtimeDot} />
-            <Text style={styles.realtimeText}>Temps réel</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>💬 Messages</Text>
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={onRefresh}
+              disabled={refreshing}
+              activeOpacity={0.7}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="reload" size={24} color="#fff" />
+              )}
+            </TouchableOpacity>
           </View>
         </LinearGradient>
 
@@ -912,9 +929,6 @@ export default function MessagesScreen() {
         {/* CONTENU DES ONGLETS */}
         <ScrollView
           style={styles.content}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />
-          }
         >
           {/* ONGLET HISTORIQUE */}
           {activeTab === 'history' && (
@@ -1211,26 +1225,21 @@ const styles = StyleSheet.create({
     paddingBottom: 15,
     paddingHorizontal: 20,
   },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
   },
-  realtimeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  realtimeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10B981',
-    marginRight: 6,
-  },
-  realtimeText: {
-    fontSize: 12,
-    color: '#E0D0FF',
+  refreshButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   // ONGLETS
   tabsContainer: {
