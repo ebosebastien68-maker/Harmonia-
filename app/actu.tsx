@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,6 +10,7 @@ import {
   Modal,
   Dimensions,
   Platform,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +27,7 @@ import SavedPostsModal from '../components/SavedPostsModal';
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
+const HEADER_HEIGHT = 110; // Hauteur totale du header
 
 interface Post {
   id: string;
@@ -67,6 +69,11 @@ export default function ActuScreen() {
   const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
   const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
   const [userId, setUserId] = useState<string>('');
+  
+  // Header auto-hide
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const [lastTap, setLastTap] = useState<number | null>(null);
+  const headerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     loadUserSession();
@@ -125,6 +132,35 @@ export default function ActuScreen() {
     }
     await loadFeedData();
     setRefreshing(false);
+  };
+
+  // Double-tap pour toggle header
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+
+    if (lastTap && (now - lastTap) < DOUBLE_TAP_DELAY) {
+      toggleHeader();
+    } else {
+      setLastTap(now);
+    }
+  };
+
+  const toggleHeader = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    const toValue = headerVisible ? -HEADER_HEIGHT : 0;
+    
+    Animated.spring(headerAnim, {
+      toValue,
+      useNativeDriver: true,
+      tension: 80,
+      friction: 10,
+    }).start();
+    
+    setHeaderVisible(!headerVisible);
   };
 
   const handleLike = async (postId: string, liked: boolean) => {
@@ -449,76 +485,89 @@ export default function ActuScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        {/* Logo en haut */}
-        <View style={styles.logoContainer}>
-          <HarmoniaLogo size={40} showText={true} />
-        </View>
-
-        {/* Boutons */}
-        <View style={styles.buttonsRow}>
-          <TouchableOpacity 
-            style={styles.createButton}
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              }
-              setShowCreateModal(true);
-            }}
-          >
-            <LinearGradient
-              colors={['#FFD700', '#FF0080']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.createButtonGradient}
-            >
-              <Ionicons name="add" size={22} color="#fff" />
-            </LinearGradient>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }
-              router.push('/notifications');
-            }}
-          >
-            <Ionicons name="notifications-outline" size={24} color="#fff" />
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifBadgeText}>5</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* NOUVEAU : Bouton Posts sauvegardés */}
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }
-              setShowSavedPostsModal(true);
-            }}
-          >
-            <Ionicons name="arrow-down-circle-outline" size={24} color="#fff" />
-          </TouchableOpacity>
-
-          <View style={styles.balanceContainer}>
-            <Ionicons name="wallet-outline" size={18} color="#FFD700" />
-            <Text style={styles.balanceText}>
-              {userProfile?.solde_cfa?.toLocaleString() || '0'} CFA
-            </Text>
+      {/* Header animé */}
+      <Animated.View 
+        style={[
+          styles.headerContainer,
+          { transform: [{ translateY: headerAnim }] }
+        ]}
+      >
+        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
+          <View style={styles.logoContainer}>
+            <HarmoniaLogo size={35} showText={true} />
           </View>
+
+          <View style={styles.buttonsRow}>
+            <TouchableOpacity 
+              style={styles.createButton}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                }
+                setShowCreateModal(true);
+              }}
+            >
+              <LinearGradient
+                colors={['#FFD700', '#FF0080']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.createButtonGradient}
+              >
+                <Ionicons name="add" size={20} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+                router.push('/notifications');
+              }}
+            >
+              <Ionicons name="notifications-outline" size={22} color="#fff" />
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>5</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.headerButton}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+                setShowSavedPostsModal(true);
+              }}
+            >
+              <Ionicons name="arrow-down-circle-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+
+            <View style={styles.balanceContainer}>
+              <Ionicons name="wallet-outline" size={16} color="#FFD700" />
+              <Text style={styles.balanceText}>
+                {userProfile?.solde_cfa?.toLocaleString() || '0'} CFA
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+
+      {/* Indicateur double-tap */}
+      {!headerVisible && (
+        <View style={styles.doubleTapHint}>
+          <Ionicons name="chevron-down-outline" size={20} color="#8A2BE2" />
+          <Text style={styles.doubleTapText}>Double-tap pour afficher</Text>
         </View>
-      </LinearGradient>
+      )}
 
       <ScrollView
         style={styles.scrollView}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
+        onTouchEnd={handleDoubleTap}
       >
-        {/* Section Posts (Stories supprimée) */}
         <View style={styles.postsSection}>
           {posts.length === 0 ? (
             <View style={styles.emptyPosts}>
@@ -532,7 +581,6 @@ export default function ActuScreen() {
         </View>
       </ScrollView>
 
-      {/* Modal détails post (long press) */}
       {selectedPost && (
         <Modal
           visible={!!selectedPost}
@@ -574,7 +622,6 @@ export default function ActuScreen() {
         </Modal>
       )}
 
-      {/* Modals */}
       <CreatePostModal
         visible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
@@ -638,22 +685,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F5F5F5',
   },
+  headerContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+  },
   header: {
-    paddingTop: 55,
-    paddingBottom: 12,
+    paddingTop: 45,
+    paddingBottom: 8,
     paddingHorizontal: 16,
   },
   logoContainer: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   buttonsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   createButton: {
-    borderRadius: 20,
+    borderRadius: 18,
     overflow: 'hidden',
     ...Platform.select({
       ios: {
@@ -665,15 +719,12 @@ const styles = StyleSheet.create({
       android: {
         elevation: 4,
       },
-      web: {
-        boxShadow: '0 2px 8px rgba(255, 215, 0, 0.4)',
-      },
     }),
   },
   createButtonGradient: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -700,18 +751,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 15,
-    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
   },
   balanceText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
+  },
+  doubleTapHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0E6FF',
+    paddingVertical: 8,
+    gap: 6,
+    marginTop: 0,
+  },
+  doubleTapText: {
+    fontSize: 12,
+    color: '#8A2BE2',
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
+    marginTop: HEADER_HEIGHT,
   },
   postsSection: {
     paddingVertical: 10,
@@ -732,9 +798,6 @@ const styles = StyleSheet.create({
       },
       android: {
         elevation: 4,
-      },
-      web: {
-        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
       },
     }),
   },
