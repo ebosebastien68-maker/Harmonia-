@@ -1,155 +1,87 @@
-import React from 'react';
-import { StyleSheet, View, Text, Platform } from 'react-native';
-import Svg, { 
-  Path, 
-  Circle, 
-  Ellipse,
-  Defs, 
-  LinearGradient as SvgGradient, 
-  Stop,
-  G 
-} from 'react-native-svg';
+import React from 'react'; import { StyleSheet, View, Text, Platform } from 'react-native'; import Svg, { Defs, Circle, Path, G, RadialGradient, LinearGradient, Stop, Ellipse, Rect, Mask, } from 'react-native-svg';
 
-interface HarmoniaLogoProps {
-  size?: number;
-  showText?: boolean;
-}
+type HarmoniaLogoProps = { size?: number; // square size in points showText?: boolean; variant?: 'light' | 'dark'; label?: string; // accessible label };
 
-export default function HarmoniaLogo({ size = 36, showText = true }: HarmoniaLogoProps) {
-  return (
-    <View style={styles.container}>
-      {/* Icon SVG - Terre + Coupe */}
-      <View style={[styles.iconContainer, { width: size, height: size }]}>
-        <Svg width={size} height={size} viewBox="0 0 100 100">
-          <Defs>
-            {/* Gradient Terre (bleu/vert) */}
-            <SvgGradient id="earthGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <Stop offset="0%" stopColor="#0EA5E9" stopOpacity="1" />
-              <Stop offset="50%" stopColor="#10B981" stopOpacity="1" />
-              <Stop offset="100%" stopColor="#0EA5E9" stopOpacity="1" />
-            </SvgGradient>
-            
-            {/* Gradient Coupe (or) */}
-            <SvgGradient id="trophyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0%" stopColor="#FFD700" stopOpacity="1" />
-              <Stop offset="50%" stopColor="#FFA500" stopOpacity="1" />
-              <Stop offset="100%" stopColor="#FFD700" stopOpacity="1" />
-            </SvgGradient>
-          </Defs>
-          
-          {/* Planète Terre au centre */}
-          <G>
-            <Circle 
-              cx="50" 
-              cy="55" 
-              r="28" 
-              fill="url(#earthGrad)"
-            />
-            
-            {/* Continents */}
-            <Path
-              d="M 35 45 Q 40 42, 45 45 L 42 52 Q 38 50, 35 45 Z"
-              fill="#10B981"
-              opacity="0.8"
-            />
-            <Path
-              d="M 52 48 Q 58 46, 62 50 L 60 58 Q 54 56, 52 48 Z"
-              fill="#10B981"
-              opacity="0.8"
-            />
-            <Path
-              d="M 42 62 Q 48 60, 54 63 L 52 70 Q 46 68, 42 62 Z"
-              fill="#10B981"
-              opacity="0.8"
-            />
-            
-            {/* Reflet */}
-            <Ellipse
-              cx="42"
-              cy="48"
-              rx="8"
-              ry="6"
-              fill="#fff"
-              opacity="0.3"
-            />
-          </G>
+// Modern, simplified and balanced mark: a subtle globe with a trophy silhouette // integrated as negative/positive space. Clean gradients, softer shadow and // scalable typography.
 
-          {/* Coupe de trophée */}
-          <G>
-            <Path
-              d="M 45 30 L 55 30 L 53 35 L 47 35 Z"
-              fill="url(#trophyGrad)"
-            />
-            <Path
-              d="M 40 18 L 60 18 L 58 25 Q 50 28, 42 25 Z"
-              fill="url(#trophyGrad)"
-            />
-            <Path
-              d="M 38 20 Q 33 20, 33 24 Q 33 26, 38 26"
-              stroke="url(#trophyGrad)"
-              strokeWidth="2"
-              fill="none"
-            />
-            <Path
-              d="M 62 20 Q 67 20, 67 24 Q 67 26, 62 26"
-              stroke="url(#trophyGrad)"
-              strokeWidth="2"
-              fill="none"
-            />
-            <Path
-              d="M 50 20 L 51 23 L 54 23 L 52 25 L 53 28 L 50 26 L 47 28 L 48 25 L 46 23 L 49 23 Z"
-              fill="#FFF"
-              opacity="0.9"
-            />
-          </G>
-        </Svg>
-      </View>
+export default function HarmoniaLogo({ size = 48, showText = true, variant = 'dark', label = 'Harmonia logo', }: HarmoniaLogoProps) { const isDark = variant === 'dark'; const textColor = isDark ? '#0F172A' : '#0F172A'; const bg = isDark ? 'transparent' : 'transparent';
 
-      {/* Texte HARMONIA - Typographie moderne et élégante */}
-      {showText && (
-        <View style={styles.textContainer}>
-          <Text style={styles.text}>HARMONIA</Text>
-        </View>
-      )}
+// SVG viewBox is 0..120 so we can keep geometry simple and scale by size return ( <View style={[styles.container, { height: size }] } accessibilityLabel={label}> <View style={[styles.iconContainer, { width: size, height: size }]}> <Svg width={size} height={size} viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet"> <Defs> {/* soft radial globe gradient */} <RadialGradient id="gEarth" cx="45%" cy="45%" rx="60%" ry="60%" fx="35%" fy="35%"> <Stop offset="0%" stopColor="#9EE7FF" stopOpacity="1" /> <Stop offset="45%" stopColor="#34D399" stopOpacity="1" /> <Stop offset="100%" stopColor="#059669" stopOpacity="1" /> </RadialGradient>
+
+{/* warm metallic gradient for the trophy */}
+        <LinearGradient id="gGold" x1="0%" y1="0%" x2="100%" y2="100%">
+          <Stop offset="0%" stopColor="#FFDD57" stopOpacity="1" />
+          <Stop offset="50%" stopColor="#FFB84D" stopOpacity="1" />
+          <Stop offset="100%" stopColor="#FFC857" stopOpacity="1" />
+        </LinearGradient>
+
+        {/* subtle ring stroke gradient */}
+        <LinearGradient id="ringGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.65" />
+          <Stop offset="100%" stopColor="#000000" stopOpacity="0.06" />
+        </LinearGradient>
+
+        {/* a mask so the trophy can sit on top of the globe and remain crisp */}
+        <Mask id="cupMask">
+          {/* mask uses a white cup area on transparent background */}
+          <Rect x="0" y="0" width="120" height="120" fill="#000" />
+          <Path
+            d="M40 28c0-6 6-10 10-10h20c4 0 10 4 10 10v5c0 6-6 10-10 10H50c-4 0-10-4-10-10z"
+            fill="#fff"
+          />
+        </Mask>
+      </Defs>
+
+      {/* faint drop shadow ellipse under globe for elevation */}
+      <Ellipse cx="60" cy="82" rx="26" ry="6" fill="#04111A" opacity="0.06" />
+
+      {/* outer soft ring */}
+      <Circle cx="60" cy="44" r="36" fill={bg} stroke="url(#ringGrad)" strokeWidth={2} />
+
+      {/* globe */}
+      <G>
+        <Circle cx="60" cy="44" r="30" fill="url(#gEarth)" />
+
+        {/* simplified continents — intentionally geometric and minimal */}
+        <Path d="M48 34c5-3 10-4 14-2c6 3 10 10 6 16c-3 5-10 6-16 4c-6-2-8-9-4-18z" fill="#064E3B" opacity={0.9} />
+        <Path d="M36 48c3-6 9-8 14-7" stroke="#065F46" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} fill="none" />
+        <Path d="M70 54c2-4 6-6 9-5" stroke="#064E3B" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} fill="none" />
+
+        {/* small glossy highlight */}
+        <Ellipse cx="50" cy="36" rx="6" ry="4" fill="#fff" opacity={0.18} />
+      </G>
+
+      {/* trophy — placed above globe, slightly integrated (uses mask for crisp silhouette) */}
+      <G mask="url(#cupMask)">
+        {/* cup fill */}
+        <Path
+          d="M40 28c0-6 6-10 10-10h20c4 0 10 4 10 10v5c0 6-6 10-10 10H50c-4 0-10-4-10-10z"
+          fill="url(#gGold)"
+        />
+
+        {/* handles */}
+        <Path d="M36 30c0-6 6-8 6-8" stroke="#E08900" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={0.9} />
+        <Path d="M84 30c0-6-6-8-6-8" stroke="#E08900" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={0.9} />
+
+        {/* base stem */}
+        <Path d="M52 48h16v6c0 2-2 4-4 4H56c-2 0-4-2-4-4v-6z" fill="#C97E00" opacity={0.95} />
+
+        {/* small inner shine */}
+        <Path d="M48 26c6-2 20-2 26 0" stroke="#FFFFFF" strokeWidth={1} strokeLinecap="round" opacity={0.18} fill="none" />
+      </G>
+
+    </Svg>
+  </View>
+
+  {showText && (
+    <View style={styles.textContainer}>
+      <Text numberOfLines={1} style={[styles.text, { color: textColor, fontSize: Math.round(size * 0.33) }]}>
+        HARMONIA
+      </Text>
     </View>
-  );
-}
+  )}
+</View>
 
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  textContainer: {
-    justifyContent: 'center',
-  },
-  text: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 3,
-    ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-        fontWeight: '700',
-      },
-      android: {
-        fontFamily: 'sans-serif-light',
-        fontWeight: '700',
-      },
-      web: {
-        fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-        fontWeight: '700',
-        textTransform: 'uppercase',
-      },
-    }),
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 6,
-  },
-});
+); }
+
+const styles = StyleSheet.create({ container: { flexDirection: 'row', alignItems: 'center', gap: 12, }, iconContainer: { justifyContent: 'center', alignItems: 'center', }, textContainer: { justifyContent: 'center', maxWidth: 260, }, text: { fontWeight: '700', letterSpacing: 2, includeFontPadding: false, ...Platform.select({ ios: { fontFamily: 'Inter-Bold' }, android: { fontFamily: 'Inter-Bold' }, web: { fontFamily: 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial', textTransform: 'uppercase', }, }), }, });
