@@ -21,20 +21,11 @@ import CreatePostModal from '../components/CreatePostModal';
 import CommentsModal from '../components/CommentsModal';
 import LikersModal from '../components/LikersModal';
 import EditPostModal from '../components/EditPostModal';
+import SavedPostsModal from '../components/SavedPostsModal';
 
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
-
-interface Story {
-  id: string;
-  user: {
-    nom: string;
-    prenom: string;
-    avatar_url: string | null;
-  };
-  isActive: boolean;
-}
 
 interface Post {
   id: string;
@@ -64,7 +55,6 @@ interface UserProfile {
 export default function ActuScreen() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
-  const [stories, setStories] = useState<Story[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
@@ -75,6 +65,7 @@ export default function ActuScreen() {
   const [selectedPostForLikers, setSelectedPostForLikers] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
+  const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
   const [userId, setUserId] = useState<string>('');
 
   useEffect(() => {
@@ -90,13 +81,9 @@ export default function ActuScreen() {
   const loadUserSession = async () => {
     try {
       const session = await AsyncStorage.getItem('harmonia_session');
-      console.log('📦 Session loaded:', !!session);
       if (session) {
         const parsed = JSON.parse(session);
-        console.log('👤 User ID from session:', parsed.user.id);
         setUserId(parsed.user.id);
-      } else {
-        console.log('❌ No session found');
       }
     } catch (error) {
       console.error('Error loading session:', error);
@@ -124,7 +111,6 @@ export default function ActuScreen() {
 
       const data = await response.json();
 
-      if (data.stories) setStories(data.stories);
       if (data.posts) setPosts(data.posts);
       if (data.profile) setUserProfile(data.profile);
     } catch (error) {
@@ -266,7 +252,6 @@ export default function ActuScreen() {
     const [sharesCount, setSharesCount] = useState(post.reactions.shares);
     const [isAnimating, setIsAnimating] = useState(false);
 
-    // ✅ Synchroniser l'état avec les props
     useEffect(() => {
       setLiked(post.user_liked || false);
       setShared(post.user_shared || false);
@@ -276,16 +261,6 @@ export default function ActuScreen() {
     }, [post.id, post.user_liked, post.user_shared, post.user_saved, post.reactions]);
 
     const isOwnPost = post.author_id === userId;
-
-    // 🔍 DEBUG - À RETIRER APRÈS TEST
-    if (post.id) {
-      console.log('=== DEBUG POST ===');
-      console.log('post.id:', post.id.substring(0, 8));
-      console.log('post.author_id:', post.author_id?.substring(0, 8) || 'UNDEFINED', typeof post.author_id);
-      console.log('userId:', userId?.substring(0, 8) || 'UNDEFINED', typeof userId);
-      console.log('isOwnPost:', isOwnPost);
-      console.log('==================');
-    }
 
     const onLike = async () => {
       if (isAnimating) return;
@@ -475,10 +450,12 @@ export default function ActuScreen() {
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        <View style={styles.logoRow}>
+        {/* Logo en haut */}
+        <View style={styles.logoContainer}>
           <HarmoniaLogo size={40} showText={true} />
         </View>
 
+        {/* Boutons */}
         <View style={styles.buttonsRow}>
           <TouchableOpacity 
             style={styles.createButton}
@@ -514,6 +491,19 @@ export default function ActuScreen() {
             </View>
           </TouchableOpacity>
 
+          {/* NOUVEAU : Bouton Posts sauvegardés */}
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => {
+              if (Platform.OS !== 'web') {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }
+              setShowSavedPostsModal(true);
+            }}
+          >
+            <Ionicons name="arrow-down-circle-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+
           <View style={styles.balanceContainer}>
             <Ionicons name="wallet-outline" size={18} color="#FFD700" />
             <Text style={styles.balanceText}>
@@ -528,53 +518,7 @@ export default function ActuScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.storiesSection}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.storiesContent}
-          >
-            {stories.length === 0 ? (
-              <View style={styles.emptyStories}>
-                <Text style={styles.emptyText}>Aucun ami actif</Text>
-              </View>
-            ) : (
-              stories.map((story) => (
-                <TouchableOpacity 
-                  key={story.id}
-                  style={styles.storyItem}
-                  onPress={() => {
-                    if (Platform.OS !== 'web') {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
-                  }}
-                >
-                  <LinearGradient
-                    colors={story.isActive ? ['#FF0080', '#FFD700'] : ['#E0E0E0', '#E0E0E0']}
-                    style={styles.storyBorder}
-                  >
-                    <View style={styles.storyAvatar}>
-                      {story.user.avatar_url ? (
-                        <Image source={{ uri: story.user.avatar_url }} style={styles.avatar} />
-                      ) : (
-                        <View style={styles.avatarPlaceholder}>
-                          <Text style={styles.avatarText}>
-                            {getInitials(story.user.nom, story.user.prenom)}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </LinearGradient>
-                  <Text style={styles.storyName} numberOfLines={1}>
-                    {story.user.prenom}
-                  </Text>
-                  {story.isActive && <View style={styles.activeIndicator} />}
-                </TouchableOpacity>
-              ))
-            )}
-          </ScrollView>
-        </View>
-
+        {/* Section Posts (Stories supprimée) */}
         <View style={styles.postsSection}>
           {posts.length === 0 ? (
             <View style={styles.emptyPosts}>
@@ -588,6 +532,7 @@ export default function ActuScreen() {
         </View>
       </ScrollView>
 
+      {/* Modal détails post (long press) */}
       {selectedPost && (
         <Modal
           visible={!!selectedPost}
@@ -629,6 +574,7 @@ export default function ActuScreen() {
         </Modal>
       )}
 
+      {/* Modals */}
       <CreatePostModal
         visible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
@@ -672,6 +618,17 @@ export default function ActuScreen() {
           await loadFeedData();
         }}
       />
+
+      <SavedPostsModal
+        visible={showSavedPostsModal}
+        userId={userId}
+        onClose={() => setShowSavedPostsModal(false)}
+        onCommentPress={(postId) => {
+          setShowSavedPostsModal(false);
+          setSelectedPostForComments(postId);
+          setShowCommentsModal(true);
+        }}
+      />
     </View>
   );
 }
@@ -686,8 +643,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     paddingHorizontal: 16,
   },
-  logoRow: {
-    alignItems: 'center',
+  logoContainer: {
     marginBottom: 12,
   },
   buttonsRow: {
@@ -756,72 +712,6 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-  },
-  storiesSection: {
-    backgroundColor: '#fff',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  storiesContent: {
-    paddingHorizontal: 15,
-  },
-  storyItem: {
-    alignItems: 'center',
-    marginHorizontal: 8,
-    width: 70,
-  },
-  storyBorder: {
-    padding: 3,
-    borderRadius: 35,
-  },
-  storyAvatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
-  avatarPlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#8A2BE2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  storyName: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 5,
-    textAlign: 'center',
-  },
-  activeIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10B981',
-    marginTop: 3,
-  },
-  emptyStories: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
   },
   postsSection: {
     paddingVertical: 10,
@@ -954,6 +844,11 @@ const styles = StyleSheet.create({
   emptyPosts: {
     alignItems: 'center',
     paddingVertical: 60,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 12,
   },
   emptySubtext: {
     fontSize: 12,
