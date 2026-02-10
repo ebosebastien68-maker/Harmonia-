@@ -584,7 +584,7 @@ export default function ActuScreen() {
           {posts.length === 0 ? (
             <View style={styles.emptyPosts}>
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
-              <Text style={styles.emptyText}>Chargement en Cours</Text>
+              <Text style={styles.emptyText}>Chargement en cours...</Text>
               <Text style={styles.emptySubtext}>Veuillez Patienter</Text>
             </View>
           ) : (
