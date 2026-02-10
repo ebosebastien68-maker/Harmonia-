@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -27,6 +27,10 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<TabName>('actu');
   const [userSession, setUserSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  // Animation pour la barre de navigation
+  const tabBarTranslateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     checkAuth();
@@ -56,6 +60,41 @@ export default function HomePage() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     setActiveTab(tab);
+    
+    // Si on change d'onglet, fermer le chat et montrer la barre
+    if (isChatOpen) {
+      setIsChatOpen(false);
+      showTabBar();
+    }
+  };
+
+  // Fonction pour cacher la barre de navigation (défilement vers le bas)
+  const hideTabBar = () => {
+    Animated.timing(tabBarTranslateY, {
+      toValue: 100, // Descend de 100px (hors écran)
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  // Fonction pour montrer la barre de navigation (défilement vers le haut)
+  const showTabBar = () => {
+    Animated.timing(tabBarTranslateY, {
+      toValue: 0, // Remonte à sa position initiale
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  // Callback pour MessagesScreen
+  const handleChatModeChange = (isInChatMode: boolean) => {
+    setIsChatOpen(isInChatMode);
+    
+    if (isInChatMode) {
+      hideTabBar();
+    } else {
+      showTabBar();
+    }
   };
 
   const renderContent = () => {
@@ -65,7 +104,7 @@ export default function HomePage() {
       case 'games':
         return <GamesScreen />;
       case 'messages':
-        return <MessagesScreen />;
+        return <MessagesScreen onChatModeChange={handleChatModeChange} />;
       case 'friends':
         return <FriendsScreen />;
       case 'profile':
@@ -92,8 +131,15 @@ export default function HomePage() {
         {renderContent()}
       </View>
 
-      {/* Bottom Tab Navigation */}
-      <View style={styles.bottomTabsContainer}>
+      {/* Bottom Tab Navigation avec animation */}
+      <Animated.View 
+        style={[
+          styles.bottomTabsContainer,
+          {
+            transform: [{ translateY: tabBarTranslateY }]
+          }
+        ]}
+      >
         <LinearGradient
           colors={['rgba(138, 43, 226, 0.98)', 'rgba(75, 0, 130, 0.98)']}
           style={styles.tabsGradient}
@@ -173,7 +219,7 @@ export default function HomePage() {
             </TouchableOpacity>
           </View>
         </LinearGradient>
-      </View>
+      </Animated.View>
     </View>
   );
 }
