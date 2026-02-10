@@ -17,7 +17,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import HarmoniaLogo from '../components/HarmoniaLogo';
 import CreatePostModal from '../components/CreatePostModal';
 import CommentsModal from '../components/CommentsModal';
 import LikersModal from '../components/LikersModal';
@@ -27,7 +26,7 @@ import SavedPostsModal from '../components/SavedPostsModal';
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
-const HEADER_HEIGHT = 75; // RÉDUIT : 110 → 75
+const HEADER_HEIGHT = 75;
 
 interface Post {
   id: string;
@@ -483,7 +482,6 @@ export default function ActuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header par-dessus le ScrollView */}
       <Animated.View 
         style={[
           styles.headerContainer,
@@ -491,9 +489,19 @@ export default function ActuScreen() {
         ]}
       >
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-          {/* Une seule ligne compacte */}
           <View style={styles.headerContent}>
-            <HarmoniaLogo size={28} showText={false} />
+            {/* LOGO INLINE AVEC TEXTE */}
+            <View style={styles.logoInline}>
+              <LinearGradient
+                colors={['#FFD700', '#FF0080']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.logoIcon}
+              >
+                <Text style={styles.logoIconText}>H</Text>
+              </LinearGradient>
+              <Text style={styles.logoText}>Harmonia</Text>
+            </View>
             
             <View style={styles.headerActions}>
               <TouchableOpacity 
@@ -549,7 +557,6 @@ export default function ActuScreen() {
         </LinearGradient>
       </Animated.View>
 
-      {/* Indicateur quand header masqué */}
       {!headerVisible && (
         <TouchableOpacity 
           style={styles.showHeaderHint}
@@ -560,7 +567,6 @@ export default function ActuScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Posts SANS marginTop - scrollent sous le header */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -568,7 +574,6 @@ export default function ActuScreen() {
         showsVerticalScrollIndicator={false}
         onTouchEnd={handleDoubleTap}
       >
-        {/* Espace pour le header (uniquement en haut) */}
         <View style={styles.headerSpacer} />
         
         {posts.length === 0 ? (
@@ -704,6 +709,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  // LOGO INLINE SUR LA MÊME LIGNE
+  logoInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  logoIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoIconText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  logoText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   headerActions: {
     flexDirection: 'row',
