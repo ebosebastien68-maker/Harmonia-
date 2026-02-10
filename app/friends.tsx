@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import VueProfil from './VueProfil';
 
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends';
 
@@ -55,6 +56,7 @@ export default function FriendsScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // Suggestions
   const [suggestions, setSuggestions] = useState<User[]>([]);
@@ -439,23 +441,31 @@ export default function FriendsScreen() {
     }
   };
 
+  const renderAvatar = (user: User) => {
+    if (user.avatar_url) {
+      return <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />;
+    }
+    return (
+      <View style={[styles.userAvatarPlaceholder, { backgroundColor: getRoleColor(user.role) }]}>
+        <Text style={styles.userAvatarText}>{getInitials(user.nom, user.prenom)}</Text>
+      </View>
+    );
+  };
+
   const renderUserCard = (user: User, showSendButton: boolean = true) => {
     const isPending = pendingActions.has(user.id);
 
     return (
       <View key={user.id} style={styles.userCard}>
-        <View style={styles.userInfo}>
-          {user.avatar_url ? (
-            <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />
-          ) : (
-            <View style={[styles.userAvatarPlaceholder, { backgroundColor: getRoleColor(user.role) }]}>
-              <Text style={styles.userAvatarText}>{getInitials(user.nom, user.prenom)}</Text>
-            </View>
-          )}
+        <TouchableOpacity
+          onPress={() => setSelectedUserId(user.id)}
+          style={styles.userInfo}
+        >
+          {renderAvatar(user)}
           <View style={styles.userDetails}>
             <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
         {showSendButton && (
           <TouchableOpacity
             style={[styles.sendButton, isPending && styles.sendButtonDisabled]}
@@ -468,6 +478,56 @@ export default function FriendsScreen() {
               <Ionicons name="person-add" size={20} color="#fff" />
             )}
           </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const renderRequestCard = (req: FriendRequest, isSent: boolean = false) => {
+    const isPending = pendingActions.has(req.id);
+    const user = isSent ? req.receiver : req.requester;
+
+    return (
+      <View key={req.id} style={isSent ? styles.sentCard : styles.requestCard}>
+        <TouchableOpacity
+          onPress={() => setSelectedUserId(user.id)}
+          style={styles.userInfo}
+        >
+          {renderAvatar(user)}
+          <View style={styles.userDetails}>
+            <Text style={styles.userName}>
+              {user.prenom} {user.nom}
+            </Text>
+            <Text style={styles.requestTime}>
+              {isSent ? 'En attente...' : new Date(req.created_at).toLocaleDateString()}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        {isSent ? (
+          <TouchableOpacity
+            style={[styles.cancelButton, isPending && styles.buttonDisabled]}
+            onPress={() => cancelRequest(req.id)}
+            disabled={isPending}
+          >
+            <Text style={styles.cancelButtonText}>Annuler</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.requestActions}>
+            <TouchableOpacity
+              style={[styles.acceptButton, isPending && styles.buttonDisabled]}
+              onPress={() => acceptFriendRequest(req.id)}
+              disabled={isPending}
+            >
+              <Ionicons name="checkmark" size={20} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.rejectButton, isPending && styles.buttonDisabled]}
+              onPress={() => cancelRequest(req.id)}
+              disabled={isPending}
+            >
+              <Ionicons name="close" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     );
@@ -556,48 +616,7 @@ export default function FriendsScreen() {
           <Text style={styles.emptyText}>Aucune demande reçue</Text>
         </View>
       ) : (
-        receivedRequests.map(req => {
-          const isPending = pendingActions.has(req.id);
-          return (
-            <View key={req.id} style={styles.requestCard}>
-              <View style={styles.userInfo}>
-                {req.requester.avatar_url ? (
-                  <Image source={{ uri: req.requester.avatar_url }} style={styles.userAvatar} />
-                ) : (
-                  <View style={styles.userAvatarPlaceholder}>
-                    <Text style={styles.userAvatarText}>
-                      {getInitials(req.requester.nom, req.requester.prenom)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.userDetails}>
-                  <Text style={styles.userName}>
-                    {req.requester.prenom} {req.requester.nom}
-                  </Text>
-                  <Text style={styles.requestTime}>
-                    {new Date(req.created_at).toLocaleDateString()}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.requestActions}>
-                <TouchableOpacity
-                  style={[styles.acceptButton, isPending && styles.buttonDisabled]}
-                  onPress={() => acceptFriendRequest(req.id)}
-                  disabled={isPending}
-                >
-                  <Ionicons name="checkmark" size={20} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.rejectButton, isPending && styles.buttonDisabled]}
-                  onPress={() => cancelRequest(req.id)}
-                  disabled={isPending}
-                >
-                  <Ionicons name="close" size={20} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })
+        receivedRequests.map(req => renderRequestCard(req, false))
       )}
 
       {/* Demandes envoyées */}
@@ -608,37 +627,7 @@ export default function FriendsScreen() {
           <Text style={styles.emptyText}>Aucune demande envoyée</Text>
         </View>
       ) : (
-        sentRequests.map(req => {
-          const isPending = pendingActions.has(req.id);
-          return (
-            <View key={req.id} style={styles.sentCard}>
-              <View style={styles.userInfo}>
-                {req.receiver.avatar_url ? (
-                  <Image source={{ uri: req.receiver.avatar_url }} style={styles.userAvatar} />
-                ) : (
-                  <View style={styles.userAvatarPlaceholder}>
-                    <Text style={styles.userAvatarText}>
-                      {getInitials(req.receiver.nom, req.receiver.prenom)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.userDetails}>
-                  <Text style={styles.userName}>
-                    {req.receiver.prenom} {req.receiver.nom}
-                  </Text>
-                  <Text style={styles.requestTime}>En attente...</Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={[styles.cancelButton, isPending && styles.buttonDisabled]}
-                onPress={() => cancelRequest(req.id)}
-                disabled={isPending}
-              >
-                <Text style={styles.cancelButtonText}>Annuler</Text>
-              </TouchableOpacity>
-            </View>
-          );
-        })
+        sentRequests.map(req => renderRequestCard(req, true))
       )}
     </ScrollView>
   );
@@ -778,6 +767,13 @@ export default function FriendsScreen() {
       {activeTab === 'search' && renderSearch()}
       {activeTab === 'requests' && renderRequests()}
       {activeTab === 'groups' && renderGroups()}
+
+      {/* Modal VueProfil */}
+      <VueProfil
+        visible={selectedUserId !== null}
+        userId={selectedUserId || ''}
+        onClose={() => setSelectedUserId(null)}
+      />
     </View>
   );
 }
@@ -897,11 +893,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#333',
-  },
-  userRole: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 2,
   },
   sendButton: {
     backgroundColor: '#8A2BE2',
