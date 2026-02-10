@@ -4,7 +4,7 @@ import Svg, {
   Path,
   Circle,
   Defs,
-  LinearGradient,
+  LinearGradient as SvgGradient,
   Stop,
   G,
 } from 'react-native-svg';
@@ -21,68 +21,85 @@ export default function HarmoniaLogo({
   theme = 'dark' 
 }: HarmoniaLogoProps) {
   
-  const isDark = theme === 'dark';
-  const textColor = isDark ? '#F8FAFC' : '#0F172A';
-  const accentColor = '#F59E0B'; // Ambre Doré
-  const secondaryAccent = '#38BDF8'; // Bleu Ciel Tech
+  const textColor = theme === 'dark' ? '#FFFFFF' : '#1E293B';
+  const accentColor = '#F59E0B'; // La couleur Or/Ambre
 
   return (
     <View style={styles.container}>
-      {/* --- LOGO SYMBOL (Modernisé : Abstrait & Géométrique) --- */}
+      {/* --- ICÔNE (Terre + Ailes dorées) --- */}
       <View style={{ width: size, height: size }}>
-        <Svg width={size} height={size} viewBox="0 0 100 100" fill="none">
+        <Svg width={size} height={size} viewBox="0 0 100 100">
           <Defs>
-            {/* Dégradé Bleu Profond (Terre/Tech) */}
-            <LinearGradient id="blueGradient" x1="10%" y1="10%" x2="90%" y2="90%">
-              <Stop offset="0%" stopColor="#0EA5E9" />
-              <Stop offset="100%" stopColor="#2563EB" />
-            </LinearGradient>
+            <SvgGradient id="earthGrad" x1="20%" y1="20%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor="#38BDF8" stopOpacity="1" />
+              <Stop offset="100%" stopColor="#2563EB" stopOpacity="1" />
+            </SvgGradient>
 
-            {/* Dégradé Or Riche (Luxe/Dynamisme) */}
-            <LinearGradient id="goldGradient" x1="0%" y1="50%" x2="100%" y2="50%">
-              <Stop offset="0%" stopColor="#FBBF24" />
-              <Stop offset="100%" stopColor="#D97706" />
-            </LinearGradient>
+            <SvgGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor="#FDE047" stopOpacity="1" />
+              <Stop offset="50%" stopColor="#D97706" stopOpacity="1" />
+              <Stop offset="100%" stopColor="#F59E0B" stopOpacity="1" />
+            </SvgGradient>
           </Defs>
 
-          {/* L'Orbe Central (La Terre simplifiée) */}
-          <Circle cx="50" cy="50" r="22" fill="url(#blueGradient)" />
-          
-          {/* Reflet subtil sur l'orbe pour effet 3D */}
-          <Circle cx="44" cy="42" r="8" fill="white" opacity="0.2" />
-
-          {/* Anneaux dynamiques (L'Harmonie/Les Ailes abstraites) */}
-          <G transform="rotate(-15, 50, 50)">
-            {/* Swoosh bas */}
-            <Path 
-              d="M 30 68 C 30 68, 45 82, 70 65" 
-              stroke="url(#goldGradient)" 
-              strokeWidth="5" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
+          {/* Ailes dorées (la coupe abstraite) */}
+          <G>
+            <Path
+              d="M 50 85 C 35 85, 15 70, 15 45 C 15 35, 20 25, 25 20"
+              stroke="url(#goldGrad)"
+              strokeWidth="6"
+              strokeLinecap="round"
+              fill="none"
             />
-            {/* Swoosh haut */}
-            <Path 
-              d="M 70 32 C 70 32, 55 18, 30 35" 
-              stroke="url(#goldGradient)" 
-              strokeWidth="5" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
+             <Path
+              d="M 50 85 C 65 85, 85 70, 85 45 C 85 35, 80 25, 75 20"
+              stroke="url(#goldGrad)"
+              strokeWidth="6"
+              strokeLinecap="round"
+              fill="none"
             />
           </G>
-          
-          {/* Petite étincelle (Modernité) */}
-          <Circle cx="82" cy="25" r="3" fill={secondaryAccent} />
+
+          {/* Terre flottante */}
+          <G transform="translate(0, -5)"> 
+            <Circle cx="50" cy="45" r="22" fill="url(#earthGrad)" />
+            <Circle cx="42" cy="38" r="8" fill="#FFFFFF" opacity="0.15" />
+            
+            {/* Méridiens fins */}
+            <Path d="M 50 23 A 22 22 0 0 1 50 67" stroke="#FFF" strokeWidth="0.5" opacity="0.3" fill="none"/>
+            <Path d="M 28 45 A 22 22 0 0 1 72 45" stroke="#FFF" strokeWidth="0.5" opacity="0.3" fill="none"/>
+          </G>
+
+          {/* Étoile de victoire */}
+          <Path d="M 50 10 L 52 14 L 56 16 L 52 18 L 50 22 L 48 18 L 44 16 L 48 14 Z" fill="#FDE047"/>
         </Svg>
       </View>
 
-      {/* --- TYPOGRAPHIE (Alignée et Épurée) --- */}
+      {/* --- TEXTE MODERNE (Le grand changement) --- */}
       {showText && (
-        <View style={styles.textContainer}>
-          <Text style={[styles.baseText, { fontSize: size * 0.55, color: textColor }]}>
-            Harmonia
+        <View style={styles.textWrapper}>
+          <Text style={styles.textRow}>
+            {/* Le grand "H" stylisé et coloré */}
+            <Text style={[
+              styles.letterH, 
+              { fontSize: size * 0.7, color: accentColor }
+            ]}>
+              H
+            </Text>
+            
+            {/* Le reste du mot "armonia" plus fin et moderne */}
+            <Text style={[
+              styles.wordRest, 
+              { fontSize: size * 0.55, color: textColor }
+            ]}>
+              armonia
+            </Text>
+
+            {/* Le point final (touche tech) */}
+            <Text style={{ fontSize: size * 0.55, color: accentColor, fontWeight: 'bold' }}>
+              .
+            </Text>
           </Text>
-          <View style={[styles.dot, { backgroundColor: accentColor, width: size * 0.12, height: size * 0.12 }]} />
         </View>
       )}
     </View>
@@ -93,25 +110,36 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12, // Espacement optimal icône-texte
+    gap: 14,
   },
-  textContainer: {
-    flexDirection: 'row',
-    alignItems: 'baseline', // Aligne le texte et le point parfaitement
+  textWrapper: {
+    justifyContent: 'center',
+    // Correction de l'alignement vertical optique
+    paddingTop: 4, 
   },
-  baseText: {
+  textRow: {
+    // Permet d'aligner le H et le reste sur la même ligne de base
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  letterH: {
+    // Style du "H"
+    fontWeight: '800', // Très gras
     fontFamily: Platform.select({
-      ios: 'Avenir Next', // Police très propre sur iOS
-      android: 'sans-serif-medium', // Police moderne sur Android
+      ios: 'AvenirNext-Heavy',
+      android: 'sans-serif-black', // Le plus gras disponible sur Android
+      web: 'Montserrat, sans-serif'
+    }),
+    letterSpacing: -1, // Un peu serré pour faire bloc
+  },
+  wordRest: {
+    // Style de "armonia"
+    fontWeight: '400', // Normal / Fin
+    fontFamily: Platform.select({
+      ios: 'Avenir Next',
+      android: 'sans-serif',
       web: 'Inter, sans-serif'
     }),
-    fontWeight: '600',
-    letterSpacing: -0.5, // Un peu plus serré pour un look pro
-    includeFontPadding: false,
-  },
-  dot: {
-    borderRadius: 50,
-    marginLeft: 4,
-    marginBottom: 4, // Ajustement fin pour l'alignement avec la baseline
+    letterSpacing: 0.5, // Légèrement aéré pour la lisibilité
   }
 });
