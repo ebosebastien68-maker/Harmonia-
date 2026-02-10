@@ -48,7 +48,13 @@ interface Conversation {
   createdAt: string;
 }
 
-export default function MessagesScreen() {
+// ✅ AJOUT: Interface pour le callback
+interface MessagesScreenProps {
+  onChatModeChange?: (isInChatMode: boolean) => void;
+}
+
+// ✅ MODIFIÉ: Accepte la prop onChatModeChange
+export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps = {}) {
   const [viewMode, setViewMode] = useState<ViewMode>('tabs');
   const [activeTab, setActiveTab] = useState<TabMode>('history');
   const [loading, setLoading] = useState(true);
@@ -298,6 +304,9 @@ export default function MessagesScreen() {
 
         setActiveConversation(conv);
         setViewMode('chat');
+        
+        // ✅ AJOUT: Notifie HomePage que le chat est ouvert
+        onChatModeChange?.(true);
       }
     } catch (error) {
       console.error('Erreur ouverture chat:', error);
@@ -314,6 +323,9 @@ export default function MessagesScreen() {
 
     setActiveConversation(conv);
     setViewMode('chat');
+    
+    // ✅ AJOUT: Notifie HomePage que le chat est ouvert
+    onChatModeChange?.(true);
   };
 
   const openGroupChat = async (group: Conversation) => {
@@ -323,6 +335,9 @@ export default function MessagesScreen() {
 
     setActiveConversation(group);
     setViewMode('chat');
+    
+    // ✅ AJOUT: Notifie HomePage que le chat est ouvert
+    onChatModeChange?.(true);
   };
 
   const updatePresence = async (online: boolean) => {
@@ -365,6 +380,10 @@ export default function MessagesScreen() {
     }
     setViewMode('tabs');
     setActiveConversation(null);
+    
+    // ✅ AJOUT: Notifie HomePage que le chat est fermé
+    onChatModeChange?.(false);
+    
     loadAllData(userId);
   };
 
