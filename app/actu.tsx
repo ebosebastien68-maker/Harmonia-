@@ -23,11 +23,12 @@ import CommentsModal from '../components/CommentsModal';
 import LikersModal from '../components/LikersModal';
 import EditPostModal from '../components/EditPostModal';
 import SavedPostsModal from '../components/SavedPostsModal';
+import SearchModal from '../components/SearchModal';
 
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
-const HEADER_HEIGHT = 75; // RÉDUIT de 110px à 75px
+const HEADER_HEIGHT = 75;
 
 interface Post {
   id: string;
@@ -68,6 +69,7 @@ export default function ActuScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
   const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [userId, setUserId] = useState<string>('');
   
   const [headerVisible, setHeaderVisible] = useState(true);
@@ -483,7 +485,6 @@ export default function ActuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header ultra-compact */}
       <Animated.View 
         style={[
           styles.headerContainer,
@@ -492,11 +493,22 @@ export default function ActuScreen() {
       >
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
           <View style={styles.headerContent}>
-            {/* Logo compact */}
             <HarmoniaLogo size={26} showText={true} />
             
-            {/* Boutons inline */}
             <View style={styles.buttonsRow}>
+              {/* NOUVEAU : Bouton recherche */}
+              <TouchableOpacity 
+                style={styles.headerButton}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  setShowSearchModal(true);
+                }}
+              >
+                <Ionicons name="search-outline" size={20} color="#fff" />
+              </TouchableOpacity>
+
               <TouchableOpacity 
                 style={styles.createButton}
                 onPress={() => {
@@ -554,7 +566,6 @@ export default function ActuScreen() {
         </LinearGradient>
       </Animated.View>
 
-      {/* Indicateur double-tap */}
       {!headerVisible && (
         <View style={styles.doubleTapHint}>
           <Ionicons name="chevron-down-outline" size={16} color="#8A2BE2" />
@@ -677,282 +688,68 @@ export default function ActuScreen() {
           setShowCommentsModal(true);
         }}
       />
+
+      <SearchModal
+        visible={showSearchModal}
+        userId={userId}
+        onClose={() => setShowSearchModal(false)}
+        onPostPress={(postId) => {
+          setSelectedPostForComments(postId);
+          setShowCommentsModal(true);
+        }}
+      />
     </View>
   );
 }
 
+// [Styles identiques - trop long pour répéter]
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  headerContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1000,
-  },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 50 : 35,
-    paddingBottom: 6,
-    paddingHorizontal: 12,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  buttonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  createButton: {
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  createButtonGradient: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerButton: {
-    position: 'relative',
-  },
-  notifBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#FF0080',
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  notifBadgeText: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: 'bold',
-  },
-  balanceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 10,
-    gap: 3,
-  },
-  balanceText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  doubleTapHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0E6FF',
-    paddingVertical: 6,
-    gap: 4,
-  },
-  doubleTapText: {
-    fontSize: 11,
-    color: '#8A2BE2',
-    fontWeight: '600',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: HEADER_HEIGHT,
-  },
-  postsSection: {
-    paddingVertical: 8,
-    paddingBottom: 100,
-  },
-  postCard: {
-    backgroundColor: '#fff',
-    marginHorizontal: 12,
-    marginVertical: 6,
-    borderRadius: 14,
-    paddingVertical: 14,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
-  },
-  postHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
-  postAuthor: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 10,
-  },
-  postAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  postAvatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#8A2BE2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  postAvatarText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  postAuthorName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
-  postTime: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 1,
-  },
-  postContent: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
-  statsBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: '#F5F5F5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
-  },
-  statsText: {
-    fontSize: 12,
-    color: '#666',
-  },
-  statsRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  statsSeparator: {
-    color: '#CCC',
-  },
-  actionsBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingTop: 6,
-    gap: 3,
-  },
-  actionButton: {
-    flex: 1,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
+  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
+  header: { paddingTop: Platform.OS === 'ios' ? 50 : 35, paddingBottom: 6, paddingHorizontal: 12 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  buttonsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  createButton: { borderRadius: 16, overflow: 'hidden' },
+  createButtonGradient: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  headerButton: { position: 'relative' },
+  notifBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: '#FF0080', borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center' },
+  notifBadgeText: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
+  balanceContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.2)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 10, gap: 3 },
+  balanceText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
+  doubleTapHint: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0E6FF', paddingVertical: 6, gap: 4 },
+  doubleTapText: { fontSize: 11, color: '#8A2BE2', fontWeight: '600' },
+  scrollView: { flex: 1 },
+  scrollContent: { paddingTop: HEADER_HEIGHT },
+  postsSection: { paddingVertical: 8, paddingBottom: 100 },
+  postCard: { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
+  postHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
+  postAuthor: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
+  postAvatar: { width: 40, height: 40, borderRadius: 20 },
+  postAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
+  postAvatarText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  postAuthorName: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  postTime: { fontSize: 12, color: '#999', marginTop: 1 },
+  postContent: { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
+  statsBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  statsText: { fontSize: 12, color: '#666' },
+  statsRight: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  statsSeparator: { color: '#CCC' },
+  actionsBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
+  actionButton: { flex: 1, borderRadius: 8, overflow: 'hidden' },
   actionButtonActive: {},
-  actionGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    gap: 5,
-  },
-  actionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-  },
-  actionTextActive: {
-    color: '#FFF',
-  },
-  saveButton: {
-    padding: 8,
-  },
-  emptyPosts: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#999',
-    marginTop: 12,
-  },
-  emptySubtext: {
-    fontSize: 12,
-    color: '#CCC',
-    marginTop: 5,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 25,
-    width: width * 0.85,
-    maxWidth: 400,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  modalInfo: {
-    marginBottom: 12,
-  },
-  modalLabel: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 3,
-  },
-  modalValue: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '600',
-  },
-  modalButton: {
-    backgroundColor: '#8A2BE2',
-    padding: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
+  actionGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
+  actionText: { fontSize: 12, fontWeight: '600', color: '#666' },
+  actionTextActive: { color: '#FFF' },
+  saveButton: { padding: 8 },
+  emptyPosts: { alignItems: 'center', paddingVertical: 60 },
+  emptyText: { fontSize: 16, color: '#999', marginTop: 12 },
+  emptySubtext: { fontSize: 12, color: '#CCC', marginTop: 5 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.7)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 25, width: width * 0.85, maxWidth: 400 },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
+  modalInfo: { marginBottom: 12 },
+  modalLabel: { fontSize: 12, color: '#999', marginBottom: 3 },
+  modalValue: { fontSize: 14, color: '#333', fontWeight: '600' },
+  modalButton: { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+  modalButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 });
