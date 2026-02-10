@@ -27,7 +27,7 @@ import SavedPostsModal from '../components/SavedPostsModal';
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
-const HEADER_HEIGHT = 110; // Hauteur totale du header
+const HEADER_HEIGHT = 75; // RÉDUIT de 110px à 75px
 
 interface Post {
   id: string;
@@ -70,7 +70,6 @@ export default function ActuScreen() {
   const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
   const [userId, setUserId] = useState<string>('');
   
-  // Header auto-hide
   const [headerVisible, setHeaderVisible] = useState(true);
   const [lastTap, setLastTap] = useState<number | null>(null);
   const headerAnim = useRef(new Animated.Value(0)).current;
@@ -134,7 +133,6 @@ export default function ActuScreen() {
     setRefreshing(false);
   };
 
-  // Double-tap pour toggle header
   const handleDoubleTap = () => {
     const now = Date.now();
     const DOUBLE_TAP_DELAY = 300;
@@ -485,7 +483,7 @@ export default function ActuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header animé */}
+      {/* Header ultra-compact */}
       <Animated.View 
         style={[
           styles.headerContainer,
@@ -493,62 +491,64 @@ export default function ActuScreen() {
         ]}
       >
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-          <View style={styles.logoContainer}>
-            <HarmoniaLogo size={35} showText={true} />
-          </View>
-
-          <View style={styles.buttonsRow}>
-            <TouchableOpacity 
-              style={styles.createButton}
-              onPress={() => {
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                }
-                setShowCreateModal(true);
-              }}
-            >
-              <LinearGradient
-                colors={['#FFD700', '#FF0080']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.createButtonGradient}
+          <View style={styles.headerContent}>
+            {/* Logo compact */}
+            <HarmoniaLogo size={26} showText={true} />
+            
+            {/* Boutons inline */}
+            <View style={styles.buttonsRow}>
+              <TouchableOpacity 
+                style={styles.createButton}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  }
+                  setShowCreateModal(true);
+                }}
               >
-                <Ionicons name="add" size={20} color="#fff" />
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={['#FFD700', '#FF0080']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.createButtonGradient}
+                >
+                  <Ionicons name="add" size={18} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={() => {
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-                router.push('/notifications');
-              }}
-            >
-              <Ionicons name="notifications-outline" size={22} color="#fff" />
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>5</Text>
+              <TouchableOpacity 
+                style={styles.headerButton}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  router.push('/notifications');
+                }}
+              >
+                <Ionicons name="notifications-outline" size={20} color="#fff" />
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>5</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.headerButton}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  setShowSavedPostsModal(true);
+                }}
+              >
+                <Ionicons name="arrow-down-circle-outline" size={20} color="#fff" />
+              </TouchableOpacity>
+
+              <View style={styles.balanceContainer}>
+                <Ionicons name="wallet-outline" size={14} color="#FFD700" />
+                <Text style={styles.balanceText}>
+                  {userProfile?.solde_cfa?.toLocaleString() || '0'}
+                </Text>
               </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={() => {
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-                setShowSavedPostsModal(true);
-              }}
-            >
-              <Ionicons name="arrow-down-circle-outline" size={22} color="#fff" />
-            </TouchableOpacity>
-
-            <View style={styles.balanceContainer}>
-              <Ionicons name="wallet-outline" size={16} color="#FFD700" />
-              <Text style={styles.balanceText}>
-                {userProfile?.solde_cfa?.toLocaleString() || '0'} CFA
-              </Text>
             </View>
           </View>
         </LinearGradient>
@@ -557,13 +557,14 @@ export default function ActuScreen() {
       {/* Indicateur double-tap */}
       {!headerVisible && (
         <View style={styles.doubleTapHint}>
-          <Ionicons name="chevron-down-outline" size={20} color="#8A2BE2" />
+          <Ionicons name="chevron-down-outline" size={16} color="#8A2BE2" />
           <Text style={styles.doubleTapText}>Double-tap pour afficher</Text>
         </View>
       )}
 
       <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
         onTouchEnd={handleDoubleTap}
@@ -693,38 +694,28 @@ const styles = StyleSheet.create({
     zIndex: 1000,
   },
   header: {
-    paddingTop: 45,
-    paddingBottom: 8,
-    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 50 : 35,
+    paddingBottom: 6,
+    paddingHorizontal: 12,
   },
-  logoContainer: {
-    marginBottom: 10,
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   buttonsRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   createButton: {
-    borderRadius: 18,
+    borderRadius: 16,
     overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#FFD700',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.4,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
   },
   createButtonGradient: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -733,32 +724,32 @@ const styles = StyleSheet.create({
   },
   notifBadge: {
     position: 'absolute',
-    top: -5,
-    right: -5,
+    top: -4,
+    right: -4,
     backgroundColor: '#FF0080',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
   notifBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: 'bold',
   },
   balanceContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 3,
   },
   balanceText: {
     color: '#fff',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
   },
   doubleTapHint: {
@@ -766,38 +757,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0E6FF',
-    paddingVertical: 8,
-    gap: 6,
-    marginTop: 0,
+    paddingVertical: 6,
+    gap: 4,
   },
   doubleTapText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8A2BE2',
     fontWeight: '600',
   },
   scrollView: {
     flex: 1,
-    marginTop: HEADER_HEIGHT,
+  },
+  scrollContent: {
+    paddingTop: HEADER_HEIGHT,
   },
   postsSection: {
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingBottom: 100,
   },
   postCard: {
     backgroundColor: '#fff',
-    marginHorizontal: 15,
-    marginVertical: 8,
-    borderRadius: 16,
-    paddingVertical: 16,
+    marginHorizontal: 12,
+    marginVertical: 6,
+    borderRadius: 14,
+    paddingVertical: 14,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
       },
       android: {
-        elevation: 4,
+        elevation: 3,
       },
     }),
   },
@@ -805,69 +797,69 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    marginBottom: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
   },
   postAuthor: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    gap: 12,
+    gap: 10,
   },
   postAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   postAvatarPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#8A2BE2',
     justifyContent: 'center',
     alignItems: 'center',
   },
   postAvatarText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   postAuthorName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#1A1A1A',
   },
   postTime: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#999',
-    marginTop: 2,
+    marginTop: 1,
   },
   postContent: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#333',
-    lineHeight: 22,
-    paddingHorizontal: 16,
-    marginBottom: 12,
+    lineHeight: 20,
+    paddingHorizontal: 14,
+    marginBottom: 10,
   },
   statsBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderTopWidth: 1,
     borderTopColor: '#F5F5F5',
     borderBottomWidth: 1,
     borderBottomColor: '#F5F5F5',
   },
   statsText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#666',
   },
   statsRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   statsSeparator: {
     color: '#CCC',
@@ -875,13 +867,13 @@ const styles = StyleSheet.create({
   actionsBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 8,
-    gap: 4,
+    paddingHorizontal: 6,
+    paddingTop: 6,
+    gap: 3,
   },
   actionButton: {
     flex: 1,
-    borderRadius: 10,
+    borderRadius: 8,
     overflow: 'hidden',
   },
   actionButtonActive: {},
@@ -889,12 +881,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 5,
   },
   actionText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#666',
   },
@@ -902,7 +894,7 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
   saveButton: {
-    padding: 10,
+    padding: 8,
   },
   emptyPosts: {
     alignItems: 'center',
