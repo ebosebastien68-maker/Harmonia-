@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -99,7 +100,6 @@ export default function ChatBox({
     eventSourceRef.current.addEventListener('new-message', async (event: any) => {
       const data = JSON.parse(event.data);
       
-      // Recharger tous les messages pour avoir les infos complètes
       await loadMessages();
       
       if (data.message.sender_id !== userId) {
@@ -132,7 +132,6 @@ export default function ChatBox({
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
-      // Reconnexion après 5 secondes
       setTimeout(setupRealtimeStream, 5000);
     };
   };
@@ -204,7 +203,6 @@ export default function ChatBox({
 
       const data = await response.json();
       if (data.success) {
-        // Le message sera ajouté via le stream temps réel
         setTimeout(() => {
           scrollViewRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -308,11 +306,7 @@ export default function ChatBox({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
+    <SafeAreaView style={styles.container}>
       {/* EN-TÊTE */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
@@ -396,32 +390,37 @@ export default function ChatBox({
         )}
       </ScrollView>
 
-      {/* INPUT MESSAGE */}
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Écrivez un message..."
-          placeholderTextColor="#999"
-          value={messageInput}
-          onChangeText={handleTyping}
-          multiline
-          maxLength={1000}
-          editable={!sending}
-        />
-        <TouchableOpacity
-          style={[styles.sendButton, (!messageInput.trim() || sending) && styles.sendButtonDisabled]}
-          onPress={sendMessage}
-          disabled={!messageInput.trim() || sending}
-          activeOpacity={0.7}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="send" size={20} color="#fff" />
-          )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      {/* INPUT MESSAGE - TOUJOURS VISIBLE */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Écrivez un message..."
+            placeholderTextColor="#999"
+            value={messageInput}
+            onChangeText={handleTyping}
+            multiline
+            maxLength={1000}
+            editable={!sending}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, (!messageInput.trim() || sending) && styles.sendButtonDisabled]}
+            onPress={sendMessage}
+            disabled={!messageInput.trim() || sending}
+            activeOpacity={0.7}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -433,7 +432,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
+    paddingTop: Platform.OS === 'ios' ? 10 : 20,
     paddingBottom: 15,
     paddingHorizontal: 15,
   },
@@ -565,7 +564,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     paddingHorizontal: 15,
     paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 10,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
   },
