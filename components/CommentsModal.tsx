@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+posts' React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -17,7 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import CommentLikersModal from './CommentLikersModal';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
+const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/comments';
 
 interface Comment {
   id: string;
