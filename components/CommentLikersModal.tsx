@@ -235,4 +235,4 @@ const styles = StyleSheet.create({
     color: '#333',
   },
 });
- posts''
+ 
