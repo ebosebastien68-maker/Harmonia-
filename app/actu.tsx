@@ -24,6 +24,7 @@ import LikersModal from '../components/LikersModal';
 import EditPostModal from '../components/EditPostModal';
 import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
+import LogoutModal from '../components/LogoutModal';
 
 const { width } = Dimensions.get('window');
 const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
@@ -70,6 +71,7 @@ export default function ActuScreen() {
   const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
   const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [userId, setUserId] = useState<string>('');
   
   const [headerVisible, setHeaderVisible] = useState(true);
@@ -95,6 +97,18 @@ export default function ActuScreen() {
       }
     } catch (error) {
       console.error('Error loading session:', error);
+    }
+  };
+
+  const handleLogoutSuccess = async () => {
+    try {
+      // Supprimer la session locale
+      await AsyncStorage.removeItem('harmonia_session');
+      
+      // Rediriger vers la page de connexion
+      router.replace('/login');
+    } catch (error) {
+      console.error('Error clearing session:', error);
     }
   };
 
@@ -496,7 +510,6 @@ export default function ActuScreen() {
             <HarmoniaLogo size={26} showText={true} />
             
             <View style={styles.buttonsRow}>
-              {/* NOUVEAU : Bouton recherche */}
               <TouchableOpacity 
                 style={styles.headerButton}
                 onPress={() => {
@@ -555,6 +568,19 @@ export default function ActuScreen() {
                 <Ionicons name="arrow-down-circle-outline" size={20} color="#fff" />
               </TouchableOpacity>
 
+              {/* NOUVEAU : Bouton déconnexion */}
+              <TouchableOpacity 
+                style={styles.headerButton}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  setShowLogoutModal(true);
+                }}
+              >
+                <Ionicons name="log-out-outline" size={20} color="#FFD700" />
+              </TouchableOpacity>
+
               <View style={styles.balanceContainer}>
                 <Ionicons name="wallet-outline" size={14} color="#FFD700" />
                 <Text style={styles.balanceText}>
@@ -584,8 +610,8 @@ export default function ActuScreen() {
           {posts.length === 0 ? (
             <View style={styles.emptyPosts}>
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
-              <Text style={styles.emptyText}>Chargement en cours...</Text>
-              <Text style={styles.emptySubtext}>Veuillez Patienter</Text>
+              <Text style={styles.emptyText}>Aucune publication</Text>
+              <Text style={styles.emptySubtext}>Créez votre premier post !</Text>
             </View>
           ) : (
             posts.map((post) => <PostCard key={post.id} post={post} />)
@@ -698,11 +724,18 @@ export default function ActuScreen() {
           setShowCommentsModal(true);
         }}
       />
+
+      <LogoutModal
+        visible={showLogoutModal}
+        userId={userId}
+        onClose={() => setShowLogoutModal(false)}
+        onLogoutSuccess={handleLogoutSuccess}
+      />
     </View>
   );
 }
 
-// [Styles identiques - trop long pour répéter]
+// Styles (identiques à la version précédente)
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
