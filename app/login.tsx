@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
+import HarmoniaLogo from '../components/HarmoniaLogo';
 
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/auth';
 
@@ -549,7 +550,7 @@ export default function LoginPage() {
         >
           {/* LOGO */}
           <View style={styles.logoContainer}>
-            <Text style={styles.logoText}>✨ HARMONIA</Text>
+            <HarmoniaLogo size={80} showText={true} theme="light" />
             <Text style={styles.tagline}>Révélez Votre Talent</Text>
           </View>
 
@@ -920,17 +921,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
-  logoText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 3,
-    marginBottom: 5,
-  },
   tagline: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#E0D0FF',
     fontStyle: 'italic',
+    marginTop: 12,
+    letterSpacing: 1,
   },
   card: {
     backgroundColor: '#fff',
