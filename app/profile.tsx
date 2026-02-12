@@ -159,25 +159,6 @@ export default function ProfileScreen() {
     }
   };
 
-  // Déconnexion
-  const handleLogout = () => {
-    Alert.alert(
-      'Déconnexion',
-      'Êtes-vous sûr de vouloir vous déconnecter ?',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Déconnexion',
-          style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.removeItem('harmonia_session');
-            router.replace('/login');
-          },
-        },
-      ]
-    );
-  };
-
   // Ouvrir les paramètres (placeholder)
   const openSettings = () => {
     Alert.alert('Paramètres', 'Cette fonctionnalité sera disponible prochainement');
@@ -326,22 +307,6 @@ export default function ProfileScreen() {
               <Text style={styles.actionDescription}>Gérer vos préférences</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#999" />
-          </TouchableOpacity>
-
-          {/* Déconnexion */}
-          <TouchableOpacity
-            style={[styles.actionCard, styles.logoutCard]}
-            onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.actionIcon, styles.logoutIcon]}>
-              <Ionicons name="log-out-outline" size={24} color="#EF4444" />
-            </View>
-            <View style={styles.actionContent}>
-              <Text style={[styles.actionLabel, styles.logoutLabel]}>Déconnexion</Text>
-              <Text style={styles.actionDescription}>Se déconnecter du compte</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#EF4444" />
           </TouchableOpacity>
         </View>
       </View>
@@ -591,16 +556,5 @@ const styles = StyleSheet.create({
   actionDescription: {
     fontSize: 14,
     color: '#999',
-  },
-  logoutCard: {
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
-  },
-  logoutIcon: {
-    backgroundColor: '#FEE2E2',
-  },
-  logoutLabel: {
-    color: '#EF4444',
   },
 });
