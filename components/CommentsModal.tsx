@@ -1,19 +1,18 @@
-posts' React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   Modal,
   TouchableOpacity,
-  TextInput,
   ScrollView,
+  TextInput,
   Image,
   Platform,
-  ActivityIndicator,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import CommentLikersModal from './CommentLikersModal';
 
@@ -21,7 +20,6 @@ const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/comments
 
 interface Comment {
   id: string;
-  author_id: string;
   author: {
     nom: string;
     prenom: string;
@@ -29,9 +27,10 @@ interface Comment {
   };
   content: string;
   created_at: string;
-  likes_count: number;
+  likes: number;
   user_liked: boolean;
   replies?: Comment[];
+  parent_id: string | null;
 }
 
 interface CommentsModalProps {
@@ -39,134 +38,36 @@ interface CommentsModalProps {
   postId: string | null;
   userId: string;
   onClose: () => void;
-  onCommentAdded?: () => void;
+  onCommentAdded: () => void;
 }
 
-export default function CommentsModal({
-  visible,
-  postId,
-  userId,
-  onClose,
-  onCommentAdded,
-}: CommentsModalProps) {
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [newComment, setNewComment] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
-  const [showLikersModal, setShowLikersModal] = useState(false);
-  const [selectedCommentForLikers, setSelectedCommentForLikers] = useState<string | null>(null);
+// ✅ COMPOSANT COMMENTAIRE (mis à jour avec compteur de likes cliquable)
+const CommentItem = ({ 
+  comment, 
+  isReply, 
+  onLike, 
+  onReply,
+  onShowLikers
+}: { 
+  comment: Comment; 
+  isReply: boolean;
+  onLike: (commentId: string, liked: boolean) => Promise<void>;
+  onReply: (comment: Comment) => void;
+  onShowLikers: (commentId: string) => void;
+}) => {
+  const [localLiked, setLocalLiked] = useState(comment.user_liked);
+  const [localLikes, setLocalLikes] = useState(comment.likes);
 
-  useEffect(() => {
-    if (visible && postId) {
-      loadComments();
-    }
-  }, [visible, postId]);
-
-  const loadComments = async () => {
-    if (!postId) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-comments',
-          post_id: postId,
-          user_id: userId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success && data.comments) {
-        setComments(data.comments);
-      }
-    } catch (error) {
-      console.error('Error loading comments:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddComment = async () => {
-    if (!newComment.trim() || !postId || submitting) return;
-
-    setSubmitting(true);
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+  const handleLike = async () => {
+    const newLiked = !localLiked;
+    setLocalLiked(newLiked);
+    setLocalLikes(prev => newLiked ? prev + 1 : prev - 1);
 
     try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'add-comment',
-          post_id: postId,
-          user_id: userId,
-          content: newComment.trim(),
-          parent_id: replyingTo,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        setNewComment('');
-        setReplyingTo(null);
-        await loadComments();
-        if (onCommentAdded) onCommentAdded();
-      }
+      await onLike(comment.id, newLiked);
     } catch (error) {
-      console.error('Error adding comment:', error);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleLikeComment = async (commentId: string, liked: boolean) => {
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: liked ? 'like-comment' : 'unlike-comment',
-          comment_id: commentId,
-          user_id: userId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        setComments(prev =>
-          prev.map(comment =>
-            comment.id === commentId
-              ? { ...comment, likes_count: data.likes, user_liked: liked }
-              : {
-                  ...comment,
-                  replies: comment.replies?.map(reply =>
-                    reply.id === commentId
-                      ? { ...reply, likes_count: data.likes, user_liked: liked }
-                      : reply
-                  ),
-                }
-          )
-        );
-      }
-    } catch (error) {
-      console.error('Error liking comment:', error);
+      setLocalLiked(!newLiked);
+      setLocalLikes(prev => newLiked ? prev - 1 : prev + 1);
     }
   };
 
@@ -185,163 +86,321 @@ export default function CommentsModal({
     return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
   };
 
-  const CommentItem = ({ comment, isReply = false }: { comment: Comment; isReply?: boolean }) => {
-    const [liked, setLiked] = useState(comment.user_liked);
-    const [likesCount, setLikesCount] = useState(comment.likes_count);
-
-    useEffect(() => {
-      setLiked(comment.user_liked);
-      setLikesCount(comment.likes_count);
-    }, [comment.user_liked, comment.likes_count]);
-
-    return (
-      <View style={[styles.commentItem, isReply && styles.replyItem]}>
-        <View style={styles.commentHeader}>
-          {comment.author.avatar_url ? (
-            <Image source={{ uri: comment.author.avatar_url }} style={styles.commentAvatar} />
-          ) : (
-            <View style={styles.commentAvatarPlaceholder}>
-              <Text style={styles.commentAvatarText}>
-                {getInitials(comment.author.nom, comment.author.prenom)}
-              </Text>
-            </View>
-          )}
-          <View style={styles.commentContent}>
-            <View style={styles.commentBubble}>
-              <Text style={styles.commentAuthor}>
-                {comment.author.prenom} {comment.author.nom}
-              </Text>
-              <Text style={styles.commentText}>{comment.content}</Text>
-            </View>
-            
-            <View style={styles.commentActions}>
-              <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
-              
-              {/* Compteur de likes cliquable */}
-              {likesCount > 0 && (
-                <>
-                  <Text style={styles.actionSeparator}>•</Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (Platform.OS !== 'web') {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                      setSelectedCommentForLikers(comment.id);
-                      setShowLikersModal(true);
-                    }}
-                  >
-                    <Text style={styles.likesCount}>
-                      {likesCount} {likesCount === 1 ? 'like' : 'likes'}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              
-              <Text style={styles.actionSeparator}>•</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  const newLiked = !liked;
-                  setLiked(newLiked);
-                  setLikesCount(prev => newLiked ? prev + 1 : prev - 1);
-                  handleLikeComment(comment.id, newLiked);
-                }}
-              >
-                <Text style={[styles.actionButton, liked && styles.actionButtonActive]}>
-                  {liked ? 'Aimé' : 'Aimer'}
-                </Text>
-              </TouchableOpacity>
-              
-              {!isReply && (
-                <>
-                  <Text style={styles.actionSeparator}>•</Text>
-                  <TouchableOpacity onPress={() => setReplyingTo(comment.id)}>
-                    <Text style={styles.actionButton}>Répondre</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-          </View>
-        </View>
-
-        {comment.replies && comment.replies.length > 0 && (
-          <View style={styles.repliesContainer}>
-            {comment.replies.map(reply => (
-              <CommentItem key={reply.id} comment={reply} isReply={true} />
-            ))}
+  return (
+    <View style={[styles.commentItem, isReply && styles.replyItem]}>
+      <View style={styles.commentHeader}>
+        {comment.author.avatar_url ? (
+          <Image source={{ uri: comment.author.avatar_url }} style={styles.commentAvatar} />
+        ) : (
+          <View style={styles.commentAvatarPlaceholder}>
+            <Text style={styles.commentAvatarText}>
+              {getInitials(comment.author.nom, comment.author.prenom)}
+            </Text>
           </View>
         )}
+        <View style={styles.commentContent}>
+          <View style={styles.commentBubble}>
+            <Text style={styles.commentAuthor}>
+              {comment.author.prenom} {comment.author.nom}
+            </Text>
+            <Text style={styles.commentText}>{comment.content}</Text>
+          </View>
+          <View style={styles.commentActions}>
+            <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
+            
+            {/* NOUVEAU : Compteur de likes cliquable */}
+            {localLikes > 0 && (
+              <>
+                <Text style={styles.actionSeparator}>•</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    onShowLikers(comment.id);
+                  }}
+                >
+                  <Text style={styles.likesCount}>
+                    {localLikes} {localLikes === 1 ? 'like' : 'likes'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+            
+            <Text style={styles.actionSeparator}>•</Text>
+            <TouchableOpacity
+              style={styles.likeButton}
+              onPress={handleLike}
+            >
+              <Text style={[styles.likeText, localLiked && styles.likeTextActive]}>
+                {localLiked ? 'Aimé' : 'Aimer'}
+              </Text>
+            </TouchableOpacity>
+            
+            {!isReply && (
+              <>
+                <Text style={styles.actionSeparator}>•</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    onReply(comment);
+                  }}
+                >
+                  <Text style={styles.replyButton}>Répondre</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
       </View>
-    );
+      {comment.replies && comment.replies.length > 0 && (
+        <View style={styles.repliesContainer}>
+          {comment.replies.map(reply => (
+            <CommentItem
+              key={reply.id}
+              comment={reply}
+              isReply={true}
+              onLike={onLike}
+              onReply={onReply}
+              onShowLikers={onShowLikers}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
+
+export default function CommentsModal({
+  visible,
+  postId,
+  userId,
+  onClose,
+  onCommentAdded,
+}: CommentsModalProps) {
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  
+  // NOUVEAU : States pour le modal des likers
+  const [showLikersModal, setShowLikersModal] = useState(false);
+  const [selectedCommentForLikers, setSelectedCommentForLikers] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible && postId) {
+      loadComments();
+    }
+  }, [visible, postId]);
+
+  const loadComments = async () => {
+    if (!postId) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app'
+        },
+        body: JSON.stringify({
+          action: 'get-comments',
+          post_id: postId,
+          user_id: userId,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success && data.comments) {
+        setComments(data.comments);
+      }
+    } catch (error) {
+      console.error('Error loading comments:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!commentText.trim() || !postId || submitting) return;
+
+    setSubmitting(true);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    try {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app'
+        },
+        body: JSON.stringify({
+          action: replyingTo ? 'reply-to-comment' : 'add-comment',
+          post_id: postId,
+          user_id: userId,
+          content: commentText.trim(),
+          parent_id: replyingTo?.id || null,
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setCommentText('');
+        setReplyingTo(null);
+        await loadComments();
+        onCommentAdded();
+      }
+    } catch (error) {
+      console.error('Error adding comment:', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleLikeComment = async (commentId: string, liked: boolean) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    try {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://harmonia-world.vercel.app'
+        },
+        body: JSON.stringify({
+          action: liked ? 'like-comment' : 'unlike-comment',
+          comment_id: commentId,
+          user_id: userId,
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        // Mettre à jour localement
+        const updateCommentLikes = (comments: Comment[]): Comment[] => {
+          return comments.map(comment => {
+            if (comment.id === commentId) {
+              return { ...comment, likes: data.likes, user_liked: liked };
+            }
+            if (comment.replies) {
+              return { ...comment, replies: updateCommentLikes(comment.replies) };
+            }
+            return comment;
+          });
+        };
+        setComments(updateCommentLikes(comments));
+      }
+    } catch (error) {
+      console.error('Error liking comment:', error);
+    }
+  };
+
+  // NOUVEAU : Fonction pour afficher les likers
+  const handleShowLikers = (commentId: string) => {
+    setSelectedCommentForLikers(commentId);
+    setShowLikersModal(true);
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}
+    >
       <KeyboardAvoidingView 
-        style={styles.container} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.modalContainer}
       >
-        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.backButton}>
-            <Ionicons name="chevron-back" size={28} color="#FFF" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Commentaires</Text>
-          <View style={styles.placeholder} />
-        </LinearGradient>
-
-        <ScrollView style={styles.commentsContainer} showsVerticalScrollIndicator={false}>
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#8A2BE2" />
-            </View>
-          ) : comments.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Ionicons name="chatbubble-outline" size={80} color="#CCC" />
-              <Text style={styles.emptyText}>Aucun commentaire</Text>
-              <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
-            </View>
-          ) : (
-            comments.map(comment => <CommentItem key={comment.id} comment={comment} />)
-          )}
-        </ScrollView>
-
-        {replyingTo && (
-          <View style={styles.replyingBanner}>
-            <Text style={styles.replyingText}>
-              Réponse à un commentaire
-            </Text>
-            <TouchableOpacity onPress={() => setReplyingTo(null)}>
-              <Ionicons name="close-circle" size={20} color="#8A2BE2" />
+        <TouchableOpacity 
+          style={styles.backdrop} 
+          activeOpacity={1} 
+          onPress={onClose}
+        />
+        <View style={styles.modalContent}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>Commentaires</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={28} color="#333" />
             </TouchableOpacity>
           </View>
-        )}
 
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Ajouter un commentaire..."
-            placeholderTextColor="#999"
-            value={newComment}
-            onChangeText={setNewComment}
-            multiline
-            maxLength={500}
-          />
-          <TouchableOpacity
-            style={[styles.sendButton, !newComment.trim() && styles.sendButtonDisabled]}
-            onPress={handleAddComment}
-            disabled={!newComment.trim() || submitting}
-          >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#FFF" />
+          {/* Comments List */}
+          <ScrollView style={styles.commentsList} showsVerticalScrollIndicator={false}>
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#8A2BE2" />
+              </View>
+            ) : comments.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
+                <Text style={styles.emptyText}>Aucun commentaire</Text>
+                <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
+              </View>
             ) : (
-              <Ionicons name="send" size={20} color="#FFF" />
+              comments.map(comment => (
+                <CommentItem
+                  key={comment.id}
+                  comment={comment}
+                  isReply={false}
+                  onLike={handleLikeComment}
+                  onReply={setReplyingTo}
+                  onShowLikers={handleShowLikers}
+                />
+              ))
             )}
-          </TouchableOpacity>
+          </ScrollView>
+
+          {/* Reply Indicator */}
+          {replyingTo && (
+            <View style={styles.replyingToBar}>
+              <Text style={styles.replyingToText}>
+                Répondre à {replyingTo.author.prenom}
+              </Text>
+              <TouchableOpacity onPress={() => setReplyingTo(null)}>
+                <Ionicons name="close-circle" size={20} color="#666" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Input */}
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder={replyingTo ? `Répondre à ${replyingTo.author.prenom}...` : "Ajouter un commentaire..."}
+              placeholderTextColor="#999"
+              value={commentText}
+              onChangeText={setCommentText}
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[styles.sendButton, (!commentText.trim() || submitting) && styles.sendButtonDisabled]}
+              onPress={handleAddComment}
+              disabled={!commentText.trim() || submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Ionicons name="send" size={20} color="#FFF" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
 
+      {/* NOUVEAU : Modal des likers */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -355,69 +414,85 @@ export default function CommentsModal({
 }
 
 const styles = StyleSheet.create({
-  container: {
+  modalContainer: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 55 : 20,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
-  },
-  backButton: {
-    padding: 4,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#FFF',
+    color: '#333',
   },
-  placeholder: {
-    width: 36,
+  closeButton: {
+    padding: 4,
   },
-  commentsContainer: {
+  commentsList: {
     flex: 1,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   loadingContainer: {
-    paddingVertical: 60,
+    paddingVertical: 40,
     alignItems: 'center',
   },
   emptyContainer: {
-    paddingVertical: 80,
+    paddingVertical: 60,
     alignItems: 'center',
-    paddingHorizontal: 40,
   },
   emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 16,
     color: '#999',
-    marginTop: 20,
+    marginTop: 12,
   },
   emptySubtext: {
     fontSize: 14,
     color: '#CCC',
-    marginTop: 8,
-    textAlign: 'center',
+    marginTop: 4,
   },
   commentItem: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    marginVertical: 8,
   },
   replyItem: {
-    paddingLeft: 60,
+    marginLeft: 40,
   },
   commentHeader: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'flex-start',
   },
   commentAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
+    marginRight: 12,
   },
   commentAvatarPlaceholder: {
     width: 36,
@@ -426,6 +501,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#8A2BE2',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 12,
   },
   commentAvatarText: {
     color: '#FFF',
@@ -436,88 +512,84 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   commentBubble: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
+    backgroundColor: '#F5F5F5',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   commentAuthor: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: 'bold',
     color: '#333',
     marginBottom: 4,
   },
   commentText: {
     fontSize: 14,
-    color: '#555',
+    color: '#333',
     lineHeight: 20,
   },
   commentActions: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 6,
-    marginLeft: 4,
-    gap: 6,
+    paddingHorizontal: 8,
+    gap: 8,
   },
   commentTime: {
     fontSize: 12,
     color: '#999',
+  },
+  actionSeparator: {
+    fontSize: 12,
+    color: '#CCC',
   },
   likesCount: {
     fontSize: 12,
     color: '#8A2BE2',
     fontWeight: '600',
   },
-  actionSeparator: {
-    fontSize: 12,
-    color: '#CCC',
+  likeButton: {
+    paddingVertical: 2,
   },
-  actionButton: {
+  likeText: {
     fontSize: 12,
     color: '#666',
     fontWeight: '600',
   },
-  actionButtonActive: {
+  likeTextActive: {
     color: '#FF0080',
+  },
+  replyButton: {
+    fontSize: 12,
+    color: '#8A2BE2',
+    fontWeight: '600',
   },
   repliesContainer: {
     marginTop: 8,
   },
-  replyingBanner: {
+  replyingToBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F0E6FF',
+    backgroundColor: '#F5F5F5',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E0D4FF',
+    borderTopColor: '#E0E0E0',
   },
-  replyingText: {
+  replyingToText: {
     fontSize: 13,
-    color: '#8A2BE2',
-    fontWeight: '600',
+    color: '#666',
+    fontStyle: 'italic',
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 12,
-    backgroundColor: '#FFF',
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    gap: 12,
+    borderTopColor: '#E0E0E0',
+    backgroundColor: '#FFF',
   },
   input: {
     flex: 1,
@@ -527,6 +599,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     maxHeight: 100,
+    marginRight: 8,
   },
   sendButton: {
     width: 40,
@@ -537,6 +610,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#CCC',
   },
 });
