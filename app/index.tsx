@@ -12,6 +12,7 @@ import {
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import HarmoniaLogo from '../components/HarmoniaLogo';
 
 const { width } = Dimensions.get('window');
 
@@ -26,8 +27,6 @@ export default function LandingPage() {
     <View style={styles.mainContainer}>
       <StatusBar style="dark" />
       
-      {/* Header géré automatiquement par _layout.tsx - Plus besoin de Stack.Screen ici */}
-      
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -40,7 +39,10 @@ export default function LandingPage() {
           imageStyle={{ opacity: 0.15 }}
         >
           <View style={styles.heroContent}>
-            <Text style={styles.logoText}>✨ HARMONIA</Text>
+            {/* LOGO AVEC COMPOSANT */}
+            <View style={styles.logoContainer}>
+              <HarmoniaLogo size={80} showText={true} theme="light" />
+            </View>
             
             <Text style={styles.heroTitle}>
               Révélez Votre <Text style={styles.textGradientBlue}>Talent</Text> au Monde
@@ -178,7 +180,11 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 40 },
   heroBackground: { width: width, height: 500, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   heroContent: { alignItems: 'center', paddingHorizontal: 20, marginTop: 60 },
-  logoText: { fontSize: 18, fontWeight: 'bold', letterSpacing: 2, color: '#8A2BE2', marginBottom: 20 },
+  // Nouveau style container pour le logo
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
   heroTitle: { fontSize: 36, fontWeight: '800', textAlign: 'center', color: '#333', lineHeight: 44, marginBottom: 10 },
   heroSubtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 30, fontStyle: 'italic' },
   textGradientBlue: { color: '#0072ff' },
