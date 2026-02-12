@@ -41,7 +41,7 @@ interface CommentsModalProps {
   onCommentAdded: () => void;
 }
 
-// ✅ COMPOSANT COMMENTAIRE (mis à jour avec compteur de likes cliquable)
+// ✅ COMPOSANT COMMENTAIRE avec vraies icônes
 const CommentItem = ({ 
   comment, 
   isReply, 
@@ -108,11 +108,12 @@ const CommentItem = ({
           <View style={styles.commentActions}>
             <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
             
-            {/* NOUVEAU : Compteur de likes cliquable */}
+            {/* Compteur de likes cliquable */}
             {localLikes > 0 && (
               <>
                 <Text style={styles.actionSeparator}>•</Text>
                 <TouchableOpacity
+                  style={styles.likesCountButton}
                   onPress={() => {
                     if (Platform.OS !== 'web') {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -128,10 +129,17 @@ const CommentItem = ({
             )}
             
             <Text style={styles.actionSeparator}>•</Text>
+            
+            {/* NOUVEAU : Bouton like avec icône */}
             <TouchableOpacity
               style={styles.likeButton}
               onPress={handleLike}
             >
+              <Ionicons
+                name={localLiked ? 'heart' : 'heart-outline'}
+                size={16}
+                color={localLiked ? '#FF0080' : '#666'}
+              />
               <Text style={[styles.likeText, localLiked && styles.likeTextActive]}>
                 {localLiked ? 'Aimé' : 'Aimer'}
               </Text>
@@ -185,8 +193,6 @@ export default function CommentsModal({
   const [commentText, setCommentText] = useState('');
   const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  
-  // NOUVEAU : States pour le modal des likers
   const [showLikersModal, setShowLikersModal] = useState(false);
   const [selectedCommentForLikers, setSelectedCommentForLikers] = useState<string | null>(null);
 
@@ -286,7 +292,6 @@ export default function CommentsModal({
       const data = await response.json();
       
       if (data.success) {
-        // Mettre à jour localement
         const updateCommentLikes = (comments: Comment[]): Comment[] => {
           return comments.map(comment => {
             if (comment.id === commentId) {
@@ -305,7 +310,6 @@ export default function CommentsModal({
     }
   };
 
-  // NOUVEAU : Fonction pour afficher les likers
   const handleShowLikers = (commentId: string) => {
     setSelectedCommentForLikers(commentId);
     setShowLikersModal(true);
@@ -328,7 +332,6 @@ export default function CommentsModal({
           onPress={onClose}
         />
         <View style={styles.modalContent}>
-          {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Commentaires</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -336,7 +339,6 @@ export default function CommentsModal({
             </TouchableOpacity>
           </View>
 
-          {/* Comments List */}
           <ScrollView style={styles.commentsList} showsVerticalScrollIndicator={false}>
             {loading ? (
               <View style={styles.loadingContainer}>
@@ -362,7 +364,6 @@ export default function CommentsModal({
             )}
           </ScrollView>
 
-          {/* Reply Indicator */}
           {replyingTo && (
             <View style={styles.replyingToBar}>
               <Text style={styles.replyingToText}>
@@ -374,7 +375,6 @@ export default function CommentsModal({
             </View>
           )}
 
-          {/* Input */}
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
@@ -400,7 +400,6 @@ export default function CommentsModal({
         </View>
       </KeyboardAvoidingView>
 
-      {/* NOUVEAU : Modal des likers */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -543,12 +542,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#CCC',
   },
+  likesCountButton: {
+    paddingVertical: 2,
+  },
   likesCount: {
     fontSize: 12,
     color: '#8A2BE2',
     fontWeight: '600',
   },
   likeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingVertical: 2,
   },
   likeText: {
