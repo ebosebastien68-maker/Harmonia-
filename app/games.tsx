@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Platform,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 
+const { width } = Dimensions.get('window');
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/games';
 
 interface Game {
@@ -23,30 +25,18 @@ interface Game {
   description: string;
 }
 
-const GAME_ICONS: { [key: string]: string } = {
-  'vrai_faux': 'help-circle',
-  'awale': 'game-controller',
-  'ludo': 'dice',
-  'dames': 'grid',
-  'nombres': 'calculator',
-  'photo': 'camera',
-  'comedie': 'happy',
-  'music': 'musical-notes',
-  'piano': 'musical-note',
-  'guitare': 'radio',
-};
-
-const GAME_COLORS: { [key: string]: string[] } = {
-  'vrai_faux': ['#10B981', '#059669'],
-  'awale': ['#F59E0B', '#D97706'],
-  'ludo': ['#EF4444', '#DC2626'],
-  'dames': ['#6366F1', '#4F46E5'],
-  'nombres': ['#8B5CF6', '#7C3AED'],
-  'photo': ['#EC4899', '#DB2777'],
-  'comedie': ['#F97316', '#EA580C'],
-  'music': ['#14B8A6', '#0D9488'],
-  'piano': ['#06B6D4', '#0891B2'],
-  'guitare': ['#3B82F6', '#2563EB'],
+// Configuration des icônes et couleurs par jeu
+const GAME_CONFIG: { [key: string]: { icon: string; color: string } } = {
+  'vrai_faux': { icon: 'help-circle', color: '#10B981' },
+  'awale': { icon: 'game-controller', color: '#F59E0B' },
+  'ludo': { icon: 'dice', color: '#EF4444' },
+  'dames': { icon: 'grid', color: '#6366F1' },
+  'nombres': { icon: 'calculator', color: '#8B5CF6' },
+  'photo': { icon: 'camera', color: '#EC4899' },
+  'comedie': { icon: 'happy', color: '#F97316' },
+  'music': { icon: 'musical-notes', color: '#14B8A6' },
+  'piano': { icon: 'musical-note', color: '#06B6D4' },
+  'guitare': { icon: 'radio', color: '#3B82F6' },
 };
 
 export default function GamesScreen() {
@@ -103,66 +93,43 @@ export default function GamesScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    // Router vers le jeu spécifique
-    switch (game.key_name) {
-      case 'vrai_faux':
-        router.push('/games/vrai-faux');
-        break;
-      case 'awale':
-        router.push('/games/awale');
-        break;
-      case 'ludo':
-        router.push('/games/ludo');
-        break;
-      case 'dames':
-        router.push('/games/dames');
-        break;
-      case 'nombres':
-        router.push('/games/nombres');
-        break;
-      case 'photo':
-        router.push('/games/photo');
-        break;
-      case 'comedie':
-        router.push('/games/comedie');
-        break;
-      case 'music':
-        router.push('/games/music');
-        break;
-      case 'piano':
-        router.push('/games/piano');
-        break;
-      case 'guitare':
-        router.push('/games/guitare');
-        break;
-      default:
-        console.log('Game not implemented:', game.key_name);
+    // Navigation vers le jeu spécifique
+    const routes: { [key: string]: string } = {
+      'vrai_faux': '/games/vrai-faux',
+      'awale': '/games/awale',
+      'ludo': '/games/ludo',
+      'dames': '/games/dames',
+      'nombres': '/games/nombres',
+      'photo': '/games/photo',
+      'comedie': '/games/comedie',
+      'music': '/games/music',
+      'piano': '/games/piano',
+      'guitare': '/games/guitare',
+    };
+
+    const route = routes[game.key_name];
+    if (route) {
+      router.push(route as any);
+    } else {
+      console.log('Game not implemented:', game.key_name);
     }
   };
 
-  const GameCard = ({ game }: { game: Game }) => {
-    const icon = GAME_ICONS[game.key_name] || 'game-controller';
-    const colors = GAME_COLORS[game.key_name] || ['#8A2BE2', '#4B0082'];
-
+  const GameIcon = ({ game }: { game: Game }) => {
+    const config = GAME_CONFIG[game.key_name] || { icon: 'game-controller', color: '#8A2BE2' };
+    
     return (
       <TouchableOpacity
-        style={styles.gameCard}
+        style={styles.gameIcon}
         onPress={() => handleGamePress(game)}
-        activeOpacity={0.9}
+        activeOpacity={0.7}
       >
-        <LinearGradient colors={colors} style={styles.gameGradient}>
-          <View style={styles.gameIcon}>
-            <Ionicons name={icon as any} size={40} color="#FFF" />
-          </View>
-          <Text style={styles.gameTitle}>{game.title}</Text>
-          <Text style={styles.gameDescription} numberOfLines={2}>
-            {game.description}
-          </Text>
-          <View style={styles.playButton}>
-            <Ionicons name="play" size={16} color="#FFF" />
-            <Text style={styles.playButtonText}>Jouer</Text>
-          </View>
-        </LinearGradient>
+        <View style={[styles.iconCircle, { backgroundColor: config.color }]}>
+          <Ionicons name={config.icon as any} size={32} color="#FFF" />
+        </View>
+        <Text style={styles.gameLabel} numberOfLines={2}>
+          {game.title}
+        </Text>
       </TouchableOpacity>
     );
   };
@@ -171,8 +138,12 @@ export default function GamesScreen() {
     <View style={styles.container}>
       {/* Header */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        <Text style={styles.headerTitle}>🎮 Jeux</Text>
-        <Text style={styles.headerSubtitle}>Choisissez votre jeu</Text>
+        <View style={styles.headerContent}>
+          <View>
+            <Text style={styles.headerTitle}>🎮 Jeux</Text>
+            <Text style={styles.headerSubtitle}>Choisissez votre jeu préféré</Text>
+          </View>
+        </View>
       </LinearGradient>
 
       {/* Content */}
@@ -185,16 +156,28 @@ export default function GamesScreen() {
         <View style={styles.emptyContainer}>
           <Ionicons name="game-controller-outline" size={80} color="#CCC" />
           <Text style={styles.emptyText}>Aucun jeu disponible</Text>
+          <Text style={styles.emptySubtext}>Revenez plus tard</Text>
         </View>
       ) : (
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.gamesGrid}
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {games.map((game) => (
-            <GameCard key={game.id} game={game} />
-          ))}
+          {/* Grille d'icônes */}
+          <View style={styles.gamesGrid}>
+            {games.map((game) => (
+              <GameIcon key={game.id} game={game} />
+            ))}
+          </View>
+
+          {/* Section info */}
+          <View style={styles.infoSection}>
+            <Ionicons name="information-circle" size={24} color="#8A2BE2" />
+            <Text style={styles.infoText}>
+              Tapez sur un jeu pour commencer à jouer
+            </Text>
+          </View>
         </ScrollView>
       )}
     </View>
@@ -211,14 +194,19 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     paddingHorizontal: 20,
   },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   headerTitle: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#FFF',
-    marginBottom: 5,
+    marginBottom: 4,
   },
   headerSubtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#E0D0FF',
   },
   loadingContainer: {
@@ -238,21 +226,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyText: {
-    fontSize: 18,
+    fontSize: 20,
+    fontWeight: '600',
     color: '#999',
     marginTop: 20,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#CCC',
+    marginTop: 8,
   },
   scrollView: {
     flex: 1,
   },
-  gamesGrid: {
-    padding: 16,
-    paddingBottom: 100,
+  scrollContent: {
+    paddingBottom: 120,
   },
-  gameCard: {
-    borderRadius: 20,
-    marginBottom: 16,
-    overflow: 'hidden',
+  gamesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 16,
+    paddingTop: 24,
+  },
+  gameIcon: {
+    width: (width - 64) / 3, // 3 colonnes avec espaces
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  iconCircle: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -265,44 +272,27 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  gameGradient: {
-    padding: 24,
-    minHeight: 180,
+  gameLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+    lineHeight: 16,
   },
-  gameIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  gameTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 8,
-  },
-  gameDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  playButton: {
+  infoSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    gap: 6,
+    backgroundColor: '#F0E6FF',
+    marginHorizontal: 20,
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    gap: 12,
   },
-  playButtonText: {
-    color: '#FFF',
+  infoText: {
+    flex: 1,
     fontSize: 14,
-    fontWeight: 'bold',
+    color: '#8A2BE2',
+    lineHeight: 20,
   },
 });
