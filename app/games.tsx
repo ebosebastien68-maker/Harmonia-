@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,126 +6,124 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
-  ActivityIndicator,
   Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 
 const { width } = Dimensions.get('window');
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/games';
 
-interface Game {
-  id: string;
-  key_name: string;
-  title: string;
-  description: string;
-}
+// =====================================================
+// CONFIGURATION DES JEUX (STATIQUE - PAS DE BDD)
+// =====================================================
+const GAMES = [
+  {
+    id: '1',
+    key_name: 'vrai_faux',
+    title: 'Vrai ou Faux',
+    icon: 'help-circle',
+    color: '#10B981',
+    route: '/games/vrai-faux',
+  },
+  {
+    id: '2',
+    key_name: 'awale',
+    title: 'Awalé',
+    icon: 'game-controller',
+    color: '#F59E0B',
+    route: '/games/awale',
+  },
+  {
+    id: '3',
+    key_name: 'ludo',
+    title: 'Ludo',
+    icon: 'dice',
+    color: '#EF4444',
+    route: '/games/ludo',
+  },
+  {
+    id: '4',
+    key_name: 'dames',
+    title: 'Dames',
+    icon: 'grid',
+    color: '#6366F1',
+    route: '/games/dames',
+  },
+  {
+    id: '5',
+    key_name: 'nombres',
+    title: 'Nombres',
+    icon: 'calculator',
+    color: '#8B5CF6',
+    route: '/games/nombres',
+  },
+  {
+    id: '6',
+    key_name: 'photo',
+    title: 'Photo',
+    icon: 'camera',
+    color: '#EC4899',
+    route: '/games/photo',
+  },
+  {
+    id: '7',
+    key_name: 'comedie',
+    title: 'Comédie',
+    icon: 'happy',
+    color: '#F97316',
+    route: '/games/comedie',
+  },
+  {
+    id: '8',
+    key_name: 'music',
+    title: 'Music',
+    icon: 'musical-notes',
+    color: '#14B8A6',
+    route: '/games/music',
+  },
+  {
+    id: '9',
+    key_name: 'piano',
+    title: 'Piano',
+    icon: 'musical-note',
+    color: '#06B6D4',
+    route: '/games/piano',
+  },
+  {
+    id: '10',
+    key_name: 'guitare',
+    title: 'Guitare',
+    icon: 'radio',
+    color: '#3B82F6',
+    route: '/games/guitare',
+  },
+];
 
-// Configuration des icônes et couleurs par jeu
-const GAME_CONFIG: { [key: string]: { icon: string; color: string } } = {
-  'vrai_faux': { icon: 'help-circle', color: '#10B981' },
-  'awale': { icon: 'game-controller', color: '#F59E0B' },
-  'ludo': { icon: 'dice', color: '#EF4444' },
-  'dames': { icon: 'grid', color: '#6366F1' },
-  'nombres': { icon: 'calculator', color: '#8B5CF6' },
-  'photo': { icon: 'camera', color: '#EC4899' },
-  'comedie': { icon: 'happy', color: '#F97316' },
-  'music': { icon: 'musical-notes', color: '#14B8A6' },
-  'piano': { icon: 'musical-note', color: '#06B6D4' },
-  'guitare': { icon: 'radio', color: '#3B82F6' },
-};
-
+// =====================================================
+// COMPOSANT PRINCIPAL
+// =====================================================
 export default function GamesScreen() {
   const router = useRouter();
-  const [games, setGames] = useState<Game[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string>('');
 
-  useEffect(() => {
-    loadUserAndGames();
-  }, []);
-
-  const loadUserAndGames = async () => {
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (session) {
-        const parsed = JSON.parse(session);
-        setUserId(parsed.user.id);
-      }
-
-      await loadGames();
-    } catch (error) {
-      console.error('Error loading:', error);
-    }
-  };
-
-  const loadGames = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'list-games',
-        }),
-      });
-
-      const data = await response.json();
-      if (data.success && data.games) {
-        setGames(data.games);
-      }
-    } catch (error) {
-      console.error('Error loading games:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGamePress = (game: Game) => {
+  const handleGamePress = (game: typeof GAMES[0]) => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    // Navigation vers le jeu spécifique
-    const routes: { [key: string]: string } = {
-      'vrai_faux': '/games/vrai-faux',
-      'awale': '/games/awale',
-      'ludo': '/games/ludo',
-      'dames': '/games/dames',
-      'nombres': '/games/nombres',
-      'photo': '/games/photo',
-      'comedie': '/games/comedie',
-      'music': '/games/music',
-      'piano': '/games/piano',
-      'guitare': '/games/guitare',
-    };
-
-    const route = routes[game.key_name];
-    if (route) {
-      router.push(route as any);
-    } else {
-      console.log('Game not implemented:', game.key_name);
-    }
+    router.push(game.route as any);
   };
 
-  const GameIcon = ({ game }: { game: Game }) => {
-    const config = GAME_CONFIG[game.key_name] || { icon: 'game-controller', color: '#8A2BE2' };
-    
+  const GameIcon = ({ game }: { game: typeof GAMES[0] }) => {
     return (
       <TouchableOpacity
         style={styles.gameIcon}
         onPress={() => handleGamePress(game)}
         activeOpacity={0.7}
       >
-        <View style={[styles.iconCircle, { backgroundColor: config.color }]}>
-          <Ionicons name={config.icon as any} size={32} color="#FFF" />
+        <View style={[styles.iconCircle, { backgroundColor: game.color }]}>
+          <Ionicons name={game.icon as any} size={32} color="#FFF" />
         </View>
         <Text style={styles.gameLabel} numberOfLines={2}>
           {game.title}
@@ -147,39 +145,26 @@ export default function GamesScreen() {
       </LinearGradient>
 
       {/* Content */}
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#8A2BE2" />
-          <Text style={styles.loadingText}>Chargement des jeux...</Text>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Grille d'icônes */}
+        <View style={styles.gamesGrid}>
+          {GAMES.map((game) => (
+            <GameIcon key={game.id} game={game} />
+          ))}
         </View>
-      ) : games.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="game-controller-outline" size={80} color="#CCC" />
-          <Text style={styles.emptyText}>Aucun jeu disponible</Text>
-          <Text style={styles.emptySubtext}>Revenez plus tard</Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Grille d'icônes */}
-          <View style={styles.gamesGrid}>
-            {games.map((game) => (
-              <GameIcon key={game.id} game={game} />
-            ))}
-          </View>
 
-          {/* Section info */}
-          <View style={styles.infoSection}>
-            <Ionicons name="information-circle" size={24} color="#8A2BE2" />
-            <Text style={styles.infoText}>
-              Tapez sur un jeu pour commencer à jouer
-            </Text>
-          </View>
-        </ScrollView>
-      )}
+        {/* Section info */}
+        <View style={styles.infoSection}>
+          <Ionicons name="information-circle" size={24} color="#8A2BE2" />
+          <Text style={styles.infoText}>
+            Tapez sur un jeu pour commencer à jouer
+          </Text>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -208,33 +193,6 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     color: '#E0D0FF',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#999',
-    marginTop: 12,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#999',
-    marginTop: 20,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#CCC',
-    marginTop: 8,
   },
   scrollView: {
     flex: 1,
@@ -296,3 +254,4 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+          
