@@ -11,21 +11,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
-interface ComingSoonProps {
+interface EnDeveloppementProps {
   title: string;
-  icon?: string;
-  color?: string;
-  description?: string;
-  estimatedDate?: string;
+  icon: string;
+  color: string;
 }
 
-export default function ComingSoon({
-  title,
-  icon = 'construct',
-  color = '#8A2BE2',
-  description,
-  estimatedDate,
-}: ComingSoonProps) {
+export default function EnDeveloppement({ title, icon, color }: EnDeveloppementProps) {
   const router = useRouter();
 
   const handleGoBack = () => {
@@ -35,10 +27,20 @@ export default function ComingSoon({
     router.back();
   };
 
+  // Calculer la couleur plus foncée pour le gradient
+  const darkerColor = color.replace(/[0-9A-F]{2}$/, (hex) => {
+    const num = parseInt(hex, 16);
+    const darker = Math.max(0, num - 40);
+    return darker.toString(16).padStart(2, '0');
+  });
+
   return (
     <View style={styles.container}>
       {/* Header */}
-      <LinearGradient colors={[color, '#4B0082']} style={styles.header}>
+      <LinearGradient 
+        colors={[color, darkerColor]} 
+        style={styles.header}
+      >
         <TouchableOpacity onPress={handleGoBack} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color="#FFF" />
         </TouchableOpacity>
@@ -47,59 +49,20 @@ export default function ComingSoon({
 
       {/* Content */}
       <View style={styles.content}>
-        <View style={[styles.iconContainer, { backgroundColor: color }]}>
-          <Ionicons name={icon as any} size={80} color="#FFF" />
+        <View style={styles.iconContainer}>
+          <Ionicons name={icon as any} size={80} color={color} />
         </View>
 
-        <Text style={styles.title}>Bientôt disponible !</Text>
+        <Text style={styles.title}>🚧 En développement</Text>
         
-        {description && (
-          <Text style={styles.description}>{description}</Text>
-        )}
-
-        {estimatedDate && (
-          <View style={styles.dateContainer}>
-            <Ionicons name="calendar-outline" size={20} color="#8A2BE2" />
-            <Text style={styles.dateText}>Disponible : {estimatedDate}</Text>
-          </View>
-        )}
-
-        <View style={styles.featuresContainer}>
-          <Text style={styles.featuresTitle}>Ce qui vous attend :</Text>
-          
-          <View style={styles.feature}>
-            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-            <Text style={styles.featureText}>Compétitions passionnantes</Text>
-          </View>
-          
-          <View style={styles.feature}>
-            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-            <Text style={styles.featureText}>Classements en temps réel</Text>
-          </View>
-          
-          <View style={styles.feature}>
-            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-            <Text style={styles.featureText}>Récompenses exclusives</Text>
-          </View>
-          
-          <View style={styles.feature}>
-            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-            <Text style={styles.featureText}>Communauté active</Text>
-          </View>
-        </View>
-
-        <View style={styles.ctaContainer}>
-          <LinearGradient colors={['#FFD700', '#FF0080']} style={styles.ctaGradient}>
-            <Ionicons name="notifications" size={24} color="#FFF" />
-            <Text style={styles.ctaText}>
-              Activez les notifications pour être informé du lancement !
-            </Text>
-          </LinearGradient>
-        </View>
+        <Text style={styles.description}>
+          Cette fonctionnalité sera bientôt disponible.{'\n'}
+          Revenez plus tard !
+        </Text>
 
         <TouchableOpacity style={styles.backHomeButton} onPress={handleGoBack}>
-          <Ionicons name="home" size={20} color="#8A2BE2" />
-          <Text style={styles.backHomeText}>Retour à l'Arena</Text>
+          <Ionicons name="arrow-back" size={20} color="#FFF" />
+          <Text style={styles.backHomeText}>Retour</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -130,33 +93,34 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingTop: 40,
   },
   iconContainer: {
     width: 140,
     height: 140,
     borderRadius: 70,
+    backgroundColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 30,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
       },
       android: {
-        elevation: 10,
+        elevation: 6,
       },
     }),
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 12,
+    marginBottom: 16,
     textAlign: 'center',
   },
   description: {
@@ -164,89 +128,31 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     lineHeight: 24,
-    marginBottom: 20,
-  },
-  dateContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0E6FF',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    gap: 8,
-    marginBottom: 30,
-  },
-  dateText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8A2BE2',
-  },
-  featuresContainer: {
-    width: '100%',
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 24,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  featuresTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
-  },
-  feature: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-  },
-  featureText: {
-    fontSize: 15,
-    color: '#555',
-  },
-  ctaContainer: {
-    width: '100%',
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 24,
-  },
-  ctaGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    gap: 12,
-  },
-  ctaText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFF',
-    lineHeight: 20,
+    marginBottom: 40,
   },
   backHomeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0E6FF',
+    backgroundColor: '#8A2BE2',
     paddingVertical: 14,
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
     borderRadius: 12,
     gap: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#8A2BE2',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 6,
+      },
+    }),
   },
   backHomeText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#8A2BE2',
+    color: '#FFF',
   },
 });
-    
