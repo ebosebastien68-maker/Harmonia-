@@ -16,7 +16,7 @@ import * as Haptics from 'expo-haptics';
 const { width } = Dimensions.get('window');
 
 // =====================================================
-// CONFIGURATION DES ACTIVITÉS
+// CONFIGURATION DES ACTIVITÉS (STATIQUE)
 // =====================================================
 const CATEGORIES = [
   {
@@ -26,11 +26,11 @@ const CATEGORIES = [
     color: '#8B5CF6',
     description: 'Affrontez-vous et gagnez',
     items: [
-      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', route: '/arena/vrai-faux' },
-      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', route: '/arena/awale' },
-      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', route: '/arena/ludo' },
-      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', route: '/arena/dames' },
-      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', route: '/arena/nombres' },
+      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', route: '/games/vrai-faux' },
+      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', route: '/games/awale' },
+      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', route: '/games/ludo' },
+      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', route: '/games/dames' },
+      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', route: '/games/nombres' },
     ],
   },
   {
@@ -40,9 +40,9 @@ const CATEGORIES = [
     color: '#EC4899',
     description: 'Exprimez votre créativité',
     items: [
-      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', route: '/arena/photo' },
-      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', route: '/arena/dessin' },
-      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', route: '/arena/design' },
+      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', route: '/games/photo' },
+      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', route: '/games/dessin' },
+      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', route: '/games/design' },
     ],
   },
   {
@@ -52,9 +52,9 @@ const CATEGORIES = [
     color: '#F59E0B',
     description: 'Montrez vos talents',
     items: [
-      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', route: '/arena/comedie' },
-      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', route: '/arena/danse' },
-      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', route: '/arena/theatre' },
+      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', route: '/games/comedie' },
+      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', route: '/games/danse' },
+      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', route: '/games/theatre' },
     ],
   },
   {
@@ -64,10 +64,10 @@ const CATEGORIES = [
     color: '#14B8A6',
     description: 'Faites vibrer votre audience',
     items: [
-      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', route: '/arena/music' },
-      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', route: '/arena/piano' },
-      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', route: '/arena/guitare' },
-      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', route: '/arena/djing' },
+      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', route: '/games/music' },
+      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', route: '/games/piano' },
+      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', route: '/games/guitare' },
+      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', route: '/games/djing' },
     ],
   },
 ];
@@ -75,7 +75,7 @@ const CATEGORIES = [
 // =====================================================
 // COMPOSANT PRINCIPAL
 // =====================================================
-export default function ArenaScreen() {
+export default function GamesScreen() {
   const router = useRouter();
 
   const handleItemPress = (item: any) => {
@@ -124,9 +124,9 @@ export default function ArenaScreen() {
       {/* Header avec Hero */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
         <View style={styles.heroSection}>
-          <Text style={styles.heroEmoji}>🏆</Text>
-          <Text style={styles.heroTitle}>Arena Harmonia</Text>
-          <Text style={styles.heroSubtitle}>Là où les talents s'affrontent et brillent</Text>
+          <Text style={styles.heroEmoji}>🎮</Text>
+          <Text style={styles.heroTitle}>Centre de Divertissement</Text>
+          <Text style={styles.heroSubtitle}>Révélez votre talent au monde</Text>
           
           <View style={styles.heroBadges}>
             <View style={styles.heroBadge}>
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   heroTitle: {
-    fontSize: 36,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#FFF',
     marginBottom: 8,
@@ -343,3 +343,4 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 });
+          
