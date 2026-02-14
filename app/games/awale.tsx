@@ -11,7 +11,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
-export default function AwaleGame() {
+interface EnDeveloppementProps {
+  title: string;
+  icon: string;
+  color: string;
+}
+
+export default function EnDeveloppement({ title, icon, color }: EnDeveloppementProps) {
   const router = useRouter();
 
   const handleGoBack = () => {
@@ -21,20 +27,30 @@ export default function AwaleGame() {
     router.back();
   };
 
+  // Calculer la couleur plus foncée pour le gradient
+  const darkerColor = color.replace(/[0-9A-F]{2}$/, (hex) => {
+    const num = parseInt(hex, 16);
+    const darker = Math.max(0, num - 40);
+    return darker.toString(16).padStart(2, '0');
+  });
+
   return (
     <View style={styles.container}>
       {/* Header */}
-      <LinearGradient colors={['#F59E0B', '#D97706']} style={styles.header}>
+      <LinearGradient 
+        colors={[color, darkerColor]} 
+        style={styles.header}
+      >
         <TouchableOpacity onPress={handleGoBack} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Awalé</Text>
+        <Text style={styles.headerTitle}>{title}</Text>
       </LinearGradient>
 
       {/* Content */}
       <View style={styles.content}>
         <View style={styles.iconContainer}>
-          <Ionicons name="extension-puzzle" size={80} color="#F59E0B" />
+          <Ionicons name={icon as any} size={80} color={color} />
         </View>
 
         <Text style={styles.title}>🚧 En développement</Text>
