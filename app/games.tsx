@@ -210,18 +210,14 @@ export default function GamesScreen() {
         onRequestClose={handleCloseGame}
       >
         <View style={styles.modalContainer}>
-          {/* Bouton de fermeture */}
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={handleCloseGame}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="close-circle" size={36} color="#8A2BE2" />
-          </TouchableOpacity>
-
-          {/* Affichage du composant de jeu */}
+          {/* Affichage du composant de jeu avec ses props */}
           {selectedGame && selectedGame.component && (
-            <selectedGame.component />
+            <selectedGame.component 
+              title={selectedGame.title}
+              icon={selectedGame.icon}
+              color={selectedGame.color}
+              onClose={handleCloseGame}
+            />
           )}
         </View>
       </Modal>
@@ -396,24 +392,4 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFF',
   },
-  closeButton: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 20,
-    right: 20,
-    zIndex: 1000,
-    backgroundColor: '#FFF',
-    borderRadius: 18,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
 });
-        
