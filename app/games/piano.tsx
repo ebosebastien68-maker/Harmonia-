@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -15,16 +14,18 @@ interface EnDeveloppementProps {
   title: string;
   icon: string;
   color: string;
+  onClose?: () => void;  // ← AJOUT : fonction pour fermer le modal
 }
 
-export default function EnDeveloppement({ title, icon, color }: EnDeveloppementProps) {
-  const router = useRouter();
-
+export default function EnDeveloppement({ title, icon, color, onClose }: EnDeveloppementProps) {
   const handleGoBack = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    router.back();
+    // Au lieu de router.back(), on appelle onClose
+    if (onClose) {
+      onClose();
+    }
   };
 
   // Calculer la couleur plus foncée pour le gradient
@@ -156,4 +157,4 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
 });
-  
+    
