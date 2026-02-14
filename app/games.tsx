@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -7,16 +7,35 @@ import {
   TouchableOpacity,
   Platform,
   Dimensions,
+  Modal,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
+// =====================================================
+// IMPORTS DES COMPOSANTS DE JEUX
+// =====================================================
+import VraiFaux from './games/vrai-faux';
+import Awale from './games/awale';
+import Ludo from './games/ludo';
+import Dames from './games/dames';
+import Nombres from './games/nombres';
+import Photo from './games/photo';
+import Dessin from './games/dessin';
+import Design from './games/design';
+import Comedie from './games/comedie';
+import Danse from './games/danse';
+import Theatre from './games/theatre';
+import Music from './games/music';
+import Piano from './games/piano';
+import Guitare from './games/guitare';
+import Djing from './games/djing';
+
 const { width } = Dimensions.get('window');
 
 // =====================================================
-// CONFIGURATION DES ACTIVITÉS (STATIQUE)
+// CONFIGURATION DES ACTIVITÉS
 // =====================================================
 const CATEGORIES = [
   {
@@ -26,11 +45,11 @@ const CATEGORIES = [
     color: '#8B5CF6',
     description: 'Affrontez-vous et gagnez',
     items: [
-      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', route: '/games/vrai-faux' },
-      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', route: '/games/awale' },
-      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', route: '/games/ludo' },
-      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', route: '/games/dames' },
-      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', route: '/games/nombres' },
+      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', component: VraiFaux },
+      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', component: Awale },
+      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', component: Ludo },
+      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', component: Dames },
+      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', component: Nombres },
     ],
   },
   {
@@ -40,9 +59,9 @@ const CATEGORIES = [
     color: '#EC4899',
     description: 'Exprimez votre créativité',
     items: [
-      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', route: '/games/photo' },
-      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', route: '/games/dessin' },
-      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', route: '/games/design' },
+      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', component: Photo },
+      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', component: Dessin },
+      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', component: Design },
     ],
   },
   {
@@ -52,9 +71,9 @@ const CATEGORIES = [
     color: '#F59E0B',
     description: 'Montrez vos talents',
     items: [
-      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', route: '/games/comedie' },
-      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', route: '/games/danse' },
-      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', route: '/games/theatre' },
+      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', component: Comedie },
+      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', component: Danse },
+      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', component: Theatre },
     ],
   },
   {
@@ -64,10 +83,10 @@ const CATEGORIES = [
     color: '#14B8A6',
     description: 'Faites vibrer votre audience',
     items: [
-      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', route: '/games/music' },
-      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', route: '/games/piano' },
-      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', route: '/games/guitare' },
-      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', route: '/games/djing' },
+      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', component: Music },
+      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', component: Piano },
+      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', component: Guitare },
+      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', component: Djing },
     ],
   },
 ];
@@ -76,13 +95,20 @@ const CATEGORIES = [
 // COMPOSANT PRINCIPAL
 // =====================================================
 export default function GamesScreen() {
-  const router = useRouter();
+  const [selectedGame, setSelectedGame] = useState<any>(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   const handleItemPress = (item: any) => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    router.push(item.route as any);
+    setSelectedGame(item);
+    setModalVisible(true);
+  };
+
+  const handleCloseGame = () => {
+    setModalVisible(false);
+    setTimeout(() => setSelectedGame(null), 300);
   };
 
   const CategorySection = ({ category }: { category: typeof CATEGORIES[0] }) => {
@@ -175,6 +201,30 @@ export default function GamesScreen() {
           </Text>
         </View>
       </ScrollView>
+
+      {/* Modal pour afficher le jeu sélectionné */}
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={handleCloseGame}
+      >
+        <View style={styles.modalContainer}>
+          {/* Bouton de fermeture */}
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={handleCloseGame}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="close-circle" size={36} color="#8A2BE2" />
+          </TouchableOpacity>
+
+          {/* Affichage du composant de jeu */}
+          {selectedGame && selectedGame.component && (
+            <selectedGame.component />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -271,7 +321,7 @@ const styles = StyleSheet.create({
     marginLeft: -8,
   },
   itemIcon: {
-    width: (width - 64) / 4, // 4 colonnes
+    width: (width - 64) / 4,
     alignItems: 'center',
     marginBottom: 20,
   },
@@ -342,5 +392,28 @@ const styles = StyleSheet.create({
     color: '#8A2BE2',
     lineHeight: 18,
   },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFF',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 20,
+    right: 20,
+    zIndex: 1000,
+    backgroundColor: '#FFF',
+    borderRadius: 18,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
+  },
 });
-      
+        
