@@ -16,130 +16,131 @@ import * as Haptics from 'expo-haptics';
 const { width } = Dimensions.get('window');
 
 // =====================================================
-// CONFIGURATION DES JEUX (STATIQUE - PAS DE BDD)
+// CONFIGURATION DES ACTIVITÉS
 // =====================================================
-const GAMES = [
+const CATEGORIES = [
   {
-    id: '1',
-    key_name: 'vrai_faux',
-    title: 'Vrai ou Faux',
-    icon: 'help-circle',
-    color: '#10B981',
-    route: '/games/vrai-faux',
-  },
-  {
-    id: '2',
-    key_name: 'awale',
-    title: 'Awalé',
+    id: 'games',
+    title: 'Jeux',
     icon: 'game-controller',
-    color: '#F59E0B',
-    route: '/games/awale',
-  },
-  {
-    id: '3',
-    key_name: 'ludo',
-    title: 'Ludo',
-    icon: 'dice',
-    color: '#EF4444',
-    route: '/games/ludo',
-  },
-  {
-    id: '4',
-    key_name: 'dames',
-    title: 'Dames',
-    icon: 'grid',
-    color: '#6366F1',
-    route: '/games/dames',
-  },
-  {
-    id: '5',
-    key_name: 'nombres',
-    title: 'Nombres',
-    icon: 'calculator',
     color: '#8B5CF6',
-    route: '/games/nombres',
+    description: 'Affrontez-vous et gagnez',
+    items: [
+      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', route: '/arena/vrai-faux' },
+      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', route: '/arena/awale' },
+      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', route: '/arena/ludo' },
+      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', route: '/arena/dames' },
+      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', route: '/arena/nombres' },
+    ],
   },
   {
-    id: '6',
-    key_name: 'photo',
-    title: 'Photo',
-    icon: 'camera',
+    id: 'arts',
+    title: 'Arts',
+    icon: 'brush',
     color: '#EC4899',
-    route: '/games/photo',
+    description: 'Exprimez votre créativité',
+    items: [
+      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', route: '/arena/photo' },
+      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', route: '/arena/dessin' },
+      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', route: '/arena/design' },
+    ],
   },
   {
-    id: '7',
-    key_name: 'comedie',
-    title: 'Comédie',
-    icon: 'happy',
-    color: '#F97316',
-    route: '/games/comedie',
+    id: 'performances',
+    title: 'Performances',
+    icon: 'mic',
+    color: '#F59E0B',
+    description: 'Montrez vos talents',
+    items: [
+      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', route: '/arena/comedie' },
+      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', route: '/arena/danse' },
+      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', route: '/arena/theatre' },
+    ],
   },
   {
-    id: '8',
-    key_name: 'music',
-    title: 'Music',
+    id: 'music',
+    title: 'Musique',
     icon: 'musical-notes',
     color: '#14B8A6',
-    route: '/games/music',
-  },
-  {
-    id: '9',
-    key_name: 'piano',
-    title: 'Piano',
-    icon: 'musical-note',
-    color: '#06B6D4',
-    route: '/games/piano',
-  },
-  {
-    id: '10',
-    key_name: 'guitare',
-    title: 'Guitare',
-    icon: 'radio',
-    color: '#3B82F6',
-    route: '/games/guitare',
+    description: 'Faites vibrer votre audience',
+    items: [
+      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', route: '/arena/music' },
+      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', route: '/arena/piano' },
+      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', route: '/arena/guitare' },
+      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', route: '/arena/djing' },
+    ],
   },
 ];
 
 // =====================================================
 // COMPOSANT PRINCIPAL
 // =====================================================
-export default function GamesScreen() {
+export default function ArenaScreen() {
   const router = useRouter();
 
-  const handleGamePress = (game: typeof GAMES[0]) => {
+  const handleItemPress = (item: any) => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-
-    router.push(game.route as any);
+    router.push(item.route as any);
   };
 
-  const GameIcon = ({ game }: { game: typeof GAMES[0] }) => {
+  const CategorySection = ({ category }: { category: typeof CATEGORIES[0] }) => {
     return (
-      <TouchableOpacity
-        style={styles.gameIcon}
-        onPress={() => handleGamePress(game)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.iconCircle, { backgroundColor: game.color }]}>
-          <Ionicons name={game.icon as any} size={32} color="#FFF" />
+      <View style={styles.categorySection}>
+        <View style={styles.categoryHeader}>
+          <View style={[styles.categoryIconContainer, { backgroundColor: category.color }]}>
+            <Ionicons name={category.icon as any} size={24} color="#FFF" />
+          </View>
+          <View style={styles.categoryInfo}>
+            <Text style={styles.categoryTitle}>{category.title}</Text>
+            <Text style={styles.categoryDescription}>{category.description}</Text>
+          </View>
         </View>
-        <Text style={styles.gameLabel} numberOfLines={2}>
-          {game.title}
-        </Text>
-      </TouchableOpacity>
+
+        <View style={styles.itemsGrid}>
+          {category.items.map((item) => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.itemIcon}
+              onPress={() => handleItemPress(item)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: item.color }]}>
+                <Ionicons name={item.icon as any} size={28} color="#FFF" />
+              </View>
+              <Text style={styles.itemLabel} numberOfLines={2}>
+                {item.title}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
     );
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header avec Hero */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.headerTitle}>🎮 Jeux</Text>
-            <Text style={styles.headerSubtitle}>Choisissez votre jeu préféré</Text>
+        <View style={styles.heroSection}>
+          <Text style={styles.heroEmoji}>🏆</Text>
+          <Text style={styles.heroTitle}>Arena Harmonia</Text>
+          <Text style={styles.heroSubtitle}>Là où les talents s'affrontent et brillent</Text>
+          
+          <View style={styles.heroBadges}>
+            <View style={styles.heroBadge}>
+              <Ionicons name="trophy" size={16} color="#FFD700" />
+              <Text style={styles.heroBadgeText}>Compétitions</Text>
+            </View>
+            <View style={styles.heroBadge}>
+              <Ionicons name="star" size={16} color="#FFD700" />
+              <Text style={styles.heroBadgeText}>Talents</Text>
+            </View>
+            <View style={styles.heroBadge}>
+              <Ionicons name="people" size={16} color="#FFD700" />
+              <Text style={styles.heroBadgeText}>Communauté</Text>
+            </View>
           </View>
         </View>
       </LinearGradient>
@@ -150,18 +151,27 @@ export default function GamesScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Grille d'icônes */}
-        <View style={styles.gamesGrid}>
-          {GAMES.map((game) => (
-            <GameIcon key={game.id} game={game} />
-          ))}
+        {/* Categories */}
+        {CATEGORIES.map((category) => (
+          <CategorySection key={category.id} category={category} />
+        ))}
+
+        {/* Call to Action */}
+        <View style={styles.ctaSection}>
+          <LinearGradient colors={['#FFD700', '#FF0080']} style={styles.ctaGradient}>
+            <Ionicons name="rocket" size={40} color="#FFF" />
+            <Text style={styles.ctaTitle}>Révélez votre talent !</Text>
+            <Text style={styles.ctaText}>
+              Participez aux compétitions, gagnez des trophées et devenez une star Harmonia
+            </Text>
+          </LinearGradient>
         </View>
 
-        {/* Section info */}
-        <View style={styles.infoSection}>
-          <Ionicons name="information-circle" size={24} color="#8A2BE2" />
+        {/* Info Footer */}
+        <View style={styles.infoFooter}>
+          <Ionicons name="information-circle" size={20} color="#8A2BE2" />
           <Text style={styles.infoText}>
-            Tapez sur un jeu pour commencer à jouer
+            Nouveau contenu ajouté chaque semaine. Restez connecté !
           </Text>
         </View>
       </ScrollView>
@@ -175,24 +185,49 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
   },
   header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === 'ios' ? 50 : 30,
+    paddingBottom: 30,
+  },
+  heroSection: {
+    alignItems: 'center',
     paddingHorizontal: 20,
   },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  heroEmoji: {
+    fontSize: 60,
+    marginBottom: 12,
   },
-  headerTitle: {
-    fontSize: 32,
+  heroTitle: {
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#FFF',
-    marginBottom: 4,
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  headerSubtitle: {
-    fontSize: 14,
+  heroSubtitle: {
+    fontSize: 16,
     color: '#E0D0FF',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  heroBadges: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  heroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
+  heroBadgeText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
@@ -200,58 +235,111 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 120,
   },
-  gamesGrid: {
+  categorySection: {
+    marginTop: 24,
+    paddingHorizontal: 16,
+  },
+  categoryHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-    paddingTop: 24,
-  },
-  gameIcon: {
-    width: (width - 64) / 3, // 3 colonnes avec espaces
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 16,
+    gap: 12,
   },
-  iconCircle: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+  categoryIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+  },
+  categoryInfo: {
+    flex: 1,
+  },
+  categoryTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2,
+  },
+  categoryDescription: {
+    fontSize: 13,
+    color: '#666',
+  },
+  itemsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginLeft: -8,
+  },
+  itemIcon: {
+    width: (width - 64) / 4, // 4 colonnes
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  iconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.12,
+        shadowRadius: 6,
       },
       android: {
-        elevation: 6,
+        elevation: 4,
       },
     }),
   },
-  gameLabel: {
-    fontSize: 13,
+  itemLabel: {
+    fontSize: 11,
     fontWeight: '600',
     color: '#333',
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 14,
   },
-  infoSection: {
+  ctaSection: {
+    marginHorizontal: 16,
+    marginTop: 32,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  ctaGradient: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  ctaTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFF',
+    marginTop: 12,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  ctaText: {
+    fontSize: 14,
+    color: '#FFF',
+    textAlign: 'center',
+    lineHeight: 20,
+    opacity: 0.95,
+  },
+  infoFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0E6FF',
-    marginHorizontal: 20,
-    marginTop: 20,
-    padding: 16,
+    marginHorizontal: 16,
+    marginTop: 24,
+    padding: 14,
     borderRadius: 12,
-    gap: 12,
+    gap: 10,
   },
   infoText: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     color: '#8A2BE2',
-    lineHeight: 20,
+    lineHeight: 18,
   },
 });
-          
