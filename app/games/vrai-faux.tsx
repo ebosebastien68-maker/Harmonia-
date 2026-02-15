@@ -1,39 +1,112 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
-interface EnDeveloppementProps {
+interface VraiFauxTestProps {
   title: string;
   icon: string;
   color: string;
-  onClose?: () => void;  // ← AJOUT : fonction pour fermer le modal
+  onClose?: () => void;
 }
 
-export default function EnDeveloppement({ title, icon, color, onClose }: EnDeveloppementProps) {
+const BACKEND_URL = 'https://backend-harmonia.onrender.com';
+
+export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTestProps) {
+  const [message, setMessage] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+  const [connectionStatus, setConnectionStatus] = useState<string>('');
+
   const handleGoBack = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    // Au lieu de router.back(), on appelle onClose
     if (onClose) {
       onClose();
     }
   };
 
-  // Calculer la couleur plus foncée pour le gradient
+  // Calculer couleur gradient
   const darkerColor = color.replace(/[0-9A-F]{2}$/, (hex) => {
     const num = parseInt(hex, 16);
     const darker = Math.max(0, num - 40);
     return darker.toString(16).padStart(2, '0');
   });
+
+  // Fonction pour récupérer le message du backend
+  const fetchMessage = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          function: 'getMessage'
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur serveur');
+      }
+
+      setMessage(data.message);
+      setConnectionStatus(`✅ Connecté - ${data.from}`);
+
+    } catch (err: any) {
+      console.error('Erreur:', err);
+      setError(err.message || 'Impossible de contacter le serveur');
+      setConnectionStatus('❌ Déconnecté');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Tester la connexion au chargement
+  useEffect(() => {
+    testConnection();
+  }, []);
+
+  const testConnection = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          function: 'testConnection'
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setConnectionStatus(`✅ ${data.message}`);
+      }
+    } catch (err) {
+      setConnectionStatus('❌ Backend non accessible');
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -50,17 +123,56 @@ export default function EnDeveloppement({ title, icon, color, onClose }: EnDevel
 
       {/* Content */}
       <View style={styles.content}>
+        {/* Icône */}
         <View style={styles.iconContainer}>
           <Ionicons name={icon as any} size={80} color={color} />
         </View>
 
-        <Text style={styles.title}>🚧 En développement</Text>
+        {/* Titre */}
+        <Text style={styles.title}>🧪 Test Backend</Text>
         
-        <Text style={styles.description}>
-          Cette fonctionnalité sera bientôt disponible.{'\n'}
-          Revenez plus tard !
-        </Text>
+        {/* Status connexion */}
+        <View style={styles.statusContainer}>
+          <Text style={styles.statusText}>{connectionStatus}</Text>
+        </View>
 
+        {/* Message du backend */}
+        {message && (
+          <View style={styles.messageContainer}>
+            <Text style={styles.messageText}>{message}</Text>
+          </View>
+        )}
+
+        {/* Erreur */}
+        {error && (
+          <View style={styles.errorContainer}>
+            <Ionicons name="alert-circle" size={20} color="#EF4444" />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {/* Bouton pour récupérer un message */}
+        <TouchableOpacity 
+          style={[styles.fetchButton, loading && styles.fetchButtonDisabled]} 
+          onPress={fetchMessage}
+          disabled={loading}
+        >
+          <LinearGradient
+            colors={loading ? ['#999', '#666'] : [color, darkerColor]}
+            style={styles.fetchButtonGradient}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <Ionicons name="sync" size={20} color="#FFF" />
+            )}
+            <Text style={styles.fetchButtonText}>
+              {loading ? 'Chargement...' : 'Récupérer un message'}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Bouton retour */}
         <TouchableOpacity style={styles.backHomeButton} onPress={handleGoBack}>
           <Ionicons name="arrow-back" size={20} color="#FFF" />
           <Text style={styles.backHomeText}>Retour</Text>
@@ -104,7 +216,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 20,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -124,12 +236,68 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
-  description: {
-    fontSize: 16,
+  statusContainer: {
+    backgroundColor: '#FFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginBottom: 20,
+  },
+  statusText: {
+    fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  messageContainer: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 16,
+    marginBottom: 24,
+    width: '100%',
+  },
+  messageText: {
+    fontSize: 16,
+    color: '#FFF',
+    textAlign: 'center',
+    fontWeight: '600',
     lineHeight: 24,
-    marginBottom: 40,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginBottom: 24,
+    gap: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#EF4444',
+    flex: 1,
+  },
+  fetchButton: {
+    width: '100%',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  fetchButtonDisabled: {
+    opacity: 0.6,
+  },
+  fetchButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
+  },
+  fetchButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#FFF',
   },
   backHomeButton: {
     flexDirection: 'row',
@@ -139,6 +307,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     borderRadius: 12,
     gap: 8,
+    marginTop: 8,
     ...Platform.select({
       ios: {
         shadowColor: '#8A2BE2',
@@ -157,3 +326,4 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
 });
+          
