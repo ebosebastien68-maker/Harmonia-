@@ -18,15 +18,13 @@ interface VraiFauxTestProps {
   onClose?: () => void;
 }
 
-// ✅ BACKEND URL + ORIGIN
 const BACKEND_URL = 'https://backend-harmonia.onrender.com';
-const FRONTEND_ORIGIN = 'https://harmonia-world.vercel.app';
 
 export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTestProps) {
   const [message, setMessage] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [connectionStatus, setConnectionStatus] = useState<string>('Connexion...');
+  const [connectionStatus, setConnectionStatus] = useState<string>('');
 
   const handleGoBack = () => {
     if (Platform.OS !== 'web') {
@@ -44,20 +42,6 @@ export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTe
     return darker.toString(16).padStart(2, '0');
   });
 
-  // ✅ Headers CORS complets
-  const getHeaders = () => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    // Sur web, ajouter l'origin explicitement
-    if (Platform.OS === 'web') {
-      headers['Origin'] = FRONTEND_ORIGIN;
-    }
-
-    return headers;
-  };
-
   // Fonction pour récupérer le message du backend
   const fetchMessage = async () => {
     setLoading(true);
@@ -69,21 +53,17 @@ export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTe
     }
 
     try {
-      console.log('📤 Envoi requête vers:', `${BACKEND_URL}/vrai-faux`);
-      console.log('📤 Headers:', getHeaders());
-
       const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
         method: 'POST',
-        headers: getHeaders(),
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           function: 'getMessage'
         })
       });
 
-      console.log('📥 Statut réponse:', response.status);
-
       const data = await response.json();
-      console.log('📥 Data reçue:', data);
 
       if (!response.ok) {
         throw new Error(data.error || 'Erreur serveur');
@@ -93,7 +73,7 @@ export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTe
       setConnectionStatus(`✅ Connecté - ${data.from}`);
 
     } catch (err: any) {
-      console.error('❌ Erreur:', err);
+      console.error('Erreur:', err);
       setError(err.message || 'Impossible de contacter le serveur');
       setConnectionStatus('❌ Déconnecté');
     } finally {
@@ -108,30 +88,23 @@ export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTe
 
   const testConnection = async () => {
     try {
-      console.log('🔍 Test connexion backend...');
-      
       const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
         method: 'POST',
-        headers: getHeaders(),
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           function: 'testConnection'
         })
       });
 
-      console.log('📥 Test statut:', response.status);
-
       const data = await response.json();
-      console.log('📥 Test data:', data);
 
       if (data.success) {
         setConnectionStatus(`✅ ${data.message}`);
-      } else {
-        setConnectionStatus('⚠️ Réponse inattendue du backend');
       }
-    } catch (err: any) {
-      console.error('❌ Test connexion erreur:', err);
+    } catch (err) {
       setConnectionStatus('❌ Backend non accessible');
-      setError('Vérifiez que le backend est démarré sur Render');
     }
   };
 
@@ -158,14 +131,6 @@ export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTe
         {/* Titre */}
         <Text style={styles.title}>🧪 Test Backend</Text>
         
-        {/* Info technique */}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoLabel}>Backend:</Text>
-          <Text style={styles.infoValue}>{BACKEND_URL}</Text>
-          <Text style={styles.infoLabel}>Origin:</Text>
-          <Text style={styles.infoValue}>{FRONTEND_ORIGIN}</Text>
-        </View>
-
         {/* Status connexion */}
         <View style={styles.statusContainer}>
           <Text style={styles.statusText}>{connectionStatus}</Text>
@@ -271,24 +236,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
-  infoBox: {
-    backgroundColor: '#F0F0F0',
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-    width: '100%',
-  },
-  infoLabel: {
-    fontSize: 11,
-    color: '#666',
-    fontWeight: 'bold',
-    marginTop: 4,
-  },
-  infoValue: {
-    fontSize: 10,
-    color: '#333',
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
   statusContainer: {
     backgroundColor: '#FFF',
     paddingHorizontal: 20,
@@ -379,3 +326,4 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
 });
+          
