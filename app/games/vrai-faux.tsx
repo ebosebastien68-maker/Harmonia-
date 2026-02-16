@@ -27,135 +27,107 @@ export default function VraiFaux({ title, icon, color, onClose }: VraiFauxProps)
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
-  const [runId, setRunId] = useState<string>('');
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [leaderboard, setLeaderboard] = useState<any[]>([]);
-  const [screen, setScreen] = useState<'sessions' | 'game' | 'result'>('sessions');
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
+    console.log('🚀 VraiFaux component mounted');
     loadUser();
     loadSessions();
   }, []);
 
   const loadUser = async () => {
     try {
+      console.log('📱 Loading user from AsyncStorage...');
       const session = await AsyncStorage.getItem('harmonia_session');
+      console.log('📱 Session data:', session ? 'Found' : 'Not found');
+      
       if (session) {
         const parsed = JSON.parse(session);
-        setUserId(parsed.user.id);
+        console.log('✅ User ID:', parsed.user?.id);
+        setUserId(parsed.user?.id || '');
+      } else {
+        console.warn('⚠️ No session found in AsyncStorage');
+        // Utiliser un ID de test si pas de session
+        setUserId('test-user-id');
       }
     } catch (error) {
-      console.error('Error:', error);
+      console.error('❌ Error loading user:', error);
+      setError('Erreur chargement utilisateur');
+      // Utiliser un ID de test en cas d'erreur
+      setUserId('test-user-id');
     }
   };
 
   const loadSessions = async () => {
+    console.log('🎮 Loading sessions...');
     setLoading(true);
+    setError('');
+    
     try {
+      console.log('🌐 Calling backend:', BACKEND_URL);
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'listSessions', game_key: 'vrai_faux' })
+        body: JSON.stringify({ 
+          function: 'listSessions', 
+          game_key: 'vrai_faux' 
+        })
       });
+      
+      console.log('📡 Response status:', res.status);
       const data = await res.json();
-      if (data.success) setSessions(data.sessions);
-    } catch (error) {
-      Alert.alert('Erreur', 'Impossible de charger les sessions');
+      console.log('📦 Response data:', data);
+      
+      if (data.success) {
+        console.log('✅ Sessions loaded:', data.sessions?.length || 0);
+        setSessions(data.sessions || []);
+      } else {
+        console.error('❌ Backend error:', data.error);
+        setError(data.error || 'Erreur inconnue');
+      }
+    } catch (error: any) {
+      console.error('❌ Network error:', error);
+      setError('Erreur réseau: ' + error.message);
     } finally {
       setLoading(false);
     }
   };
 
   const joinSession = async (sessionId: string) => {
-    if (!userId) return Alert.alert('Erreur', 'Non connecté');
-    setLoading(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/game`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'joinSession', user_id: userId, session_id: sessionId })
-      });
-      const data = await res.json();
-      if (data.success) {
-        Alert.alert('✅', 'Session rejointe !');
-      } else {
-        Alert.alert('Erreur', data.error);
-      }
-    } catch (error) {
-      Alert.alert('Erreur réseau');
-    } finally {
-      setLoading(false);
+    console.log('🎯 Joining session:', sessionId);
+    
+    if (!userId) {
+      Alert.alert('Erreur', 'Utilisateur non connecté');
+      return;
     }
-  };
-
-  const loadQuestions = async (rid: string) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/game`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'getQuestions', user_id: userId, run_id: rid })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setQuestions(data.questions);
-        setRunId(rid);
-        setScreen('game');
-      }
-    } catch (error) {
-      Alert.alert('Erreur', 'Impossible de charger les questions');
-    } finally {
-      setLoading(false);
+    
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-  };
 
-  const submitAnswer = async (answer: boolean) => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          function: 'submitAnswer',
-          user_id: userId,
-          run_question_id: questions[currentIndex].id,
-          answer
+        body: JSON.stringify({ 
+          function: 'joinSession', 
+          user_id: userId, 
+          session_id: sessionId 
         })
       });
+      
       const data = await res.json();
+      console.log('Join response:', data);
+      
       if (data.success) {
-        if (currentIndex < questions.length - 1) {
-          setCurrentIndex(prev => prev + 1);
-        } else {
-          loadLeaderboard();
-        }
+        Alert.alert('✅ Succès', 'Session rejointe !');
       } else {
-        Alert.alert('Erreur', data.error);
+        Alert.alert('❌ Erreur', data.error || 'Impossible de rejoindre');
       }
-    } catch (error) {
-      Alert.alert('Erreur réseau');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadLeaderboard = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/game`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'getLeaderboard', user_id: userId, run_id: runId })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLeaderboard(data.leaderboard);
-        setScreen('result');
-      }
-    } catch (error) {
-      Alert.alert('Erreur classement');
+    } catch (error: any) {
+      console.error('Join error:', error);
+      Alert.alert('Erreur', 'Erreur réseau');
     } finally {
       setLoading(false);
     }
@@ -166,105 +138,206 @@ export default function VraiFaux({ title, icon, color, onClose }: VraiFauxProps)
     return Math.max(0, num - 40).toString(16).padStart(2, '0');
   });
 
-  // ÉCRAN SESSIONS
-  if (screen === 'sessions') {
-    return (
-      <View style={styles.container}>
-        <LinearGradient colors={[color, darkerColor]} style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.backButton}>
-            <Ionicons name="chevron-back" size={28} color="#FFF" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>{title}</Text>
-        </LinearGradient>
+  console.log('🎨 Rendering component...');
+
+  return (
+    <View style={styles.container}>
+      {/* HEADER */}
+      <LinearGradient colors={[color, darkerColor]} style={styles.header}>
+        <TouchableOpacity onPress={onClose} style={styles.backButton}>
+          <Ionicons name="chevron-back" size={28} color="#FFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{title}</Text>
+      </LinearGradient>
+
+      {/* CONTENU */}
+      <View style={styles.content}>
+        {/* USER ID DEBUG */}
+        <View style={styles.debugBox}>
+          <Text style={styles.debugText}>👤 User ID: {userId || 'Non défini'}</Text>
+          <Text style={styles.debugText}>🌐 Backend: {BACKEND_URL}</Text>
+        </View>
+
+        {/* ERREUR */}
+        {error ? (
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle" size={24} color="#EF4444" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={loadSessions}>
+              <Text style={styles.retryText}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {/* LOADING */}
         {loading ? (
-          <View style={styles.center}><ActivityIndicator size="large" color={color} /></View>
-        ) : (
-          <ScrollView style={styles.scroll}>
-            {sessions.map(s => (
-              <TouchableOpacity key={s.id} style={styles.card} onPress={() => joinSession(s.id)}>
-                <View style={styles.cardContent}>
-                  <Text style={styles.cardTitle}>{s.title}</Text>
-                  <Text style={styles.cardDesc}>{s.description}</Text>
-                  {s.is_paid && <Text style={styles.price}>💰 {s.price_cfa} CFA</Text>}
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={color} />
+            <Text style={styles.loadingText}>Chargement...</Text>
+          </View>
+        ) : null}
+
+        {/* SESSIONS */}
+        {!loading && !error && sessions.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="game-controller-outline" size={60} color="#CCC" />
+            <Text style={styles.emptyText}>Aucune session disponible</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={loadSessions}>
+              <Text style={styles.retryText}>Actualiser</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {!loading && sessions.length > 0 ? (
+          <ScrollView style={styles.scrollView}>
+            <Text style={styles.sectionTitle}>📋 Sessions disponibles ({sessions.length})</Text>
+            {sessions.map((session) => (
+              <TouchableOpacity
+                key={session.id}
+                style={styles.sessionCard}
+                onPress={() => joinSession(session.id)}
+              >
+                <View style={styles.sessionInfo}>
+                  <Text style={styles.sessionTitle}>{session.title || 'Sans titre'}</Text>
+                  <Text style={styles.sessionDescription}>
+                    {session.description || 'Pas de description'}
+                  </Text>
+                  {session.is_paid && (
+                    <Text style={styles.sessionPrice}>💰 {session.price_cfa} CFA</Text>
+                  )}
                 </View>
                 <Ionicons name="play-circle" size={40} color={color} />
               </TouchableOpacity>
             ))}
           </ScrollView>
-        )}
+        ) : null}
       </View>
-    );
-  }
-
-  // ÉCRAN JEU
-  if (screen === 'game' && questions.length > 0) {
-    const q = questions[currentIndex];
-    return (
-      <View style={styles.container}>
-        <LinearGradient colors={[color, darkerColor]} style={styles.header}>
-          <Text style={styles.headerTitle}>Question {currentIndex + 1}/{questions.length}</Text>
-        </LinearGradient>
-        <View style={styles.gameContainer}>
-          <Text style={styles.questionText}>{q.question_text}</Text>
-          <Text style={styles.scoreText}>🏆 {q.score} points</Text>
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={[styles.btn, styles.btnTrue]} onPress={() => submitAnswer(true)} disabled={loading}>
-              <Ionicons name="checkmark-circle" size={40} color="#FFF" />
-              <Text style={styles.btnText}>VRAI</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnFalse]} onPress={() => submitAnswer(false)} disabled={loading}>
-              <Ionicons name="close-circle" size={40} color="#FFF" />
-              <Text style={styles.btnText}>FAUX</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  // ÉCRAN RÉSULTAT
-  return (
-    <View style={styles.container}>
-      <LinearGradient colors={[color, darkerColor]} style={styles.header}>
-        <Text style={styles.headerTitle}>🏆 Classement</Text>
-      </LinearGradient>
-      <ScrollView style={styles.scroll}>
-        {leaderboard.map(e => (
-          <View key={e.rank} style={[styles.leaderItem, e.is_current_user && styles.currentUser]}>
-            <Text style={styles.rank}>#{e.rank}</Text>
-            <Text style={styles.name}>{e.prenom} {e.nom}</Text>
-            <Text style={styles.score}>{e.score} pts</Text>
-          </View>
-        ))}
-      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  header: { paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingBottom: 20, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backButton: { padding: 4 },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFF' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scroll: { flex: 1, padding: 16 },
-  card: { flexDirection: 'row', backgroundColor: '#FFF', padding: 16, borderRadius: 12, marginBottom: 12, alignItems: 'center' },
-  cardContent: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: 'bold' },
-  cardDesc: { fontSize: 14, color: '#666', marginTop: 4 },
-  price: { fontSize: 14, color: '#10B981', fontWeight: 'bold', marginTop: 4 },
-  gameContainer: { flex: 1, justifyContent: 'center', padding: 24 },
-  questionText: { fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 16 },
-  scoreText: { fontSize: 16, textAlign: 'center', color: '#666', marginBottom: 40 },
-  btnRow: { flexDirection: 'row', gap: 16 },
-  btn: { flex: 1, padding: 24, borderRadius: 16, alignItems: 'center' },
-  btnTrue: { backgroundColor: '#10B981' },
-  btnFalse: { backgroundColor: '#EF4444' },
-  btnText: { fontSize: 18, fontWeight: 'bold', color: '#FFF', marginTop: 8 },
-  leaderItem: { flexDirection: 'row', backgroundColor: '#FFF', padding: 16, borderRadius: 12, marginBottom: 8, alignItems: 'center' },
-  currentUser: { backgroundColor: '#10B981' },
-  rank: { fontSize: 18, fontWeight: 'bold', width: 50 },
-  name: { flex: 1, fontSize: 16 },
-  score: { fontSize: 16, fontWeight: 'bold' },
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  header: {
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  content: {
+    flex: 1,
+    padding: 16,
+  },
+  debugBox: {
+    backgroundColor: '#FFF',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#DDD',
+  },
+  debugText: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  errorBox: {
+    backgroundColor: '#FEE2E2',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 12,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  sessionCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sessionInfo: {
+    flex: 1,
+  },
+  sessionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  sessionDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+  sessionPrice: {
+    fontSize: 14,
+    color: '#10B981',
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
 });
     
