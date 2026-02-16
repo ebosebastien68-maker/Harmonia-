@@ -29,7 +29,7 @@ export default function LandingPage() {
     const DOUBLE_PRESS_DELAY = 300;
     
     if (lastTap.current && (now - lastTap.current) < DOUBLE_PRESS_DELAY) {
-      router.push('/admin/auth-admin');
+      router.push('/auth-admin');
       lastTap.current = 0;
     } else {
       lastTap.current = now;
@@ -195,7 +195,6 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 40 },
   heroBackground: { width: width, height: 500, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   heroContent: { alignItems: 'center', paddingHorizontal: 20, marginTop: 60 },
-  // Nouveau style container pour le logo
   logoContainer: {
     alignItems: 'center',
     marginBottom: 30,
