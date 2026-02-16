@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -18,9 +18,23 @@ const { width } = Dimensions.get('window');
 
 export default function LandingPage() {
   const router = useRouter();
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const navigateToLogin = () => {
     router.push('/login');
+  };
+
+  const handlePressIn = () => {
+    longPressTimer.current = setTimeout(() => {
+      router.push('/admin/auth-admin');
+    }, 10000);
+  };
+
+  const handlePressOut = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   };
 
   return (
@@ -159,7 +173,16 @@ export default function LandingPage() {
         {/* --- FOOTER --- */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>© 2024 Harmonia</Text>
-          <Text style={styles.footerSubText}>Propulsant les talents vers l'infini.</Text>
+          <Text style={styles.footerSubText}>
+            Propulsant 
+            <Text 
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+            >
+              les
+            </Text>
+            {' '}talents vers l'infini.
+          </Text>
         </View>
 
       </ScrollView>
