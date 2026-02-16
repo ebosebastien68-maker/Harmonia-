@@ -6,324 +6,265 @@ import {
   TouchableOpacity,
   Platform,
   ActivityIndicator,
+  ScrollView,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-interface VraiFauxTestProps {
+const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+
+interface VraiFauxProps {
   title: string;
   icon: string;
   color: string;
   onClose?: () => void;
 }
 
-const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+export default function VraiFaux({ title, icon, color, onClose }: VraiFauxProps) {
+  const [userId, setUserId] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [runId, setRunId] = useState<string>('');
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [screen, setScreen] = useState<'sessions' | 'game' | 'result'>('sessions');
 
-export default function VraiFauxTest({ title, icon, color, onClose }: VraiFauxTestProps) {
-  const [message, setMessage] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
-  const [connectionStatus, setConnectionStatus] = useState<string>('');
+  useEffect(() => {
+    loadUser();
+    loadSessions();
+  }, []);
 
-  const handleGoBack = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    if (onClose) {
-      onClose();
+  const loadUser = async () => {
+    try {
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (session) {
+        const parsed = JSON.parse(session);
+        setUserId(parsed.user.id);
+      }
+    } catch (error) {
+      console.error('Error:', error);
     }
   };
 
-  // Calculer couleur gradient
-  const darkerColor = color.replace(/[0-9A-F]{2}$/, (hex) => {
-    const num = parseInt(hex, 16);
-    const darker = Math.max(0, num - 40);
-    return darker.toString(16).padStart(2, '0');
-  });
-
-  // Fonction pour récupérer le message du backend
-  const fetchMessage = async () => {
+  const loadSessions = async () => {
     setLoading(true);
-    setError('');
-    setMessage('');
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-
     try {
-      const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
+      const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          function: 'getMessage'
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'listSessions', game_key: 'vrai_faux' })
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erreur serveur');
-      }
-
-      setMessage(data.message);
-      setConnectionStatus(`✅ Connecté - ${data.from}`);
-
-    } catch (err: any) {
-      console.error('Erreur:', err);
-      setError(err.message || 'Impossible de contacter le serveur');
-      setConnectionStatus('❌ Déconnecté');
+      const data = await res.json();
+      if (data.success) setSessions(data.sessions);
+    } catch (error) {
+      Alert.alert('Erreur', 'Impossible de charger les sessions');
     } finally {
       setLoading(false);
     }
   };
 
-  // Tester la connexion au chargement
-  useEffect(() => {
-    testConnection();
-  }, []);
-
-  const testConnection = async () => {
+  const joinSession = async (sessionId: string) => {
+    if (!userId) return Alert.alert('Erreur', 'Non connecté');
+    setLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/vrai-faux`, {
+      const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          function: 'testConnection'
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'joinSession', user_id: userId, session_id: sessionId })
       });
-
-      const data = await response.json();
-
+      const data = await res.json();
       if (data.success) {
-        setConnectionStatus(`✅ ${data.message}`);
+        Alert.alert('✅', 'Session rejointe !');
+      } else {
+        Alert.alert('Erreur', data.error);
       }
-    } catch (err) {
-      setConnectionStatus('❌ Backend non accessible');
+    } catch (error) {
+      Alert.alert('Erreur réseau');
+    } finally {
+      setLoading(false);
     }
   };
 
+  const loadQuestions = async (rid: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'getQuestions', user_id: userId, run_id: rid })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setQuestions(data.questions);
+        setRunId(rid);
+        setScreen('game');
+      }
+    } catch (error) {
+      Alert.alert('Erreur', 'Impossible de charger les questions');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitAnswer = async (answer: boolean) => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          function: 'submitAnswer',
+          user_id: userId,
+          run_question_id: questions[currentIndex].id,
+          answer
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (currentIndex < questions.length - 1) {
+          setCurrentIndex(prev => prev + 1);
+        } else {
+          loadLeaderboard();
+        }
+      } else {
+        Alert.alert('Erreur', data.error);
+      }
+    } catch (error) {
+      Alert.alert('Erreur réseau');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'getLeaderboard', user_id: userId, run_id: runId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLeaderboard(data.leaderboard);
+        setScreen('result');
+      }
+    } catch (error) {
+      Alert.alert('Erreur classement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const darkerColor = color.replace(/[0-9A-F]{2}$/, (hex) => {
+    const num = parseInt(hex, 16);
+    return Math.max(0, num - 40).toString(16).padStart(2, '0');
+  });
+
+  // ÉCRAN SESSIONS
+  if (screen === 'sessions') {
+    return (
+      <View style={styles.container}>
+        <LinearGradient colors={[color, darkerColor]} style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.backButton}>
+            <Ionicons name="chevron-back" size={28} color="#FFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>{title}</Text>
+        </LinearGradient>
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={color} /></View>
+        ) : (
+          <ScrollView style={styles.scroll}>
+            {sessions.map(s => (
+              <TouchableOpacity key={s.id} style={styles.card} onPress={() => joinSession(s.id)}>
+                <View style={styles.cardContent}>
+                  <Text style={styles.cardTitle}>{s.title}</Text>
+                  <Text style={styles.cardDesc}>{s.description}</Text>
+                  {s.is_paid && <Text style={styles.price}>💰 {s.price_cfa} CFA</Text>}
+                </View>
+                <Ionicons name="play-circle" size={40} color={color} />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+    );
+  }
+
+  // ÉCRAN JEU
+  if (screen === 'game' && questions.length > 0) {
+    const q = questions[currentIndex];
+    return (
+      <View style={styles.container}>
+        <LinearGradient colors={[color, darkerColor]} style={styles.header}>
+          <Text style={styles.headerTitle}>Question {currentIndex + 1}/{questions.length}</Text>
+        </LinearGradient>
+        <View style={styles.gameContainer}>
+          <Text style={styles.questionText}>{q.question_text}</Text>
+          <Text style={styles.scoreText}>🏆 {q.score} points</Text>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={[styles.btn, styles.btnTrue]} onPress={() => submitAnswer(true)} disabled={loading}>
+              <Ionicons name="checkmark-circle" size={40} color="#FFF" />
+              <Text style={styles.btnText}>VRAI</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btn, styles.btnFalse]} onPress={() => submitAnswer(false)} disabled={loading}>
+              <Ionicons name="close-circle" size={40} color="#FFF" />
+              <Text style={styles.btnText}>FAUX</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // ÉCRAN RÉSULTAT
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient 
-        colors={[color, darkerColor]} 
-        style={styles.header}
-      >
-        <TouchableOpacity onPress={handleGoBack} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={28} color="#FFF" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{title}</Text>
+      <LinearGradient colors={[color, darkerColor]} style={styles.header}>
+        <Text style={styles.headerTitle}>🏆 Classement</Text>
       </LinearGradient>
-
-      {/* Content */}
-      <View style={styles.content}>
-        {/* Icône */}
-        <View style={styles.iconContainer}>
-          <Ionicons name={icon as any} size={80} color={color} />
-        </View>
-
-        {/* Titre */}
-        <Text style={styles.title}>🧪 Test Backend</Text>
-        
-        {/* Status connexion */}
-        <View style={styles.statusContainer}>
-          <Text style={styles.statusText}>{connectionStatus}</Text>
-        </View>
-
-        {/* Message du backend */}
-        {message && (
-          <View style={styles.messageContainer}>
-            <Text style={styles.messageText}>{message}</Text>
+      <ScrollView style={styles.scroll}>
+        {leaderboard.map(e => (
+          <View key={e.rank} style={[styles.leaderItem, e.is_current_user && styles.currentUser]}>
+            <Text style={styles.rank}>#{e.rank}</Text>
+            <Text style={styles.name}>{e.prenom} {e.nom}</Text>
+            <Text style={styles.score}>{e.score} pts</Text>
           </View>
-        )}
-
-        {/* Erreur */}
-        {error && (
-          <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle" size={20} color="#EF4444" />
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {/* Bouton pour récupérer un message */}
-        <TouchableOpacity 
-          style={[styles.fetchButton, loading && styles.fetchButtonDisabled]} 
-          onPress={fetchMessage}
-          disabled={loading}
-        >
-          <LinearGradient
-            colors={loading ? ['#999', '#666'] : [color, darkerColor]}
-            style={styles.fetchButtonGradient}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <Ionicons name="sync" size={20} color="#FFF" />
-            )}
-            <Text style={styles.fetchButtonText}>
-              {loading ? 'Chargement...' : 'Récupérer un message'}
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Bouton retour */}
-        <TouchableOpacity style={styles.backHomeButton} onPress={handleGoBack}>
-          <Ionicons name="arrow-back" size={20} color="#FFF" />
-          <Text style={styles.backHomeText}>Retour</Text>
-        </TouchableOpacity>
-      </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  backButton: {
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  content: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  iconContainer: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: '#FFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 6,
-      },
-    }),
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  statusContainer: {
-    backgroundColor: '#FFF',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginBottom: 20,
-  },
-  statusText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  messageContainer: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-    borderRadius: 16,
-    marginBottom: 24,
-    width: '100%',
-  },
-  messageText: {
-    fontSize: 16,
-    color: '#FFF',
-    textAlign: 'center',
-    fontWeight: '600',
-    lineHeight: 24,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginBottom: 24,
-    gap: 8,
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#EF4444',
-    flex: 1,
-  },
-  fetchButton: {
-    width: '100%',
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 16,
-  },
-  fetchButtonDisabled: {
-    opacity: 0.6,
-  },
-  fetchButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
-  },
-  fetchButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  backHomeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#8A2BE2',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-    gap: 8,
-    marginTop: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#8A2BE2',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 6,
-      },
-    }),
-  },
-  backHomeText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFF',
-  },
+  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  header: { paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingBottom: 20, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  backButton: { padding: 4 },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFF' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  scroll: { flex: 1, padding: 16 },
+  card: { flexDirection: 'row', backgroundColor: '#FFF', padding: 16, borderRadius: 12, marginBottom: 12, alignItems: 'center' },
+  cardContent: { flex: 1 },
+  cardTitle: { fontSize: 16, fontWeight: 'bold' },
+  cardDesc: { fontSize: 14, color: '#666', marginTop: 4 },
+  price: { fontSize: 14, color: '#10B981', fontWeight: 'bold', marginTop: 4 },
+  gameContainer: { flex: 1, justifyContent: 'center', padding: 24 },
+  questionText: { fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 16 },
+  scoreText: { fontSize: 16, textAlign: 'center', color: '#666', marginBottom: 40 },
+  btnRow: { flexDirection: 'row', gap: 16 },
+  btn: { flex: 1, padding: 24, borderRadius: 16, alignItems: 'center' },
+  btnTrue: { backgroundColor: '#10B981' },
+  btnFalse: { backgroundColor: '#EF4444' },
+  btnText: { fontSize: 18, fontWeight: 'bold', color: '#FFF', marginTop: 8 },
+  leaderItem: { flexDirection: 'row', backgroundColor: '#FFF', padding: 16, borderRadius: 12, marginBottom: 8, alignItems: 'center' },
+  currentUser: { backgroundColor: '#10B981' },
+  rank: { fontSize: 18, fontWeight: 'bold', width: 50 },
+  name: { flex: 1, fontSize: 16 },
+  score: { fontSize: 16, fontWeight: 'bold' },
 });
-          
+    
