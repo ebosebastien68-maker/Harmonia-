@@ -18,22 +18,21 @@ const { width } = Dimensions.get('window');
 
 export default function LandingPage() {
   const router = useRouter();
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const lastTap = useRef<number>(0);
 
   const navigateToLogin = () => {
     router.push('/login');
   };
 
-  const handlePressIn = () => {
-    longPressTimer.current = setTimeout(() => {
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    const DOUBLE_PRESS_DELAY = 300;
+    
+    if (lastTap.current && (now - lastTap.current) < DOUBLE_PRESS_DELAY) {
       router.push('/admin/auth-admin');
-    }, 10000);
-  };
-
-  const handlePressOut = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
+      lastTap.current = 0;
+    } else {
+      lastTap.current = now;
     }
   };
 
@@ -174,14 +173,7 @@ export default function LandingPage() {
         <View style={styles.footer}>
           <Text style={styles.footerText}>© 2024 Harmonia</Text>
           <Text style={styles.footerSubText}>
-            Propulsant 
-            <Text 
-              onPressIn={handlePressIn}
-              onPressOut={handlePressOut}
-            >
-              les
-            </Text>
-            {' '}talents vers l'infini.
+            Propulsant <Text onPress={handleDoubleTap}>les</Text> talents vers l'infini.
           </Text>
         </View>
 
