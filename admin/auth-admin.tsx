@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import AwaleAdmin from './components/AwaleAdmin';
+import AwaleAdmin from '../components/AwaleAdmin';
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -179,4 +179,3 @@ const styles = StyleSheet.create({
   gameNameDisabled: { fontSize: 16, fontWeight: 'bold', color: '#999', textAlign: 'center' },
   comingSoon: { fontSize: 12, color: '#999', marginTop: 4 },
 });
-    
