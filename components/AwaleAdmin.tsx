@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  TextInput,
   Alert,
   ActivityIndicator,
 } from 'react-native';
@@ -46,12 +45,9 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
       
       if (data.success) {
         Alert.alert('✅ Succès', data.message || 'Opération réussie');
-        
-        // Stocker les IDs
         if (data.session_id) setSessionId(data.session_id);
         if (data.party_id) setPartyId(data.party_id);
         if (data.run_id) setRunId(data.run_id);
-        
         return data;
       } else {
         Alert.alert('❌ Erreur', data.error || 'Opération échouée');
@@ -66,59 +62,40 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
   };
 
   const createSession = () => {
-    Alert.prompt(
-      'Créer une session',
-      'Titre de la session',
-      (title) => {
-        if (title) {
-          callAdminFunction('createSession', {
-            game_key: 'vrai_faux',
-            title,
-            description: 'Session admin',
-            is_paid: false,
-            price_cfa: 0
-          });
-        }
+    Alert.prompt('Créer une session', 'Titre de la session', (title) => {
+      if (title) {
+        callAdminFunction('createSession', {
+          game_key: 'vrai_faux',
+          title,
+          description: 'Session admin',
+          is_paid: false,
+          price_cfa: 0
+        });
       }
-    );
+    });
   };
 
   const createParty = () => {
     if (!sessionId) return Alert.alert('Erreur', 'Créez d\'abord une session');
-    Alert.prompt(
-      'Créer une party',
-      'Titre de la party',
-      (title) => {
-        if (title) {
-          callAdminFunction('createParty', {
-            session_id: sessionId,
-            title
-          });
-        }
+    Alert.prompt('Créer une party', 'Titre de la party', (title) => {
+      if (title) {
+        callAdminFunction('createParty', { session_id: sessionId, title });
       }
-    );
+    });
   };
 
   const createRun = () => {
     if (!partyId) return Alert.alert('Erreur', 'Créez d\'abord une party');
-    Alert.prompt(
-      'Créer un run',
-      'Titre du run',
-      (title) => {
-        if (title) {
-          callAdminFunction('createRun', {
-            party_id: partyId,
-            title
-          });
-        }
+    Alert.prompt('Créer un run', 'Titre du run', (title) => {
+      if (title) {
+        callAdminFunction('createRun', { party_id: partyId, title });
       }
-    );
+    });
   };
 
   const addQuestions = () => {
     if (!runId) return Alert.alert('Erreur', 'Créez d\'abord un run');
-    
-    const sampleQuestions = [
+    const questions = [
       { question: 'Paris est la capitale de la France', answer: true, score: 10 },
       { question: 'Le soleil tourne autour de la Terre', answer: false, score: 10 },
       { question: '2 + 2 = 4', answer: true, score: 10 },
@@ -130,35 +107,24 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
       { question: 'Il y a 365 jours dans une année', answer: true, score: 10 },
       { question: 'Les chauves-souris sont des oiseaux', answer: false, score: 10 },
     ];
-
-    callAdminFunction('addQuestions', {
-      run_id: runId,
-      questions: sampleQuestions
-    });
+    callAdminFunction('addQuestions', { run_id: runId, questions });
   };
 
   const setVisibility = (visible: boolean) => {
     if (!runId) return Alert.alert('Erreur', 'Créez d\'abord un run');
-    callAdminFunction('setVisibility', {
-      run_id: runId,
-      visible
-    });
+    callAdminFunction('setVisibility', { run_id: runId, visible });
   };
 
   const closeRun = (closed: boolean) => {
     if (!runId) return Alert.alert('Erreur', 'Créez d\'abord un run');
-    callAdminFunction('closeRun', {
-      run_id: runId,
-      closed
-    });
+    callAdminFunction('closeRun', { run_id: runId, closed });
   };
 
   const getStatistics = async () => {
     if (!runId) return Alert.alert('Erreur', 'Créez d\'abord un run');
     const stats = await callAdminFunction('getStatistics', { run_id: runId });
-    if (stats && stats.statistics) {
-      Alert.alert(
-        '📊 Statistiques',
+    if (stats?.statistics) {
+      Alert.alert('📊 Statistiques',
         `Questions: ${stats.statistics.total_questions}\n` +
         `Réponses: ${stats.statistics.total_answers}\n` +
         `Joueurs: ${stats.statistics.total_players}\n` +
@@ -174,7 +140,7 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Awalé Admin</Text>
+        <Text style={styles.headerTitle}>Vrai ou Faux Admin</Text>
       </LinearGradient>
 
       {loading && (
@@ -184,7 +150,6 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
       )}
 
       <ScrollView style={styles.scrollView}>
-        {/* ÉTAPE 1 : SESSION */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>1️⃣ Créer une session</Text>
           <TouchableOpacity style={styles.button} onPress={createSession}>
@@ -194,12 +159,11 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           {sessionId && (
             <View style={styles.infoBox}>
               <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-              <Text style={styles.infoText}>Session créée: {sessionId.substring(0, 8)}...</Text>
+              <Text style={styles.infoText}>Session: {sessionId.substring(0, 8)}...</Text>
             </View>
           )}
         </View>
 
-        {/* ÉTAPE 2 : PARTY */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>2️⃣ Créer une party</Text>
           <TouchableOpacity style={[styles.button, !sessionId && styles.buttonDisabled]} onPress={createParty} disabled={!sessionId}>
@@ -209,12 +173,11 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           {partyId && (
             <View style={styles.infoBox}>
               <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-              <Text style={styles.infoText}>Party créée: {partyId.substring(0, 8)}...</Text>
+              <Text style={styles.infoText}>Party: {partyId.substring(0, 8)}...</Text>
             </View>
           )}
         </View>
 
-        {/* ÉTAPE 3 : RUN */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>3️⃣ Créer un run</Text>
           <TouchableOpacity style={[styles.button, !partyId && styles.buttonDisabled]} onPress={createRun} disabled={!partyId}>
@@ -224,21 +187,19 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           {runId && (
             <View style={styles.infoBox}>
               <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-              <Text style={styles.infoText}>Run créé: {runId.substring(0, 8)}...</Text>
+              <Text style={styles.infoText}>Run: {runId.substring(0, 8)}...</Text>
             </View>
           )}
         </View>
 
-        {/* ÉTAPE 4 : QUESTIONS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>4️⃣ Ajouter questions</Text>
           <TouchableOpacity style={[styles.button, !runId && styles.buttonDisabled]} onPress={addQuestions} disabled={!runId}>
             <Ionicons name="help-circle" size={20} color="#FFF" />
-            <Text style={styles.buttonText}>Ajouter 10 Questions</Text>
+            <Text style={styles.buttonText}>10 Questions</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ÉTAPE 5 : VISIBILITÉ */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>5️⃣ Rendre visible</Text>
           <View style={styles.row}>
@@ -253,7 +214,6 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           </View>
         </View>
 
-        {/* ÉTAPE 6 : FERMETURE */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>6️⃣ Gestion run</Text>
           <View style={styles.row}>
@@ -268,7 +228,6 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           </View>
         </View>
 
-        {/* ÉTAPE 7 : STATS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>7️⃣ Statistiques</Text>
           <TouchableOpacity style={[styles.button, styles.buttonInfo, !runId && styles.buttonDisabled]} onPress={getStatistics} disabled={!runId}>
