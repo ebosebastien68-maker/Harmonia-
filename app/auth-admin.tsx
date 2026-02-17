@@ -21,6 +21,8 @@ export default function AuthAdmin() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  
+  // Contiendra : { id, nom, prenom, role, email, password }
   const [adminData, setAdminData] = useState<any>(null);
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
 
@@ -35,47 +37,38 @@ export default function AuthAdmin() {
 
     setLoading(true);
     try {
-      // Tester avec createSession (fonction la plus simple)
       const res = await fetch(`${BACKEND_URL}/admin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          function: 'createSession',
+          function: 'login', // Appel de la nouvelle fonction dédiée
           email: email.trim(),
           password: password,
-          game_key: 'vrai_faux',
-          title: 'Test Auth',
-          description: 'Test',
-          is_paid: false,
-          price_cfa: 0
         })
       });
 
       const data = await res.json();
 
-      // Si 401 = mauvais identifiants
-      if (res.status === 401) {
-        Alert.alert('❌ Erreur', 'Email ou mot de passe incorrect');
-        return;
-      }
-
-      // Si 403 = pas admin
-      if (res.status === 403 || data.error?.includes('rôle')) {
-        Alert.alert('❌ Accès refusé', 'Vous n\'avez pas les droits administrateur');
-        return;
-      }
-
-      // Si succès
-      if (data.success || res.ok) {
-        setAdminData({ email: email.trim(), password });
+      if (res.ok && data.success) {
+        // On stocke TOUTES les infos renvoyées + le password pour les futurs appels
+        setAdminData({ 
+          ...data.user, 
+          email: email.trim(), 
+          password 
+        });
         setAuthenticated(true);
-        Alert.alert('✅', 'Bienvenue administrateur !');
+        
+        if (Platform.OS !== 'web') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
       } else {
-        Alert.alert('❌ Erreur', data.error || 'Erreur de connexion');
+        // Gestion des erreurs spécifiques renvoyées par le backend
+        const errorMsg = data.error || 'Identifiants invalides';
+        Alert.alert('❌ Échec', errorMsg);
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      Alert.alert('Erreur', 'Impossible de contacter le serveur');
+      Alert.alert('Erreur', 'Impossible de joindre le serveur Harmonia');
     } finally {
       setLoading(false);
     }
@@ -89,14 +82,14 @@ export default function AuthAdmin() {
     setPassword('');
   };
 
-  // ÉCRAN CONNEXION
+  // --- VUE 1 : CONNEXION ---
   if (!authenticated) {
     return (
       <View style={styles.container}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
           <Ionicons name="shield-checkmark" size={60} color="#FFD700" />
           <Text style={styles.headerTitle}>Admin Harmonia</Text>
-          <Text style={styles.headerSubtitle}>Panneau d'administration</Text>
+          <Text style={styles.headerSubtitle}>Vérification d'identité</Text>
         </LinearGradient>
 
         <View style={styles.formContainer}>
@@ -104,7 +97,7 @@ export default function AuthAdmin() {
             <Ionicons name="mail" size={20} color="#8A2BE2" />
             <TextInput
               style={styles.input}
-              placeholder="Email"
+              placeholder="Email administrateur"
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -136,8 +129,8 @@ export default function AuthAdmin() {
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
                 <>
-                  <Ionicons name="log-in" size={20} color="#FFF" />
-                  <Text style={styles.loginText}>Se connecter</Text>
+                  <Ionicons name="key" size={20} color="#FFF" />
+                  <Text style={styles.loginText}>Accéder au Panneau</Text>
                 </>
               )}
             </LinearGradient>
@@ -146,7 +139,7 @@ export default function AuthAdmin() {
           <View style={styles.infoBox}>
             <Ionicons name="information-circle" size={20} color="#8A2BE2" />
             <Text style={styles.infoText}>
-              Accès réservé aux roles: admin, adminpro, supreme
+              Seuls les profils avec le rang "Supreme", "AdminPro" ou "Admin" peuvent se connecter.
             </Text>
           </View>
         </View>
@@ -154,38 +147,43 @@ export default function AuthAdmin() {
     );
   }
 
-  // DASHBOARD
+  // --- VUE 2 : DASHBOARD (Connecté) ---
   if (authenticated && !selectedGame) {
     return (
       <View style={styles.container}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
           <View style={styles.headerRow}>
             <View>
-              <Text style={styles.headerTitle}>Dashboard Admin</Text>
-              <Text style={styles.headerEmail}>{adminData.email}</Text>
+              <Text style={styles.headerTitle}>Bienvenue, {adminData.prenom}</Text>
+              <Text style={styles.headerRole}>Rang : {adminData.role.toUpperCase()}</Text>
             </View>
             <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-              <Ionicons name="log-out" size={24} color="#FFD700" />
+              <Ionicons name="log-out-outline" size={28} color="#FFD700" />
             </TouchableOpacity>
           </View>
         </LinearGradient>
 
         <View style={styles.dashboardContainer}>
-          <Text style={styles.sectionTitle}>🎮 Gestion des jeux</Text>
+          <Text style={styles.sectionTitle}>🎮 Gestionnaires Disponibles</Text>
+          
           <View style={styles.gamesGrid}>
-            <TouchableOpacity style={styles.gameCard} onPress={() => setSelectedGame('awale')}>
+            <TouchableOpacity 
+              style={styles.gameCard} 
+              onPress={() => setSelectedGame('awale')}
+            >
               <LinearGradient colors={['#F59E0B', '#D97706']} style={styles.gameIconContainer}>
-                <Ionicons name="extension-puzzle" size={40} color="#FFF" />
+                <Ionicons name="help-circle" size={40} color="#FFF" />
               </LinearGradient>
               <Text style={styles.gameName}>Vrai ou Faux</Text>
+              <Text style={styles.gameDescription}>Séquences & Questions</Text>
             </TouchableOpacity>
 
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
               <View style={styles.gameIconContainer}>
-                <Ionicons name="game-controller" size={40} color="#CCC" />
+                <Ionicons name="trophy-outline" size={40} color="#CCC" />
               </View>
-              <Text style={styles.gameNameDisabled}>Autres jeux</Text>
-              <Text style={styles.comingSoon}>Bientôt...</Text>
+              <Text style={styles.gameNameDisabled}>Classements</Text>
+              <Text style={styles.comingSoon}>Bientôt disponible</Text>
             </View>
           </View>
         </View>
@@ -193,38 +191,87 @@ export default function AuthAdmin() {
     );
   }
 
-  // ADMIN
+  // --- VUE 3 : GESTIONNAIRE DE JEU ---
   if (selectedGame === 'awale') {
-    return <AwaleAdmin adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
+    return (
+      <AwaleAdmin 
+        adminEmail={adminData.email} 
+        adminPassword={adminData.password} 
+        onBack={() => setSelectedGame(null)} 
+      />
+    );
   }
 
   return null;
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  header: { paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingBottom: 30, paddingHorizontal: 20, alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#F8F9FA' },
+  header: { 
+    paddingTop: Platform.OS === 'ios' ? 60 : 40, 
+    paddingBottom: 30, 
+    paddingHorizontal: 25, 
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30
+  },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' },
-  headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#FFF', marginTop: 16 },
-  headerSubtitle: { fontSize: 16, color: '#E0D0FF', marginTop: 8 },
-  headerEmail: { fontSize: 14, color: '#E0D0FF', marginTop: 4 },
-  logoutButton: { padding: 8 },
-  formContainer: { flex: 1, padding: 24, justifyContent: 'center' },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
-  input: { flex: 1, marginLeft: 12, fontSize: 16 },
-  loginButton: { borderRadius: 12, overflow: 'hidden', marginTop: 8 },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFF' },
+  headerSubtitle: { fontSize: 16, color: '#E0D0FF', marginTop: 5 },
+  headerRole: { fontSize: 13, color: '#FFD700', fontWeight: '600', marginTop: 4, letterSpacing: 1 },
+  logoutButton: { padding: 5 },
+  formContainer: { flex: 1, padding: 25, justifyContent: 'center' },
+  inputContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#FFF', 
+    borderRadius: 15, 
+    paddingHorizontal: 16, 
+    paddingVertical: 14, 
+    marginBottom: 16, 
+    borderWidth: 1,
+    borderColor: '#EEE'
+  },
+  input: { flex: 1, marginLeft: 12, fontSize: 16, color: '#333' },
+  loginButton: { borderRadius: 15, overflow: 'hidden', marginTop: 10, elevation: 5 },
   loginButtonDisabled: { opacity: 0.6 },
-  loginGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 8 },
+  loginGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 },
   loginText: { fontSize: 16, fontWeight: 'bold', color: '#FFF' },
-  infoBox: { flexDirection: 'row', backgroundColor: '#F0E6FF', padding: 16, borderRadius: 12, marginTop: 24, gap: 12 },
-  infoText: { flex: 1, fontSize: 13, color: '#8A2BE2', lineHeight: 18 },
-  dashboardContainer: { flex: 1, padding: 24 },
-  sectionTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
-  gamesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
-  gameCard: { width: '47%', backgroundColor: '#FFF', borderRadius: 16, padding: 20, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 },
-  gameCardDisabled: { opacity: 0.5 },
-  gameIconContainer: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center', marginBottom: 12, backgroundColor: '#EEE' },
-  gameName: { fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
-  gameNameDisabled: { fontSize: 16, fontWeight: 'bold', color: '#999', textAlign: 'center' },
-  comingSoon: { fontSize: 12, color: '#999', marginTop: 4 },
+  infoBox: { 
+    flexDirection: 'row', 
+    backgroundColor: '#F0E6FF', 
+    padding: 16, 
+    borderRadius: 15, 
+    marginTop: 30, 
+    gap: 12,
+    alignItems: 'center'
+  },
+  infoText: { flex: 1, fontSize: 13, color: '#6A0DAD', lineHeight: 18 },
+  dashboardContainer: { flex: 1, padding: 25 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20 },
+  gamesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15 },
+  gameCard: { 
+    width: '47%', 
+    backgroundColor: '#FFF', 
+    borderRadius: 20, 
+    padding: 20, 
+    alignItems: 'center', 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 4 }, 
+    shadowOpacity: 0.05, 
+    shadowRadius: 10, 
+    elevation: 2 
+  },
+  gameCardDisabled: { opacity: 0.6, backgroundColor: '#F0F0F0' },
+  gameIconContainer: { 
+    width: 70, 
+    height: 70, 
+    borderRadius: 35, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginBottom: 12 
+  },
+  gameName: { fontSize: 15, fontWeight: 'bold', color: '#333', textAlign: 'center' },
+  gameDescription: { fontSize: 11, color: '#888', marginTop: 4, textAlign: 'center' },
+  gameNameDisabled: { fontSize: 15, fontWeight: 'bold', color: '#999', textAlign: 'center' },
+  comingSoon: { fontSize: 10, color: '#AAA', marginTop: 4, fontWeight: 'bold' },
 });
