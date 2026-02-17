@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import AwaleAdmin from '../components/AwaleAdmin';
+import AwaleAdmin from './components/AwaleAdmin';
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -25,31 +25,56 @@ export default function AuthAdmin() {
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
 
   const handleLogin = async () => {
-    if (!email || !password) return Alert.alert('Erreur', 'Email et mot de passe requis');
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (!email || !password) {
+      return Alert.alert('Erreur', 'Email et mot de passe requis');
+    }
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
 
     setLoading(true);
     try {
+      // Tester avec createSession (fonction la plus simple)
       const res = await fetch(`${BACKEND_URL}/admin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'getStatistics', email: email.trim(), password, run_id: 'test' })
+        body: JSON.stringify({
+          function: 'createSession',
+          email: email.trim(),
+          password: password,
+          game_key: 'vrai_faux',
+          title: 'Test Auth',
+          description: 'Test',
+          is_paid: false,
+          price_cfa: 0
+        })
       });
+
       const data = await res.json();
 
-      if (!res.ok || data.error) {
-        if (data.error.includes('rôle')) {
-          Alert.alert('❌ Accès refusé', 'Vous n\'avez pas les droits admin');
-        } else {
-          Alert.alert('❌ Erreur', data.error || 'Identifiants incorrects');
-        }
+      // Si 401 = mauvais identifiants
+      if (res.status === 401) {
+        Alert.alert('❌ Erreur', 'Email ou mot de passe incorrect');
         return;
       }
 
-      setAdminData({ email: email.trim(), password });
-      setAuthenticated(true);
-      Alert.alert('✅', 'Bienvenue administrateur !');
-    } catch (error) {
+      // Si 403 = pas admin
+      if (res.status === 403 || data.error?.includes('rôle')) {
+        Alert.alert('❌ Accès refusé', 'Vous n\'avez pas les droits administrateur');
+        return;
+      }
+
+      // Si succès
+      if (data.success || res.ok) {
+        setAdminData({ email: email.trim(), password });
+        setAuthenticated(true);
+        Alert.alert('✅', 'Bienvenue administrateur !');
+      } else {
+        Alert.alert('❌ Erreur', data.error || 'Erreur de connexion');
+      }
+    } catch (error: any) {
+      console.error('Login error:', error);
       Alert.alert('Erreur', 'Impossible de contacter le serveur');
     } finally {
       setLoading(false);
@@ -77,17 +102,39 @@ export default function AuthAdmin() {
         <View style={styles.formContainer}>
           <View style={styles.inputContainer}>
             <Ionicons name="mail" size={20} color="#8A2BE2" />
-            <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
           </View>
 
           <View style={styles.inputContainer}>
             <Ionicons name="lock-closed" size={20} color="#8A2BE2" />
-            <TextInput style={styles.input} placeholder="Mot de passe" value={password} onChangeText={setPassword} secureTextEntry />
+            <TextInput
+              style={styles.input}
+              placeholder="Mot de passe"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
           </View>
 
-          <TouchableOpacity style={[styles.loginButton, loading && styles.loginButtonDisabled]} onPress={handleLogin} disabled={loading}>
-            <LinearGradient colors={loading ? ['#999', '#666'] : ['#8A2BE2', '#4B0082']} style={styles.loginGradient}>
-              {loading ? <ActivityIndicator size="small" color="#FFF" /> : (
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            <LinearGradient
+              colors={loading ? ['#999', '#666'] : ['#8A2BE2', '#4B0082']}
+              style={styles.loginGradient}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
                 <>
                   <Ionicons name="log-in" size={20} color="#FFF" />
                   <Text style={styles.loginText}>Se connecter</Text>
@@ -98,7 +145,9 @@ export default function AuthAdmin() {
 
           <View style={styles.infoBox}>
             <Ionicons name="information-circle" size={20} color="#8A2BE2" />
-            <Text style={styles.infoText}>Accès réservé aux admin, adminpro, supreme</Text>
+            <Text style={styles.infoText}>
+              Accès réservé aux roles: admin, adminpro, supreme
+            </Text>
           </View>
         </View>
       </View>
@@ -128,7 +177,7 @@ export default function AuthAdmin() {
               <LinearGradient colors={['#F59E0B', '#D97706']} style={styles.gameIconContainer}>
                 <Ionicons name="extension-puzzle" size={40} color="#FFF" />
               </LinearGradient>
-              <Text style={styles.gameName}>Awalé Admin</Text>
+              <Text style={styles.gameName}>Vrai ou Faux</Text>
             </TouchableOpacity>
 
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
@@ -144,7 +193,7 @@ export default function AuthAdmin() {
     );
   }
 
-  // AWALÉ ADMIN
+  // ADMIN
   if (selectedGame === 'awale') {
     return <AwaleAdmin adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
   }
