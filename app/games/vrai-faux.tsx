@@ -82,6 +82,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRunId       = useRef<string | null>(null);
   const questionFetched = useRef<string | null>(null); // run_id dont la question a été chargée
+  const seenRunIds      = useRef<Set<string>>(new Set()); // runs vus EN DIRECT cette session
   const resultTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userIdRef       = useRef<string>(userId);
@@ -142,7 +143,9 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       setInitLoading(false);
     };
     init();
+    isMounted.current = true; // (re)montage
     return () => {
+      isMounted.current = false; // démontage → stopper tout
       if (pollRef.current)    clearInterval(pollRef.current);
       if (resultTimer.current) clearTimeout(resultTimer.current);
       if (flashTimer.current)  clearTimeout(flashTimer.current);
@@ -286,9 +289,10 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   };
 
   const pollSilent = async (sessionId: string) => {
+    if (!isMounted.current) return; // composant démonté → ignorer
     try {
       const data = await gamePost({ function: 'listVisibleRuns', session_id: sessionId });
-      if (!data.success) return;
+      if (!data.success || !isMounted.current) return;
       const runs: RunItem[] = data.runs || [];
 
       if (runs.length === 0) {
@@ -301,10 +305,13 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       if (lastRunId.current && latest.id !== lastRunId.current) {
         lastRunId.current = latest.id;
         questionFetched.current = null; // reset pour charger la nouvelle question
+        seenRunIds.current.add(latest.id); // marquer comme vu en direct
         setActiveRun(latest); setMyAnswer(null); setQuestion(null); setLeaderboard([]);
         setGameState('question'); fetchQuestionSilent(latest.id); return;
       }
       if (!lastRunId.current) lastRunId.current = latest.id;
+      // Marquer ce run comme "vu en direct" si pas encore fermé
+      if (!latest.is_closed) seenRunIds.current.add(latest.id);
       // Mettre à jour activeRun seulement si l'état a changé (évite re-render inutile)
       setActiveRun(prev => {
         if (!prev || prev.is_closed !== latest.is_closed || prev.is_visible !== latest.is_visible) {
@@ -314,19 +321,28 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       });
 
       if (latest.is_closed) {
-        setGameState(prev => {
-          if (prev === 'result') return 'result';
-          fetchResultsSilent(latest.id); scheduleReturnToWaiting(); return 'result';
-        });
+        // N'afficher les résultats que si l'utilisateur a VU ce run en direct
+        if (!seenRunIds.current.has(latest.id)) {
+          // Run fermé non vu → ignorer, rester en waiting
+          lastRunId.current = null;
+          return;
+        }
+        // Appels async HORS du setter React (interdit dedans)
+        if (!resultScheduled.current) {
+          resultScheduled.current = true;
+          setGameState('result');
+          fetchResultsSilent(latest.id);
+          scheduleReturnToWaiting();
+        }
       } else {
+        // Run ouvert : afficher la question si pas encore fait
         setGameState(prev => {
           if (prev === 'answered' || prev === 'result') return prev;
           if (prev !== 'question') {
-            // Ne charger la question que si on n'en a pas encore une
             fetchQuestionSilent(latest.id);
             return 'question';
           }
-          return prev; // déjà en mode question → ne rien changer
+          return prev;
         });
       }
     } catch {}
@@ -335,20 +351,25 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const scheduleReturnToWaiting = () => {
     if (resultTimer.current) clearTimeout(resultTimer.current);
     resultTimer.current = setTimeout(async () => {
+      if (!isMounted.current) return;
       if (selPartyRef.current) await syncHistorySilent(selPartyRef.current.id);
+      if (!isMounted.current) return;
       lastRunId.current = null;
       questionFetched.current = null;
+      resultScheduled.current = false; // reset pour le prochain run
       setActiveRun(null); setQuestion(null); setMyAnswer(null); setLeaderboard([]);
       setGameState('waiting');
     }, RESULT_TTL_MS);
   };
 
   const fetchQuestionSilent = async (runId: string) => {
+    if (!isMounted.current) return;
     // Éviter de re-charger si on a déjà la question de ce run
     if (questionFetched.current === runId) return;
     questionFetched.current = runId;
     try {
       const data = await gamePost({ function: 'getQuestions', run_id: runId });
+      if (!isMounted.current) return;
       if (data.success && data.questions?.length > 0) {
         const unanswered = (data.questions as QuestionItem[]).filter(q => !q.answered);
         if (unanswered.length > 0) { setQuestion(unanswered[0]); animateIn(); haptic.medium(); }
@@ -360,11 +381,13 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   };
 
   const fetchResultsSilent = async (runId: string) => {
+    if (!isMounted.current) return;
     try {
       const [lbData, qData] = await Promise.all([
         gamePost({ function: 'getLeaderboard', run_id: runId }),
         gamePost({ function: 'getQuestions',   run_id: runId }),
       ]);
+      if (!isMounted.current) return;
       if (lbData.success) {
         const lb: LeaderEntry[] = lbData.leaderboard || [];
         setLeaderboard(lb);
@@ -401,6 +424,8 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     if (screen === 'lobby') {
       stopPolling(); if (resultTimer.current) clearTimeout(resultTimer.current);
       lastRunId.current = null; selPartyRef.current = null;
+      resultScheduled.current = false; questionFetched.current = null;
+      seenRunIds.current.clear();
       // Effacer l'état lobby persisté
       try { AsyncStorage.removeItem('vf_lobby_state'); } catch {}
       setScreen('parties'); setGameState('waiting');
