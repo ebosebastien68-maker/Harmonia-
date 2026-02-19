@@ -56,14 +56,24 @@ interface Question    { id: string; question_text: string; score: number; correc
 interface LeaderEntry { rank: number; user_id: string; nom: string; prenom: string; run_score: number; is_current_user: boolean; avatar_url: string | null; }
 
 interface VraiFauxProps {
-  userId:    string;
+  userId?:   string; // optionnel — lu depuis AsyncStorage si absent
   userNom?:  string;
   onBack?:   () => void;
 }
 
-export default function VraiFaux({ userId, userNom, onBack }: VraiFauxProps) {
+export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFauxProps) {
   const [screen,    setScreen]    = useState<Screen>('sessions');
   const [gameState, setGameState] = useState<GameState>('waiting');
+  const [userId,    setUserId]    = useState<string>(userIdProp || '');
+
+  // Charger user_id depuis AsyncStorage si non fourni en prop
+  useEffect(() => {
+    if (!userIdProp) {
+      AsyncStorage.getItem('user_id').then(id => {
+        if (id) setUserId(id);
+      });
+    }
+  }, [userIdProp]);
 
   // Données navigation
   const [sessions,    setSessions]    = useState<SessionItem[]>([]);
@@ -97,7 +107,15 @@ export default function VraiFaux({ userId, userNom, onBack }: VraiFauxProps) {
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-    loadSessions();
+    // Charger d'abord user_id si pas fourni, puis les sessions
+    const init = async () => {
+      if (!userIdProp) {
+        const storedId = await AsyncStorage.getItem('user_id');
+        if (storedId) setUserId(storedId);
+      }
+      loadSessions();
+    };
+    init();
   }, []);
 
   useEffect(() => {
@@ -123,10 +141,17 @@ export default function VraiFaux({ userId, userNom, onBack }: VraiFauxProps) {
 
   // ─── API helpers ──────────────────────────────────────────────────────────
   const gamePost = async (body: Record<string, any>) => {
+    // Tenter de récupérer user_id depuis AsyncStorage si pas encore chargé
+    let uid = userId;
+    if (!uid) {
+      uid = (await AsyncStorage.getItem('user_id')) || '';
+      if (uid) setUserId(uid);
+    }
+    if (!uid) throw new Error('user_id non disponible — veuillez vous connecter');
     const res  = await fetch(`${BACKEND_URL}/game`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, ...body }),
+      body: JSON.stringify({ user_id: uid, ...body }),
     });
     return res.json();
   };
