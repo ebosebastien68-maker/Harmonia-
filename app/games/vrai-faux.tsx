@@ -1,20 +1,5 @@
 /**
- * vrai-faux.tsx — Interface Joueur Vrai ou Faux
- *
- * FLUX CORRIGÉ :
- *  1. Écran Sessions  — liste des sessions disponibles (listSessions)
- *  2. Écran Parties   — liste des parties de la session (listParties via backend game)
- *  3. Écran Lobby     — joueur rejoint la party (joinSession) → polling démarre
- *  4. État waiting    — attend qu'un run devienne visible
- *  5. État question   — affiche la question + boutons VRAI/FAUX
- *  6. État answered   — attend fermeture du run
- *  7. État result     — bonne réponse + score + leaderboard → retour waiting auto
- *
- * CORRECTIONS :
- *  ✅ setLoading(false) garanti même en cas d'erreur réseau
- *  ✅ Polling ne démarre qu'après joinSession réussi
- *  ✅ Transition result → waiting automatique après 10s
- *  ✅ Pas d'Alert.alert — messages inline
+ * vrai-faux.tsx — CORRIGÉ AsyncStorage + Bouton Retry
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -30,7 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BACKEND_URL   = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const GAME_KEY      = 'vrai_faux';
 const POLL_MS       = 3000;
-const RESULT_TTL_MS = 12000; // délai avant retour en "waiting" après résultats
+const RESULT_TTL_MS = 12000;
 
 const haptic = {
   medium:  () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); },
@@ -56,7 +41,7 @@ interface Question    { id: string; question_text: string; score: number; correc
 interface LeaderEntry { rank: number; user_id: string; nom: string; prenom: string; run_score: number; is_current_user: boolean; avatar_url: string | null; }
 
 interface VraiFauxProps {
-  userId?:   string; // optionnel — lu depuis AsyncStorage si absent
+  userId?:   string;
   userNom?:  string;
   onBack?:   () => void;
 }
@@ -66,22 +51,32 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const [gameState, setGameState] = useState<GameState>('waiting');
   const [userId,    setUserId]    = useState<string>(userIdProp || '');
 
-  // Charger user_id depuis AsyncStorage si non fourni en prop
+  // ✅ CORRECTION : Charger depuis 'harmonia_session' (clé utilisée dans login/home)
   useEffect(() => {
-    if (!userIdProp) {
-      AsyncStorage.getItem('user_id').then(id => {
-        if (id) setUserId(id);
-      });
-    }
+    const loadUser = async () => {
+      if (!userIdProp) {
+        try {
+          const sessionData = await AsyncStorage.getItem('harmonia_session');
+          if (sessionData) {
+            const parsed = JSON.parse(sessionData);
+            if (parsed?.user?.id) {
+              setUserId(parsed.user.id);
+              console.log('✅ User ID loaded:', parsed.user.id);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading user from AsyncStorage:', error);
+        }
+      }
+    };
+    loadUser();
   }, [userIdProp]);
 
-  // Données navigation
   const [sessions,    setSessions]    = useState<SessionItem[]>([]);
   const [parties,     setParties]     = useState<PartyItem[]>([]);
   const [selSession,  setSelSession]  = useState<SessionItem | null>(null);
   const [selParty,    setSelParty]    = useState<PartyItem | null>(null);
 
-  // Jeu
   const [activeRun,   setActiveRun]   = useState<RunItem | null>(null);
   const [question,    setQuestion]    = useState<Question | null>(null);
   const [myAnswer,    setMyAnswer]    = useState<boolean | null>(null);
@@ -90,32 +85,21 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const [pointsWon,   setPointsWon]   = useState(0);
   const [error,       setError]       = useState('');
 
-  // Loaders séparés pour ne pas bloquer l'UI
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingParties,  setLoadingParties]  = useState(false);
   const [loadingJoin,     setLoadingJoin]     = useState(false);
   const [loadingAnswer,   setLoadingAnswer]   = useState(false);
 
-  // Refs
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRunId  = useRef<string | null>(null);
   const resultTimer= useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim  = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-    // Charger d'abord user_id si pas fourni, puis les sessions
-    const init = async () => {
-      if (!userIdProp) {
-        const storedId = await AsyncStorage.getItem('user_id');
-        if (storedId) setUserId(storedId);
-      }
-      loadSessions();
-    };
-    init();
+    loadSessions();
   }, []);
 
   useEffect(() => {
@@ -131,7 +115,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     }
   }, [gameState]);
 
-  // Cleanup au démontage
   useEffect(() => {
     return () => {
       if (pollRef.current)    clearInterval(pollRef.current);
@@ -141,14 +124,18 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
   // ─── API helpers ──────────────────────────────────────────────────────────
   const gamePost = async (body: Record<string, any>) => {
-    // Tenter de récupérer user_id depuis AsyncStorage si pas encore chargé
     let uid = userId;
     if (!uid) {
-      uid = (await AsyncStorage.getItem('user_id')) || '';
-      if (uid) setUserId(uid);
+      // ✅ CORRECTION : Charger depuis harmonia_session
+      const sessionData = await AsyncStorage.getItem('harmonia_session');
+      if (sessionData) {
+        const parsed = JSON.parse(sessionData);
+        uid = parsed?.user?.id || '';
+        if (uid) setUserId(uid);
+      }
     }
     if (!uid) throw new Error('user_id non disponible — veuillez vous connecter');
-    const res  = await fetch(`${BACKEND_URL}/game`, {
+    const res = await fetch(`${BACKEND_URL}/game`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: uid, ...body }),
@@ -164,7 +151,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       const data = await gamePost({ function: 'listSessions', game_key: GAME_KEY });
       if (data.success) setSessions(data.sessions || []);
       else setError(data.error || 'Impossible de charger les sessions');
-    } catch {
+    } catch (err) {
       setError('Erreur réseau — vérifiez votre connexion');
     } finally {
       setLoadingSessions(false);
@@ -176,11 +163,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     setLoadingParties(true);
     setError('');
     try {
-      // On récupère les parties via listParties (endpoint admin aussi accessible depuis game si tu l'ajoutes)
-      // Pour l'instant on appelle /admin ou /game selon ce qui est disponible
-      // → On utilise /game avec une nouvelle fonction listParties si ajoutée, sinon on passe directement
-      // En attendant : on liste en appelant directement le backend admin sans password
-      // CORRECTEMENT : le joueur appelle /game → listPartiesForSession
       const data = await gamePost({ function: 'listPartiesForSession', session_id: session.id });
       if (data.success) {
         setParties(data.parties || []);
@@ -228,7 +210,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const startPolling = (sessionId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => poll(sessionId), POLL_MS);
-    // Appel immédiat
     poll(sessionId);
   };
 
@@ -244,7 +225,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       const runs: RunItem[] = data.runs || [];
 
       if (runs.length === 0) {
-        // Aucun run visible
         setGameState(prev => {
           if (prev === 'answered' || prev === 'result') return prev;
           return 'waiting';
@@ -254,7 +234,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
       const latestRun = runs[runs.length - 1];
 
-      // Nouveau run détecté → reset
       if (lastRunId.current && latestRun.id !== lastRunId.current) {
         lastRunId.current = latestRun.id;
         setActiveRun(latestRun);
@@ -289,9 +268,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
           return prev;
         });
       }
-    } catch {
-      // silencieux — le polling continue
-    }
+    } catch {}
   }, [userId]);
 
   const scheduleReturnToWaiting = () => {
@@ -306,7 +283,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     }, RESULT_TTL_MS);
   };
 
-  // ─── ACTIONS JEU ──────────────────────────────────────────────────────────
   const fetchQuestion = async (runId: string) => {
     try {
       const data = await gamePost({ function: 'getQuestions', run_id: runId });
@@ -316,7 +292,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
           setQuestion(unanswered[0]);
           haptic.medium();
         } else {
-          // Déjà répondu
           setGameState('answered');
         }
       }
@@ -340,7 +315,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       if (qData.success && qData.questions?.length > 0) {
         const q: Question = qData.questions[0];
         setQuestion(q);
-        // Le score attribué est dans score_awarded (retourné par getQuestions post-reveal)
         if (q.score_awarded !== null && q.score_awarded !== undefined) {
           setPointsWon(q.score_awarded);
         } else if (q.correct_answer !== null && myAnswer !== null) {
@@ -374,7 +348,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     }
   };
 
-  // ─── NAVIGATION RETOUR ────────────────────────────────────────────────────
   const goBackNav = () => {
     if (screen === 'lobby') {
       stopPolling();
@@ -395,12 +368,10 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     }
   };
 
-  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.root}>
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
 
-        {/* Header */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
           {(screen !== 'sessions' || onBack) && (
             <TouchableOpacity onPress={goBackNav} style={s.backBtn}>
@@ -416,7 +387,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
           <View style={{ width: 33 }} />
         </LinearGradient>
 
-        {/* ═══ ÉCRAN SESSIONS ═══ */}
         {screen === 'sessions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sectionLabel}>SESSIONS DISPONIBLES</Text>
@@ -466,7 +436,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
           </ScrollView>
         )}
 
-        {/* ═══ ÉCRAN PARTIES ═══ */}
         {screen === 'parties' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sectionLabel}>CHOISIR UN GROUPE</Text>
@@ -509,18 +478,14 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
           </ScrollView>
         )}
 
-        {/* ═══ ÉCRAN LOBBY / JEU ═══ */}
         {screen === 'lobby' && (
           <View style={{ flex: 1 }}>
-
-            {/* Bandeau groupe */}
             <View style={s.lobbyBanner}>
               <Ionicons name="people-outline" size={14} color={C.gold} />
               <Text style={s.lobbyBannerTxt}>{selParty?.title}</Text>
               {userNom && <Text style={s.lobbyUser}>• {userNom}</Text>}
             </View>
 
-            {/* WAITING */}
             {gameState === 'waiting' && (
               <View style={s.center}>
                 <Animated.View style={[s.orb, { transform: [{ scale: pulseAnim }] }]}>
@@ -535,7 +500,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
               </View>
             )}
 
-            {/* QUESTION */}
             {gameState === 'question' && question && (
               <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'stretch' }]} showsVerticalScrollIndicator={false}>
                 {activeRun && (
@@ -578,7 +542,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
               </ScrollView>
             )}
 
-            {/* ANSWERED */}
             {gameState === 'answered' && (
               <View style={s.center}>
                 <View style={[s.answerGiven, { backgroundColor: (myAnswer === true ? C.vrai : C.faux) + '22', borderColor: (myAnswer === true ? C.vrai : C.faux) + '66' }]}>
@@ -596,11 +559,8 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
               </View>
             )}
 
-            {/* RESULT */}
             {gameState === 'result' && question && (
               <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-                {/* Bonne réponse */}
                 <View style={s.revealCard}>
                   <Text style={s.revealLabel}>BONNE RÉPONSE</Text>
                   <View style={[s.revealBadge, {
@@ -614,7 +574,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
                   </View>
                 </View>
 
-                {/* Ma performance */}
                 <View style={s.perfCard}>
                   {myAnswer !== null && question.correct_answer !== null ? (
                     myAnswer === question.correct_answer ? (
@@ -639,7 +598,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
                   <Text style={s.perfTotal}>Score ce run : {myScore} pts</Text>
                 </View>
 
-                {/* Leaderboard */}
                 {leaderboard.length > 0 && (
                   <View style={s.lbCard}>
                     <Text style={s.lbLabel}>CLASSEMENT</Text>
@@ -669,8 +627,6 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     </SafeAreaView>
   );
 }
-
-// ─── Sous-composants ──────────────────────────────────────────────────────────
 
 function LoadingCard({ label }: { label: string }) {
   return (
@@ -711,82 +667,66 @@ function ErrorBanner({ msg, onRetry }: { msg: string; onRetry?: () => void }) {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
-
-  header:       { paddingTop: Platform.OS === 'android' ? 14 : 8, paddingBottom: 13, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.border },
-  backBtn:      { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
+  header: { paddingTop: Platform.OS === 'android' ? 14 : 8, paddingBottom: 13, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.border },
+  backBtn: { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerSub:    { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
-  headerTitle:  { fontSize: 19, fontWeight: '800', color: C.cream },
-
-  scroll:       { padding: 16 },
+  headerSub: { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
+  headerTitle: { fontSize: 19, fontWeight: '800', color: C.cream },
+  scroll: { padding: 16 },
   sectionLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 2, marginBottom: 12 },
-
-  card:    { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
-  cardLeft:{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
-  cardIcon:{ width: 36, height: 36, borderRadius: 18, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44', flexShrink: 0 },
-  cardTitle:{ fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 3 },
-  cardSub:  { fontSize: 12, color: C.muted, lineHeight: 17 },
+  card: { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
+  cardLeft: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
+  cardIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44', flexShrink: 0 },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 3 },
+  cardSub: { fontSize: 12, color: C.muted, lineHeight: 17 },
   cardMeta: { flexDirection: 'row', gap: 7, marginTop: 6 },
-  paidBadge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold + '22', borderWidth: 1, borderColor: C.gold + '55' },
+  paidBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold + '22', borderWidth: 1, borderColor: C.gold + '55' },
   paidBadgeTxt: { fontSize: 11, fontWeight: '700', color: C.gold },
-
-  refreshBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, paddingVertical: 11 },
+  refreshBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, paddingVertical: 11 },
   refreshBtnTxt: { color: C.muted, fontSize: 12, fontWeight: '600' },
-
-  // Lobby
-  lobbyBanner:    { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.surface, paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
+  lobbyBanner: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.surface, paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
   lobbyBannerTxt: { color: C.gold, fontSize: 13, fontWeight: '700' },
-  lobbyUser:      { color: C.muted, fontSize: 12 },
-
-  center:         { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-  orb:            { width: 110, height: 110, borderRadius: 55, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: C.gold + '44', marginBottom: 24 },
-  waitTitle:      { fontSize: 22, fontWeight: '800', color: C.cream, textAlign: 'center', marginBottom: 9 },
-  waitSub:        { fontSize: 13, color: C.muted, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
-  pollIndicator:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pollTxt:        { color: C.muted, fontSize: 12 },
-
+  lobbyUser: { color: C.muted, fontSize: 12 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
+  orb: { width: 110, height: 110, borderRadius: 55, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: C.gold + '44', marginBottom: 24 },
+  waitTitle: { fontSize: 22, fontWeight: '800', color: C.cream, textAlign: 'center', marginBottom: 9 },
+  waitSub: { fontSize: 13, color: C.muted, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  pollIndicator: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pollTxt: { color: C.muted, fontSize: 12 },
   liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.danger + '18', borderRadius: 20, paddingHorizontal: 13, paddingVertical: 6, alignSelf: 'center', borderWidth: 1, borderColor: C.danger + '44', marginBottom: 18 },
-  liveDot:   { width: 7, height: 7, borderRadius: 4, backgroundColor: C.danger },
-  liveTxt:   { color: C.danger, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
-  livePts:   { color: C.gold, fontSize: 11, fontWeight: '700' },
-
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.danger },
+  liveTxt: { color: C.danger, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  livePts: { color: C.gold, fontSize: 11, fontWeight: '700' },
   questionCard: { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 22 },
   questionText: { fontSize: 20, fontWeight: '700', color: C.cream, lineHeight: 29, textAlign: 'center' },
-
-  answerRow:      { flexDirection: 'row', gap: 12 },
-  answerBtn:      { flex: 1, borderRadius: 16, paddingVertical: 32, alignItems: 'center', gap: 9 },
-  vraiBtn:        { backgroundColor: C.vrai + 'EE' },
-  fauxBtn:        { backgroundColor: C.faux + 'EE' },
+  answerRow: { flexDirection: 'row', gap: 12 },
+  answerBtn: { flex: 1, borderRadius: 16, paddingVertical: 32, alignItems: 'center', gap: 9 },
+  vraiBtn: { backgroundColor: C.vrai + 'EE' },
+  fauxBtn: { backgroundColor: C.faux + 'EE' },
   answerSelected: { opacity: 0.6, transform: [{ scale: 0.97 }] },
   answerDisabled: { opacity: 0.5 },
-  answerBtnTxt:   { fontSize: 20, fontWeight: '900', color: C.white, letterSpacing: 1 },
-
-  answerGiven:    { flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 22, paddingVertical: 15, borderRadius: 20, borderWidth: 1, marginBottom: 20 },
+  answerBtnTxt: { fontSize: 20, fontWeight: '900', color: C.white, letterSpacing: 1 },
+  answerGiven: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 22, paddingVertical: 15, borderRadius: 20, borderWidth: 1, marginBottom: 20 },
   answerGivenTxt: { fontSize: 22, fontWeight: '900' },
-
-  revealCard:     { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 11, borderWidth: 1, borderColor: C.gold + '33', alignItems: 'center' },
-  revealLabel:    { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 13 },
-  revealBadge:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 22, borderWidth: 1 },
+  revealCard: { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 11, borderWidth: 1, borderColor: C.gold + '33', alignItems: 'center' },
+  revealLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 13 },
+  revealBadge: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 22, borderWidth: 1 },
   revealBadgeTxt: { fontSize: 26, fontWeight: '900' },
-
-  perfCard:    { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 11, borderWidth: 1, borderColor: C.border, alignItems: 'center', gap: 6 },
-  perfGood:    { fontSize: 18, fontWeight: '800', color: C.success },
-  perfBad:     { fontSize: 16, fontWeight: '700', color: C.muted },
-  perfPts:     { fontSize: 22, fontWeight: '900', color: C.gold },
-  perfPtsBad:  { fontSize: 16, fontWeight: '700', color: C.muted },
-  perfTotal:   { fontSize: 12, color: C.muted, marginTop: 6 },
-
-  lbCard:  { backgroundColor: C.surface, borderRadius: 14, padding: 15, marginBottom: 11, borderWidth: 1, borderColor: C.border },
+  perfCard: { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 11, borderWidth: 1, borderColor: C.border, alignItems: 'center', gap: 6 },
+  perfGood: { fontSize: 18, fontWeight: '800', color: C.success },
+  perfBad: { fontSize: 16, fontWeight: '700', color: C.muted },
+  perfPts: { fontSize: 22, fontWeight: '900', color: C.gold },
+  perfPtsBad: { fontSize: 16, fontWeight: '700', color: C.muted },
+  perfTotal: { fontSize: 12, color: C.muted, marginTop: 6 },
+  lbCard: { backgroundColor: C.surface, borderRadius: 14, padding: 15, marginBottom: 11, borderWidth: 1, borderColor: C.border },
   lbLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 11 },
-  lbRow:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border + '88' },
+  lbRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border + '88' },
   lbRowMe: { backgroundColor: C.gold + '11', borderRadius: 9, paddingHorizontal: 6, marginHorizontal: -6 },
-  lbRank:  { width: 36, fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  lbName:  { flex: 1, fontSize: 13, color: C.cream, fontWeight: '600' },
+  lbRank: { width: 36, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  lbName: { flex: 1, fontSize: 13, color: C.cream, fontWeight: '600' },
   lbScore: { fontSize: 13, color: C.muted, fontWeight: '700' },
-
-  waitingNext:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingVertical: 18 },
+  waitingNext: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingVertical: 18 },
   waitingNextTxt: { color: C.muted, fontSize: 12 },
 });
