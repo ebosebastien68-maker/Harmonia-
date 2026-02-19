@@ -5,6 +5,7 @@
  * ✅ Clic party → questions non-répondues + historique chargés
  * ✅ Historique complet — toutes questions, réponses, scores, score total party
  * ✅ AsyncStorage via 'harmonia_session'
+ * ✅ FIXED: isMounted useRef ajouté
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -79,14 +80,16 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const [newDataFlash,  setNewDataFlash]  = useState(false);
   const [error,         setError]         = useState('');
 
+  const isMounted       = useRef(true); // ✅ FIX: Déclaration du ref manquant
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRunId       = useRef<string | null>(null);
-  const questionFetched = useRef<string | null>(null); // run_id dont la question a été chargée
-  const seenRunIds      = useRef<Set<string>>(new Set()); // runs vus EN DIRECT cette session
+  const questionFetched = useRef<string | null>(null);
+  const seenRunIds      = useRef<Set<string>>(new Set());
   const resultTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userIdRef       = useRef<string>(userId);
   const selPartyRef     = useRef<PartyItem | null>(null);
+  const resultScheduled = useRef(false); // ✅ Aussi ajouter ce ref s'il manquait
 
   const pulseAnim    = useRef(new Animated.Value(1)).current;
   const fadeAnim     = useRef(new Animated.Value(0)).current;
@@ -666,7 +669,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
                         <Text style={[s.perfPts, { color: C.muted, fontSize: 18 }]}>+0 pt</Text></>
                     )
                   ) : (
-                    <><Ionicons name="time-outline" size={26} color={C.muted} />
+                    <><Iconicons name="time-outline" size={26} color={C.muted} />
                       <Text style={s.perfBad}>Pas de réponse</Text></>
                   )}
                   <Text style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Score ce run : {myRunScore} pts</Text>
