@@ -7,7 +7,7 @@
  * ✅ AsyncStorage via 'harmonia_session'
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, ScrollView,
   Animated, Platform, SafeAreaView, ActivityIndicator,
@@ -79,12 +79,13 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   const [newDataFlash,  setNewDataFlash]  = useState(false);
   const [error,         setError]         = useState('');
 
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastRunId   = useRef<string | null>(null);
-  const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const userIdRef   = useRef<string>(userId);
-  const selPartyRef = useRef<PartyItem | null>(null);
+  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastRunId       = useRef<string | null>(null);
+  const questionFetched = useRef<string | null>(null); // run_id dont la question a été chargée
+  const resultTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userIdRef       = useRef<string>(userId);
+  const selPartyRef     = useRef<PartyItem | null>(null);
 
   const pulseAnim    = useRef(new Animated.Value(1)).current;
   const fadeAnim     = useRef(new Animated.Value(0)).current;
@@ -96,8 +97,9 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
     const init = async () => {
+      // 1. Charger userId
       let uid = userIdProp || '';
       if (!uid) {
         try {
@@ -106,6 +108,36 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
         } catch {}
       }
       if (uid) { setUserId(uid); userIdRef.current = uid; }
+
+      // 2. Restaurer l'état lobby si on était en jeu (évite la disparition sur remontage)
+      try {
+        const savedLobby = await AsyncStorage.getItem('vf_lobby_state');
+        if (savedLobby) {
+          const lb = JSON.parse(savedLobby);
+          if (lb.sessionId && lb.partyId && lb.sessionTitle && lb.partyTitle) {
+            const sess: SessionItem = { id: lb.sessionId, title: lb.sessionTitle, description: lb.sessionDesc, is_paid: false, price_cfa: 0 };
+            const party: PartyItem  = { id: lb.partyId, title: lb.partyTitle, is_initial: lb.partyInitial ?? true, min_score: 0, min_rank: null };
+            setSelSession(sess);
+            setSelParty(party); selPartyRef.current = party;
+            setScreen('lobby');
+            setGameState('waiting');
+            // Recharger l'historique silencieusement
+            if (uid) {
+              const histRes = await fetch(`${BACKEND_URL}/game`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: uid, function: 'getPartyHistory', party_id: lb.partyId }),
+              });
+              const histData = await histRes.json();
+              if (histData.success) { setHistory(histData.history || []); setTotalScore(histData.total_score); setIsMember(histData.is_member); }
+            }
+            startPolling(lb.sessionId);
+            setInitLoading(false);
+            return; // pas besoin de charger les sessions
+          }
+        }
+      } catch {}
+
+      // 3. Sinon charger les sessions normalement
       await loadSessionsInternal(uid);
       setInitLoading(false);
     };
@@ -120,8 +152,8 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
   useEffect(() => {
     if (gameState === 'waiting') {
       const loop = Animated.loop(Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: false }),
       ]));
       loop.start();
       return () => loop.stop();
@@ -152,13 +184,13 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
   const animateIn = () => {
     questionAnim.setValue(0);
-    Animated.timing(questionAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+    Animated.timing(questionAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
   };
 
   const triggerFlash = () => {
     setNewDataFlash(true);
     flashAnim.setValue(1);
-    Animated.timing(flashAnim, { toValue: 0, duration: 2000, useNativeDriver: true }).start();
+    Animated.timing(flashAnim, { toValue: 0, duration: 2000, useNativeDriver: false }).start();
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setNewDataFlash(false), 2200);
   };
@@ -213,6 +245,17 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       }
 
       setScreen('lobby'); setGameState('waiting');
+      // Persister l'état lobby pour restauration si le composant est remonté
+      try {
+        await AsyncStorage.setItem('vf_lobby_state', JSON.stringify({
+          sessionId:    selSession.id,
+          sessionTitle: selSession.title,
+          sessionDesc:  selSession.description || '',
+          partyId:      party.id,
+          partyTitle:   party.title,
+          partyInitial: party.is_initial,
+        }));
+      } catch {}
       startPolling(selSession.id);
     } catch { setError('Erreur réseau'); setSelParty(null); }
     finally  { setJoiningParty(false); }
@@ -242,7 +285,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     } catch {}
   };
 
-  const pollSilent = useCallback(async (sessionId: string) => {
+  const pollSilent = async (sessionId: string) => {
     try {
       const data = await gamePost({ function: 'listVisibleRuns', session_id: sessionId });
       if (!data.success) return;
@@ -257,11 +300,18 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
       if (lastRunId.current && latest.id !== lastRunId.current) {
         lastRunId.current = latest.id;
+        questionFetched.current = null; // reset pour charger la nouvelle question
         setActiveRun(latest); setMyAnswer(null); setQuestion(null); setLeaderboard([]);
         setGameState('question'); fetchQuestionSilent(latest.id); return;
       }
       if (!lastRunId.current) lastRunId.current = latest.id;
-      setActiveRun(latest);
+      // Mettre à jour activeRun seulement si l'état a changé (évite re-render inutile)
+      setActiveRun(prev => {
+        if (!prev || prev.is_closed !== latest.is_closed || prev.is_visible !== latest.is_visible) {
+          return latest;
+        }
+        return prev;
+      });
 
       if (latest.is_closed) {
         setGameState(prev => {
@@ -271,32 +321,42 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
       } else {
         setGameState(prev => {
           if (prev === 'answered' || prev === 'result') return prev;
-          if (prev !== 'question') { fetchQuestionSilent(latest.id); return 'question'; }
-          return prev;
+          if (prev !== 'question') {
+            // Ne charger la question que si on n'en a pas encore une
+            fetchQuestionSilent(latest.id);
+            return 'question';
+          }
+          return prev; // déjà en mode question → ne rien changer
         });
       }
     } catch {}
-  }, []);
+  };
 
   const scheduleReturnToWaiting = () => {
     if (resultTimer.current) clearTimeout(resultTimer.current);
     resultTimer.current = setTimeout(async () => {
       if (selPartyRef.current) await syncHistorySilent(selPartyRef.current.id);
       lastRunId.current = null;
+      questionFetched.current = null;
       setActiveRun(null); setQuestion(null); setMyAnswer(null); setLeaderboard([]);
       setGameState('waiting');
     }, RESULT_TTL_MS);
   };
 
   const fetchQuestionSilent = async (runId: string) => {
+    // Éviter de re-charger si on a déjà la question de ce run
+    if (questionFetched.current === runId) return;
+    questionFetched.current = runId;
     try {
       const data = await gamePost({ function: 'getQuestions', run_id: runId });
       if (data.success && data.questions?.length > 0) {
         const unanswered = (data.questions as QuestionItem[]).filter(q => !q.answered);
         if (unanswered.length > 0) { setQuestion(unanswered[0]); animateIn(); haptic.medium(); }
-        else setGameState('answered');
+        else { setGameState('answered'); }
       }
-    } catch {}
+    } catch {
+      questionFetched.current = null; // reset pour permettre un retry
+    }
   };
 
   const fetchResultsSilent = async (runId: string) => {
@@ -341,6 +401,8 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     if (screen === 'lobby') {
       stopPolling(); if (resultTimer.current) clearTimeout(resultTimer.current);
       lastRunId.current = null; selPartyRef.current = null;
+      // Effacer l'état lobby persisté
+      try { AsyncStorage.removeItem('vf_lobby_state'); } catch {}
       setScreen('parties'); setGameState('waiting');
       setActiveRun(null); setQuestion(null); setMyAnswer(null);
       setLeaderboard([]); setHistory([]); setTotalScore(null); setIsMember(false);
@@ -508,10 +570,9 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
             {/* QUESTION */}
             {gameState === 'question' && question && (
-              <Animated.ScrollView
+              <ScrollView
                 contentContainerStyle={[s.scroll, { alignItems: 'stretch' }]}
                 showsVerticalScrollIndicator={false}
-                style={{ opacity: questionAnim }}
               >
                 <View style={s.liveBadge}>
                   <View style={s.liveDot} />
@@ -531,7 +592,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
                     selected={myAnswer === false} disabled={answerLoading || myAnswer !== null}
                     loading={answerLoading && myAnswer === false} onPress={() => submitAnswer(false)} />
                 </View>
-              </Animated.ScrollView>
+              </ScrollView>
             )}
 
             {/* ANSWERED */}
@@ -552,7 +613,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
             {/* RÉSULTATS */}
             {gameState === 'result' && question && (
-              <Animated.ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} style={{ opacity: questionAnim }}>
+              <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
                 {/* Bonne réponse */}
                 <View style={s.revealCard}>
                   <Text style={s.revealLabel}>BONNE RÉPONSE</Text>
@@ -606,7 +667,7 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
                   <View style={s.pollDot} />
                   <Text style={s.pollTxt}>En attente de la prochaine question…</Text>
                 </View>
-              </Animated.ScrollView>
+              </ScrollView>
             )}
           </View>
         )}
