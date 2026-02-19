@@ -1,24 +1,22 @@
 /**
  * AwaleAdmin.tsx — Design Royal Doré
- * ✅ Cross-platform : Web · Android · iOS
- * ✅ Un Run = Une Question avec sa réponse Vrai/Faux
- * ✅ Flux : Créer Run → Ajouter 1 question → Publier → Fermer
- * ✅ Onglet Gérer : navigation Sessions → Parties → Runs
- * ✅ Boutons Supprimer avec mise à jour UI immédiate
- * ✅ Zéro Alert.prompt
+ * CORRECTIONS :
+ *  ✅ Supprimer : modal custom (Alert.alert ne fonctionne pas sur web)
+ *  ✅ Onglet Gérer : session → parties + bouton Ajouter party
+ *  ✅ Onglet Gérer : party → runs + bouton Ajouter run/question
+ *  ✅ Cycle 3 étapes : Démarrer → Lancer → Fermer & Révéler
  */
 
 import React, { useState, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, Platform,
-  ScrollView, Alert, ActivityIndicator, TextInput,
+  ScrollView, ActivityIndicator, TextInput,
   Modal, KeyboardAvoidingView, Animated, Switch, SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const GAME_KEY    = 'vrai_faux';
 
@@ -28,229 +26,166 @@ const haptic = {
   error:   () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); },
 };
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
-  bg:          '#0D0D0F',
-  surface:     '#16161A',
-  surfaceHigh: '#1E1E24',
-  border:      '#2A2A32',
-  gold:        '#C9A84C',
-  goldLight:   '#E8C96A',
-  goldDark:    '#9A7A2A',
-  cream:       '#F5EDD8',
-  muted:       '#6B6B7A',
-  success:     '#2ECC71',
-  danger:      '#E74C3C',
-  info:        '#3498DB',
-  white:       '#FFFFFF',
+  bg: '#0D0D0F', surface: '#16161A', surfaceHigh: '#1E1E24', border: '#2A2A32',
+  gold: '#C9A84C', goldLight: '#E8C96A', cream: '#F5EDD8', muted: '#6B6B7A',
+  success: '#2ECC71', danger: '#E74C3C', info: '#3498DB', white: '#FFFFFF',
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface AwaleAdminProps { adminEmail: string; adminPassword: string; onBack: () => void; }
-
 interface SessionData { id: string; title: string; description?: string; is_paid: boolean; price_cfa: number; }
 interface PartyData   { id: string; title: string; is_initial: boolean; min_score: number; min_rank: number | null; }
-interface RunData     { id: string; title: string; is_visible: boolean; is_closed: boolean; is_started: boolean; question?: QuestionData; }
-interface QuestionData{ id: string; question_text: string; correct_answer: boolean; score: number; }
-
+interface RunData     { id: string; title: string; is_visible: boolean; is_closed: boolean; is_started: boolean; }
+interface QuestionData{ question_text: string; correct_answer: boolean; score: number; }
 interface ModalField  { key: string; label: string; placeholder: string; isBoolean?: boolean; isNumber?: boolean; multiline?: boolean; }
-interface ModalState  { visible: boolean; title: string; subtitle?: string; fields: ModalField[]; onSubmit: (v: Record<string,any>) => void; }
+interface ModalConfig { visible: boolean; title: string; subtitle?: string; fields: ModalField[]; onSubmit: (v: Record<string,any>) => void; }
+interface ConfirmConfig { visible: boolean; title: string; message: string; onConfirm: () => void; isDestructive?: boolean; }
 
-type Tab      = 'create' | 'manage';
-type ManageV  = 'sessions' | 'parties' | 'runs';
+type Tab = 'create' | 'manage';
+type ManageView = 'sessions' | 'parties' | 'runs';
 
-// ─── Composant principal ──────────────────────────────────────────────────────
 export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleAdminProps) {
-  const [loading,   setLoading]  = useState(false);
-  const [activeTab, setActiveTab]= useState<Tab>('create');
+  const [loading,    setLoading]   = useState(false);
+  const [activeTab,  setActiveTab] = useState<Tab>('create');
 
-  // Flux Créer
+  // État onglet Créer
   const [cSessionId, setCSessionId] = useState('');
   const [cPartyId,   setCPartyId]   = useState('');
-  const [cRun,       setCRun]       = useState<RunData | null>(null);
+  const [cRunId,     setCRunId]     = useState('');
+  const [cRunState,  setCRunState]  = useState({ is_started: false, is_visible: false, is_closed: false });
+  const [cQuestion,  setCQuestion]  = useState<QuestionData | null>(null);
 
-  // Flux Gérer
-  const [manageView,  setManageView]  = useState<ManageV>('sessions');
-  const [sessions,    setSessions]    = useState<SessionData[]>([]);
-  const [parties,     setParties]     = useState<PartyData[]>([]);
-  const [runs,        setRuns]        = useState<RunData[]>([]);
-  const [selSession,  setSelSession]  = useState<SessionData | null>(null);
-  const [selParty,    setSelParty]    = useState<PartyData   | null>(null);
+  // État onglet Gérer
+  const [manageView, setManageView] = useState<ManageView>('sessions');
+  const [sessions,   setSessions]   = useState<SessionData[]>([]);
+  const [parties,    setParties]    = useState<PartyData[]>([]);
+  const [runs,       setRuns]       = useState<RunData[]>([]);
+  const [selSession, setSelSession] = useState<SessionData | null>(null);
+  const [selParty,   setSelParty]   = useState<PartyData   | null>(null);
 
-  // Modal générique
-  const [modal,     setModal]    = useState<ModalState>({ visible: false, title: '', fields: [], onSubmit: () => {} });
-  const [modalVals, setModalVals]= useState<Record<string,any>>({});
+  // Modals
+  const [modal,   setModal]   = useState<ModalConfig>({ visible: false, title: '', fields: [], onSubmit: () => {} });
+  const [mVals,   setMVals]   = useState<Record<string,any>>({});
+  const [confirm, setConfirm] = useState<ConfirmConfig>({ visible: false, title: '', message: '', onConfirm: () => {} });
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   React.useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 480, useNativeDriver: true }).start();
   }, []);
 
-  // ─── API ────────────────────────────────────────────────────────────────────
+  // ─── API ──────────────────────────────────────────────────────────────────
   const api = useCallback(async (fn: string, params: Record<string,any>) => {
     haptic.impact();
     setLoading(true);
     try {
       const res  = await fetch(`${BACKEND_URL}/admin`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ function: fn, email: adminEmail, password: adminPassword, ...params }),
       });
       const data = await res.json();
       if (data.success || res.ok) { haptic.success(); return data; }
       haptic.error();
-      Alert.alert('Erreur', data.error || 'Opération échouée');
+      alert_show('Erreur', data.error || 'Opération échouée', () => {});
       return null;
     } catch {
       haptic.error();
-      Alert.alert('Erreur réseau', 'Impossible de contacter le serveur');
+      alert_show('Erreur réseau', 'Impossible de contacter le serveur', () => {});
       return null;
     } finally { setLoading(false); }
   }, [adminEmail, adminPassword]);
 
-  // ─── Modal ──────────────────────────────────────────────────────────────────
-  const openModal = (
-    title: string,
-    fields: ModalField[],
-    onSubmit: (v: Record<string,any>) => void,
-    subtitle?: string,
-  ) => {
+  // ─── Confirm / Alert ──────────────────────────────────────────────────────
+  const alert_show = (title: string, message: string, onConfirm: () => void, isDestructive = false) => {
+    setConfirm({ visible: true, title, message, onConfirm, isDestructive });
+  };
+
+  // ─── Modal formulaire ─────────────────────────────────────────────────────
+  const openModal = (title: string, fields: ModalField[], onSubmit: (v: Record<string,any>) => void, subtitle?: string) => {
     const d: Record<string,any> = {};
     fields.forEach(f => { d[f.key] = f.isBoolean ? false : f.isNumber ? '10' : ''; });
-    setModalVals(d);
+    setMVals(d);
     setModal({ visible: true, title, subtitle, fields, onSubmit });
   };
   const closeModal  = () => setModal(m => ({ ...m, visible: false }));
   const submitModal = () => {
     const first = modal.fields.find(f => !f.isBoolean && !f.isNumber);
-    if (first && !String(modalVals[first.key] ?? '').trim()) {
-      return Alert.alert('Champ requis', `Le champ "${first.label.replace(' *','')}" est obligatoire.`);
+    if (first && !String(mVals[first.key] ?? '').trim()) {
+      alert_show('Champ requis', `"${first.label.replace(' *', '')}" est obligatoire.`, () => {});
+      return;
     }
-    modal.onSubmit(modalVals);
+    modal.onSubmit(mVals);
     closeModal();
   };
 
-  // ─── ONGLET CRÉER ───────────────────────────────────────────────────────────
-
+  // ─── CRÉER : étapes ───────────────────────────────────────────────────────
   const doCreateSession = () => openModal('Nouvelle Session', [
     { key: 'title',       label: 'Titre *',     placeholder: 'Ex: Soirée Quiz du vendredi' },
-    { key: 'description', label: 'Description', placeholder: 'Optionnel' },
+    { key: 'description', label: 'Description', placeholder: 'Optionnel', multiline: true },
     { key: 'is_paid',     label: 'Payante ?',   placeholder: '', isBoolean: true },
     { key: 'price_cfa',   label: 'Prix (CFA)',  placeholder: '500', isNumber: true },
   ], async (v) => {
-    const d = await api('createSession', {
-      game_key: GAME_KEY,
-      title: v.title.trim(),
-      description: v.description?.trim() || null,
-      is_paid: v.is_paid,
-      price_cfa: Number(v.price_cfa) || 0,
-    });
+    const d = await api('createSession', { game_key: GAME_KEY, title: v.title.trim(), description: v.description?.trim() || null, is_paid: v.is_paid, price_cfa: Number(v.price_cfa) || 0 });
     if (d?.session_id) setCSessionId(d.session_id);
-  }, 'Étape 1 — Créer l\'événement principal');
+  }, 'Étape 1 — Événement principal');
 
   const doCreateParty = () => {
-    if (!cSessionId) return Alert.alert('Attention', 'Créez d\'abord une session.');
-    openModal('Nouveau Groupe (Party)', [
-      { key: 'title',     label: 'Nom du groupe *', placeholder: 'Ex: Groupe Principal' },
-      { key: 'min_score', label: 'Score minimum',   placeholder: '0', isNumber: true },
-      { key: 'min_rank',  label: 'Rang minimum',    placeholder: 'Laisser vide = aucun' },
+    if (!cSessionId) { alert_show('Attention', 'Créez d\'abord une session.', () => {}); return; }
+    openModal('Nouveau Groupe', [
+      { key: 'title',     label: 'Nom *',        placeholder: 'Ex: Groupe Principal' },
+      { key: 'min_score', label: 'Score minimum', placeholder: '0', isNumber: true },
+      { key: 'min_rank',  label: 'Rang minimum',  placeholder: 'Laisser vide = aucun' },
     ], async (v) => {
-      const d = await api('createParty', {
-        session_id: cSessionId,
-        title: v.title.trim(),
-        min_score: Number(v.min_score) || 0,
-        min_rank:  v.min_rank ? Number(v.min_rank) : null,
-      });
+      const d = await api('createParty', { session_id: cSessionId, title: v.title.trim(), min_score: Number(v.min_score) || 0, min_rank: v.min_rank ? Number(v.min_rank) : null });
       if (d?.party_id) setCPartyId(d.party_id);
     }, 'Étape 2 — Groupe de joueurs');
   };
 
-  // Créer run + question en une seule opération
-  const doCreateRunWithQuestion = () => {
-    if (!cPartyId) return Alert.alert('Attention', 'Créez d\'abord un groupe.');
+  const doCreateQuestion = () => {
+    if (!cPartyId) { alert_show('Attention', 'Créez d\'abord un groupe.', () => {}); return; }
     openModal('Nouvelle Question', [
-      { key: 'run_title', label: 'Titre de la manche *',    placeholder: 'Ex: Manche 1 — Science' },
-      { key: 'question',  label: 'Texte de la question *',  placeholder: 'Ex: La Terre est ronde ?', multiline: true },
-      { key: 'answer',    label: 'Bonne réponse',           placeholder: '', isBoolean: true },
-      { key: 'score',     label: 'Points',                  placeholder: '10', isNumber: true },
+      { key: 'run_title', label: 'Titre de la manche *',   placeholder: 'Ex: Manche 1 — Science' },
+      { key: 'question',  label: 'Texte de la question *', placeholder: 'Ex: La Terre est ronde ?', multiline: true },
+      { key: 'answer',    label: 'Bonne réponse',          placeholder: '', isBoolean: true },
+      { key: 'score',     label: 'Points',                 placeholder: '10', isNumber: true },
     ], async (v) => {
-      // 1. Créer le run
       const runData = await api('createRun', { party_id: cPartyId, title: v.run_title.trim() });
       if (!runData?.run_id) return;
-
-      // 2. Ajouter la question avec la réponse
-      const qData = await api('addQuestions', {
-        run_id: runData.run_id,
-        questions: [{ question: v.question.trim(), answer: v.answer, score: Number(v.score) || 10 }],
-      });
+      const qData = await api('addQuestions', { run_id: runData.run_id, questions: [{ question: v.question.trim(), answer: v.answer, score: Number(v.score) || 10 }] });
       if (!qData) return;
-
-      setCRun({
-        id: runData.run_id,
-        title: v.run_title.trim(),
-        is_visible: false,
-        is_closed:  false,
-        is_started: false,
-        question: {
-          id: '', // sera mis à jour
-          question_text: v.question.trim(),
-          correct_answer: v.answer,
-          score: Number(v.score) || 10,
-        },
-      });
+      setCRunId(runData.run_id);
+      setCRunState({ is_started: false, is_visible: false, is_closed: false });
+      setCQuestion({ question_text: v.question.trim(), correct_answer: v.answer, score: Number(v.score) || 10 });
     }, 'Étape 3 — Question + Réponse');
   };
 
-  // ÉTAPE 1 — Démarrer (question prête, invisible)
-  const doStart = async () => {
-    if (!cRun) return;
-    const d = await api('setStarted', { run_id: cRun.id, started: true });
-    if (d) setCRun(r => r ? { ...r, is_started: true } : r);
-  };
-
-  // ÉTAPE 2 — Lancer (top départ, tous les joueurs voient la question)
-  const doPublish = async () => {
-    if (!cRun) return;
-    const d = await api('setVisibility', { run_id: cRun.id, visible: true });
-    if (d) setCRun(r => r ? { ...r, is_visible: true } : r);
-  };
-
-  // ÉTAPE 3 — Fermer & Révéler (trigger BDD → reveal_answers = true)
-  const doClose = async () => {
-    if (!cRun) return;
-    const d = await api('closeRun', { run_id: cRun.id, closed: true });
-    if (d) setCRun(r => r ? { ...r, is_closed: true } : r);
-  };
-
-  // Réouvrir
-  const doReopen = async () => {
-    if (!cRun) return;
-    const d = await api('closeRun', { run_id: cRun.id, closed: false });
-    if (d) setCRun(r => r ? { ...r, is_closed: false, is_visible: false } : r);
-  };
-
-  // Stats
-  const doStats = async () => {
-    if (!cRun) return;
-    const d = await api('getStatistics', { run_id: cRun.id });
-    if (d?.statistics) {
-      const st = d.statistics;
-      Alert.alert('📊 Stats en direct',
-        `Réponses reçues : ${st.total_answers}\nJoueurs : ${st.total_players}\nQuestions : ${st.total_questions}`);
+  const runAction = async (action: 'start' | 'publish' | 'close' | 'reopen' | 'stats') => {
+    if (!cRunId) return;
+    if (action === 'stats') {
+      const d = await api('getStatistics', { run_id: cRunId });
+      if (d?.statistics) alert_show('📊 Statistiques', `Réponses : ${d.statistics.total_answers}\nJoueurs : ${d.statistics.total_players}`, () => {});
+      return;
+    }
+    const calls: Record<string, [string, Record<string,any>]> = {
+      start:   ['setStarted',   { run_id: cRunId, started: true  }],
+      publish: ['setVisibility',{ run_id: cRunId, visible: true  }],
+      close:   ['closeRun',     { run_id: cRunId, closed: true   }],
+      reopen:  ['closeRun',     { run_id: cRunId, closed: false  }],
+    };
+    const [fn, params] = calls[action];
+    const d = await api(fn, params);
+    if (d) {
+      if (action === 'start')   setCRunState(p => ({ ...p, is_started: true }));
+      if (action === 'publish') setCRunState(p => ({ ...p, is_visible: true }));
+      if (action === 'close')   setCRunState(p => ({ ...p, is_closed:  true }));
+      if (action === 'reopen')  setCRunState({ is_started: true, is_visible: false, is_closed: false });
     }
   };
 
-  // Nouvelle question (reset du run courant)
-  const doNextQuestion = () => setCRun(null);
-
-  // ─── ONGLET GÉRER ───────────────────────────────────────────────────────────
-
+  // ─── GÉRER : navigation ───────────────────────────────────────────────────
   const loadSessions = async () => {
     const d = await api('listSessions', { game_key: GAME_KEY });
-    if (d) {
-      setSessions(d.sessions || []);
-      setManageView('sessions');
-      setSelSession(null); setSelParty(null); setParties([]); setRuns([]);
-    }
+    if (d) { setSessions(d.sessions || []); setManageView('sessions'); setSelSession(null); setSelParty(null); setParties([]); setRuns([]); }
   };
 
   const openParties = async (session: SessionData) => {
@@ -265,242 +200,235 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
     if (d) { setRuns(d.runs || []); setManageView('runs'); }
   };
 
-  const goManageBack = () => {
+  const goBack = () => {
     if (manageView === 'runs')    { setManageView('parties'); setSelParty(null); setRuns([]); }
-    else if (manageView === 'parties') { setManageView('sessions'); setSelSession(null); setParties([]); }
+    if (manageView === 'parties') { setManageView('sessions'); setSelSession(null); setParties([]); }
   };
 
-  const updateRunLocal = (runId: string, patch: Partial<RunData>) =>
-    setRuns(prev => prev.map(r => r.id === runId ? { ...r, ...patch } : r));
+  const updateRunLocal = (id: string, patch: Partial<RunData>) =>
+    setRuns(p => p.map(r => r.id === id ? { ...r, ...patch } : r));
 
-  const handleVisibility = async (run: RunData, visible: boolean) => {
-    const d = await api('setVisibility', { run_id: run.id, visible });
-    if (d) updateRunLocal(run.id, { is_visible: visible });
+  // Ajouter party depuis Gérer
+  const manageAddParty = () => {
+    if (!selSession) return;
+    openModal('Nouvelle Party', [
+      { key: 'title',     label: 'Nom *',        placeholder: 'Ex: VIP, Débutants…' },
+      { key: 'min_score', label: 'Score minimum', placeholder: '0', isNumber: true },
+      { key: 'min_rank',  label: 'Rang minimum',  placeholder: 'Vide = aucune restriction' },
+    ], async (v) => {
+      const d = await api('createParty', { session_id: selSession.id, title: v.title.trim(), min_score: Number(v.min_score) || 0, min_rank: v.min_rank ? Number(v.min_rank) : null });
+      if (d?.party_id) {
+        setParties(p => [...p, { id: d.party_id, title: v.title.trim(), is_initial: false, min_score: Number(v.min_score) || 0, min_rank: v.min_rank ? Number(v.min_rank) : null }]);
+      }
+    }, `Session : ${selSession.title}`);
   };
 
-  const handleClose = async (run: RunData, closed: boolean) => {
-    const d = await api('closeRun', { run_id: run.id, closed });
-    if (d) updateRunLocal(run.id, { is_closed: closed });
+  // Ajouter run depuis Gérer
+  const manageAddRun = () => {
+    if (!selParty) return;
+    openModal('Nouvelle Question', [
+      { key: 'run_title', label: 'Titre de la manche *',   placeholder: 'Ex: Manche 3' },
+      { key: 'question',  label: 'Texte de la question *', placeholder: 'Ex: Paris est en France ?', multiline: true },
+      { key: 'answer',    label: 'Bonne réponse',          placeholder: '', isBoolean: true },
+      { key: 'score',     label: 'Points',                 placeholder: '10', isNumber: true },
+    ], async (v) => {
+      const runData = await api('createRun', { party_id: selParty.id, title: v.run_title.trim() });
+      if (!runData?.run_id) return;
+      const qData = await api('addQuestions', { run_id: runData.run_id, questions: [{ question: v.question.trim(), answer: v.answer, score: Number(v.score) || 10 }] });
+      if (!qData) return;
+      setRuns(p => [...p, { id: runData.run_id, title: v.run_title.trim(), is_visible: false, is_closed: false, is_started: false }]);
+    }, `Groupe : ${selParty.title}`);
   };
 
-  const handleDeleteSession = (session: SessionData) =>
-    Alert.alert('Supprimer la session ?', 'Action irréversible.', [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
-        const d = await api('deleteSession', { session_id: session.id });
-        if (d) { setSessions(p => p.filter(x => x.id !== session.id)); if (selSession?.id === session.id) setManageView('sessions'); }
-      }},
-    ]);
-
-  const handleDeleteParty = (party: PartyData) => {
-    if (party.is_initial) return Alert.alert('Impossible', 'La party initiale ne peut pas être supprimée.');
-    Alert.alert('Supprimer le groupe ?', 'Action irréversible.', [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
-        const d = await api('deleteParty', { party_id: party.id });
-        if (d) setParties(p => p.filter(x => x.id !== party.id));
-      }},
-    ]);
+  // Supprimer (modal custom — fonctionne sur web)
+  const askDelete = (title: string, message: string, onConfirm: () => void) => {
+    alert_show(title, message, onConfirm, true);
   };
 
-  const handleDeleteRun = (run: RunData) =>
-    Alert.alert('Supprimer ce run ?', 'Action irréversible.', [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
-        const d = await api('deleteRun', { run_id: run.id });
-        if (d) setRuns(p => p.filter(x => x.id !== run.id));
-      }},
-    ]);
+  const delSession = (s: SessionData) => askDelete('Supprimer ?', `"${s.title}" — tous les groupes et runs seront supprimés.`, async () => {
+    const d = await api('deleteSession', { session_id: s.id });
+    if (d) setSessions(p => p.filter(x => x.id !== s.id));
+  });
 
-  const handleStats = async (run: RunData) => {
-    const d = await api('getStatistics', { run_id: run.id });
-    if (d?.statistics) {
-      const st = d.statistics;
-      Alert.alert('📊 Statistiques',
-        `${run.title}\n\nRéponses : ${st.total_answers}\nJoueurs : ${st.total_players}\n` +
-        `Visibilité : ${st.is_visible ? '👁 Visible' : '🙈 Caché'}\n` +
-        `État : ${st.is_closed ? '🔒 Fermé' : '🔓 Ouvert'}`);
+  const delParty = (p: PartyData) => {
+    if (p.is_initial) { alert_show('Impossible', 'La party initiale ne peut pas être supprimée.', () => {}); return; }
+    askDelete('Supprimer ?', `"${p.title}" — tous les runs seront supprimés.`, async () => {
+      const d = await api('deleteParty', { party_id: p.id });
+      if (d) setParties(prev => prev.filter(x => x.id !== p.id));
+    });
+  };
+
+  const delRun = (r: RunData) => askDelete('Supprimer ?', `"${r.title}" — action irréversible.`, async () => {
+    const d = await api('deleteRun', { run_id: r.id });
+    if (d) setRuns(p => p.filter(x => x.id !== r.id));
+  });
+
+  const manageRunAction = async (run: RunData, action: 'start' | 'publish' | 'close' | 'reopen' | 'stats') => {
+    if (action === 'stats') {
+      const d = await api('getStatistics', { run_id: run.id });
+      if (d?.statistics) alert_show('📊 ' + run.title, `Réponses : ${d.statistics.total_answers} / ${d.statistics.total_players} joueurs`, () => {});
+      return;
+    }
+    const calls: Record<string, [string, Record<string,any>]> = {
+      start:   ['setStarted',    { run_id: run.id, started: true  }],
+      publish: ['setVisibility', { run_id: run.id, visible: true  }],
+      close:   ['closeRun',      { run_id: run.id, closed: true   }],
+      reopen:  ['closeRun',      { run_id: run.id, closed: false  }],
+    };
+    const [fn, params] = calls[action];
+    const d = await api(fn, params);
+    if (d) {
+      if (action === 'start')   updateRunLocal(run.id, { is_started: true });
+      if (action === 'publish') updateRunLocal(run.id, { is_visible: true });
+      if (action === 'close')   updateRunLocal(run.id, { is_closed:  true });
+      if (action === 'reopen')  updateRunLocal(run.id, { is_closed: false, is_visible: false });
     }
   };
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────────
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+  const hasRun = !!cRunId;
+
   return (
     <SafeAreaView style={s.root}>
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
 
-        {/* HEADER */}
+        {/* Header */}
         <LinearGradient colors={['#1A1500', '#0D0D0F']} style={s.header}>
-          <TouchableOpacity onPress={onBack} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity onPress={onBack} style={s.backBtn}>
             <Ionicons name="arrow-back" size={20} color={C.gold} />
           </TouchableOpacity>
           <View style={s.headerCenter}>
-            <View style={s.crownRow}>
-              <Ionicons name="shield-checkmark" size={13} color={C.gold} />
-              <Text style={s.headerBadge}>ADMINISTRATION</Text>
-            </View>
+            <Text style={s.headerBadge}>⚔ ADMINISTRATION</Text>
             <Text style={s.headerTitle}>Vrai ou Faux</Text>
           </View>
           <View style={s.onlineDot} />
         </LinearGradient>
 
-        {/* TABS */}
+        {/* Tabs */}
         <View style={s.tabRow}>
           {(['create', 'manage'] as Tab[]).map(tab => (
             <TouchableOpacity key={tab}
               style={[s.tab, activeTab === tab && s.tabActive]}
               onPress={() => { setActiveTab(tab); if (tab === 'manage') loadSessions(); }}
             >
-              <Ionicons
-                name={tab === 'create' ? 'add-circle-outline' : 'settings-outline'}
-                size={15} color={activeTab === tab ? C.gold : C.muted}
-              />
-              <Text style={[s.tabText, activeTab === tab && s.tabTextActive]}>
-                {tab === 'create' ? 'Publier' : 'Gérer'}
-              </Text>
+              <Ionicons name={tab === 'create' ? 'add-circle-outline' : 'grid-outline'} size={15} color={activeTab === tab ? C.gold : C.muted} />
+              <Text style={[s.tabText, activeTab === tab && s.tabTextActive]}>{tab === 'create' ? 'Publier' : 'Gérer'}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* LOADING */}
         {loading && (
-          <View style={s.loadingOverlay}>
-            <View style={s.loadingBox}>
-              <ActivityIndicator size="large" color={C.gold} />
-              <Text style={s.loadingText}>Traitement…</Text>
-            </View>
+          <View style={s.loadingBar}>
+            <ActivityIndicator size="small" color={C.gold} />
+            <Text style={s.loadingBarTxt}>Traitement…</Text>
           </View>
         )}
 
-        {/* ═══════════════ ONGLET PUBLIER ═══════════════ */}
+        {/* ═══ ONGLET PUBLIER ═══ */}
         {activeTab === 'create' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
-            {/* Guide rapide */}
+            {/* Guide */}
             <View style={s.guideCard}>
-              <Text style={s.guideTitle}>Comment publier une question ?</Text>
-              <GuideStep n={1} text="Créez une session (événement global)" done={!!cSessionId} />
-              <GuideStep n={2} text="Créez un groupe de joueurs"           done={!!cPartyId} />
-              <GuideStep n={3} text="Créez une question et sa réponse"     done={!!cRun} />
-              <GuideStep n={4} text="Publiez → les joueurs voient la question" done={cRun?.is_visible ?? false} />
-              <GuideStep n={5} text="Fermez → les scores s'affichent"     done={cRun?.is_closed ?? false} />
+              <Text style={s.guideTitle}>CYCLE DE PUBLICATION</Text>
+              {[
+                ['Créer une session',            !!cSessionId],
+                ['Créer un groupe de joueurs',   !!cPartyId],
+                ['Créer la question + réponse',  hasRun],
+                ['Démarrer (préparer)',           cRunState.is_started],
+                ['Lancer ! (joueurs voient)',     cRunState.is_visible],
+                ['Fermer (scores révélés)',       cRunState.is_closed],
+              ].map(([text, done], i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 6 }}>
+                  <View style={[s.dot, done ? s.dotDone : s.dotPending]}>
+                    {done ? <Ionicons name="checkmark" size={9} color={C.bg} /> : <Text style={s.dotNum}>{i + 1}</Text>}
+                  </View>
+                  <Text style={{ fontSize: 12, color: done ? C.cream : C.muted }}>{text as string}</Text>
+                </View>
+              ))}
             </View>
 
-            {/* Étape 1 — Session */}
-            <StepCard step={1} done={!!cSessionId} title="Session" subtitle="L'événement global"
-              idValue={cSessionId}
-              onReset={() => { setCSessionId(''); setCPartyId(''); setCRun(null); }}
-              onAction={doCreateSession} actionLabel="Créer la session" />
+            {/* Étape 1 */}
+            <StepCard step={1} done={!!cSessionId} title="Session" sub="L'événement global"
+              id={cSessionId} onReset={() => { setCSessionId(''); setCPartyId(''); setCRunId(''); setCQuestion(null); }}
+              onAction={doCreateSession} label="Créer la session" />
 
-            {/* Étape 2 — Party */}
-            <StepCard step={2} done={!!cPartyId} disabled={!cSessionId} title="Groupe (Party)" subtitle="Le groupe de joueurs"
-              idValue={cPartyId}
-              onReset={() => { setCPartyId(''); setCRun(null); }}
-              onAction={doCreateParty} actionLabel="Créer le groupe" />
+            {/* Étape 2 */}
+            <StepCard step={2} done={!!cPartyId} title="Groupe (Party)" sub="Le groupe de joueurs"
+              id={cPartyId} disabled={!cSessionId}
+              onReset={() => { setCPartyId(''); setCRunId(''); setCQuestion(null); }}
+              onAction={doCreateParty} label="Créer le groupe" />
 
-            {/* Étape 3 — Question */}
-            <StepCard step={3} done={!!cRun} disabled={!cPartyId} title="Question du Run" subtitle="Une question avec sa réponse Vrai/Faux"
-              idValue={cRun?.id || ''}
-              onReset={doNextQuestion}
-              onAction={doCreateRunWithQuestion} actionLabel="Ajouter une question" />
+            {/* Étape 3 */}
+            <StepCard step={3} done={hasRun} title="Question" sub="Une question Vrai/Faux avec réponse"
+              id={cRunId} disabled={!cPartyId}
+              onReset={() => { setCRunId(''); setCQuestion(null); setCRunState({ is_started: false, is_visible: false, is_closed: false }); }}
+              onAction={doCreateQuestion} label="Ajouter une question" />
 
-            {/* Aperçu de la question créée */}
-            {cRun?.question && (
-              <View style={s.questionPreview}>
-                <Text style={s.questionPreviewLabel}>QUESTION CRÉÉE</Text>
-                <Text style={s.questionPreviewText}>{cRun.question.question_text}</Text>
-                <View style={s.questionPreviewMeta}>
-                  <View style={[s.answerBadge, { backgroundColor: (cRun.question.correct_answer ? C.success : C.danger) + '22', borderColor: (cRun.question.correct_answer ? C.success : C.danger) + '66' }]}>
-                    <Ionicons name={cRun.question.correct_answer ? 'checkmark-circle' : 'close-circle'} size={16} color={cRun.question.correct_answer ? C.success : C.danger} />
-                    <Text style={[s.answerBadgeTxt, { color: cRun.question.correct_answer ? C.success : C.danger }]}>
-                      {cRun.question.correct_answer ? 'VRAI' : 'FAUX'}
+            {/* Aperçu question */}
+            {cQuestion && (
+              <View style={s.qPreview}>
+                <Text style={s.qPreviewLabel}>QUESTION CRÉÉE</Text>
+                <Text style={s.qPreviewText}>{cQuestion.question_text}</Text>
+                <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center', marginTop: 10 }}>
+                  <View style={[s.answerBadge, { backgroundColor: (cQuestion.correct_answer ? C.success : C.danger) + '22', borderColor: (cQuestion.correct_answer ? C.success : C.danger) + '55' }]}>
+                    <Ionicons name={cQuestion.correct_answer ? 'checkmark-circle' : 'close-circle'} size={14} color={cQuestion.correct_answer ? C.success : C.danger} />
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: cQuestion.correct_answer ? C.success : C.danger }}>
+                      {cQuestion.correct_answer ? 'VRAI' : 'FAUX'}
                     </Text>
                   </View>
-                  <View style={s.scoreBadge}>
-                    <Ionicons name="star" size={12} color={C.gold} />
-                    <Text style={s.scoreBadgeTxt}>{cRun.question.score} pts</Text>
-                  </View>
+                  <Text style={{ fontSize: 12, color: C.gold, fontWeight: '600' }}>⭐ {cQuestion.score} pts</Text>
                 </View>
               </View>
             )}
 
-            {/* Étape 4 & 5 — Contrôles de publication */}
-            {cRun && (
-              <View style={s.publishCard}>
-                <Text style={s.publishLabel}>CONTRÔLES DE PUBLICATION</Text>
+            {/* Contrôles run */}
+            {hasRun && (
+              <View style={s.ctrlCard}>
+                <Text style={s.ctrlLabel}>CONTRÔLES</Text>
 
-                {/* ÉTAPE 1 — DÉMARRER (question prête, invisible) */}
-                {!cRun.is_started && !cRun.is_visible && !cRun.is_closed && (
-                  <TouchableOpacity style={s.publishBtn} onPress={doStart}>
-                    <LinearGradient colors={[C.info + 'DD', '#1A5A9A']} style={s.publishBtnGrad}>
-                      <Ionicons name="play-circle-outline" size={22} color={C.white} />
-                      <View>
-                        <Text style={s.publishBtnTitle}>Étape 1 — Démarrer</Text>
-                        <Text style={s.publishBtnSub}>La question est prête. Personne ne la voit encore.</Text>
-                      </View>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                {!cRunState.is_started && !cRunState.is_visible && !cRunState.is_closed && (
+                  <PrimaryBtn icon="play-circle-outline" color={C.info}
+                    title="Étape 4 — Démarrer" sub="Question prête, invisible aux joueurs"
+                    onPress={() => runAction('start')} />
                 )}
 
-                {/* ÉTAPE 2 — LANCER (top départ simultané) */}
-                {cRun.is_started && !cRun.is_visible && !cRun.is_closed && (
-                  <TouchableOpacity style={s.publishBtn} onPress={doPublish}>
-                    <LinearGradient colors={[C.success + 'DD', '#1A8A4A']} style={s.publishBtnGrad}>
-                      <Ionicons name="eye-outline" size={22} color={C.white} />
-                      <View>
-                        <Text style={s.publishBtnTitle}>Étape 2 — Lancer !</Text>
-                        <Text style={s.publishBtnSub}>Tous les joueurs voient la question en même temps</Text>
-                      </View>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                {cRunState.is_started && !cRunState.is_visible && !cRunState.is_closed && (
+                  <PrimaryBtn icon="eye-outline" color={C.success}
+                    title="Étape 5 — Lancer !" sub="Tous les joueurs voient la question maintenant"
+                    onPress={() => runAction('publish')} />
                 )}
 
-                {/* EN DIRECT */}
-                {cRun.is_visible && !cRun.is_closed && (
+                {cRunState.is_visible && !cRunState.is_closed && (
                   <>
-                    <View style={s.liveCard}>
+                    <View style={s.liveBanner}>
                       <View style={s.liveDot} />
-                      <Text style={s.liveTxt}>Question en direct — les joueurs répondent</Text>
+                      <Text style={s.liveTxt}>EN DIRECT — Les joueurs répondent</Text>
                     </View>
-
-                    <View style={s.controlRow}>
-                      <TouchableOpacity style={[s.controlHalf, { borderColor: C.info + '44' }]} onPress={doStats}>
-                        <Ionicons name="bar-chart-outline" size={18} color={C.info} />
-                        <Text style={[s.controlHalfTxt, { color: C.info }]}>Statistiques</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[s.controlHalf, { borderColor: C.danger + '44', backgroundColor: C.danger + '18' }]} onPress={doClose}>
-                        <Ionicons name="lock-closed-outline" size={18} color={C.danger} />
-                        <Text style={[s.controlHalfTxt, { color: C.danger }]}>Étape 3 — Fermer & Révéler</Text>
-                      </TouchableOpacity>
+                    <View style={s.row2}>
+                      <SmallBtn icon="bar-chart-outline" label="Stats" color={C.info} onPress={() => runAction('stats')} />
+                      <SmallBtn icon="lock-closed-outline" label="Fermer & Révéler" color={C.danger} onPress={() => runAction('close')} />
                     </View>
                   </>
                 )}
 
-                {/* FERMÉ */}
-                {cRun.is_closed && (
+                {cRunState.is_closed && (
                   <>
-                    <View style={s.closedCard}>
-                      <Ionicons name="trophy-outline" size={28} color={C.gold} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.closedTitle}>Run clôturé</Text>
-                        <Text style={s.closedSub}>Les scores et la bonne réponse sont visibles par les joueurs</Text>
+                    <View style={[s.liveBanner, { backgroundColor: C.gold + '18', borderColor: C.gold + '44' }]}>
+                      <Ionicons name="trophy-outline" size={22} color={C.gold} />
+                      <View>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: C.gold }}>Run clôturé</Text>
+                        <Text style={{ fontSize: 11, color: C.muted }}>Scores et bonne réponse visibles</Text>
                       </View>
                     </View>
-
-                    <View style={s.controlRow}>
-                      <TouchableOpacity style={[s.controlHalf, { borderColor: C.info + '44' }]} onPress={doStats}>
-                        <Ionicons name="bar-chart-outline" size={18} color={C.info} />
-                        <Text style={[s.controlHalfTxt, { color: C.info }]}>Statistiques</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[s.controlHalf, { borderColor: C.gold + '44' }]} onPress={doReopen}>
-                        <Ionicons name="lock-open-outline" size={18} color={C.gold} />
-                        <Text style={[s.controlHalfTxt, { color: C.gold }]}>Réouvrir</Text>
-                      </TouchableOpacity>
+                    <View style={s.row2}>
+                      <SmallBtn icon="bar-chart-outline" label="Stats"    color={C.info}  onPress={() => runAction('stats')} />
+                      <SmallBtn icon="lock-open-outline"  label="Réouvrir" color={C.gold}  onPress={() => runAction('reopen')} />
                     </View>
-
-                    <TouchableOpacity style={[s.nextQuestionBtn]} onPress={doNextQuestion}>
-                      <LinearGradient colors={[C.goldLight, C.gold]} style={s.nextQuestionGrad}>
-                        <Ionicons name="add-circle-outline" size={20} color={C.bg} />
-                        <Text style={s.nextQuestionTxt}>Nouvelle question</Text>
+                    <TouchableOpacity style={s.nextBtn} onPress={() => { setCRunId(''); setCQuestion(null); setCRunState({ is_started: false, is_visible: false, is_closed: false }); }}>
+                      <LinearGradient colors={[C.goldLight, C.gold]} style={s.nextBtnGrad}>
+                        <Ionicons name="add-circle-outline" size={19} color={C.bg} />
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: C.bg }}>Nouvelle question</Text>
                       </LinearGradient>
                     </TouchableOpacity>
                   </>
@@ -512,86 +440,73 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
           </ScrollView>
         )}
 
-        {/* ═══════════════ ONGLET GÉRER ═══════════════ */}
+        {/* ═══ ONGLET GÉRER ═══ */}
         {activeTab === 'manage' && (
           <View style={{ flex: 1 }}>
-
             {/* Breadcrumb */}
             <View style={s.breadcrumb}>
               {manageView !== 'sessions' && (
-                <TouchableOpacity onPress={goManageBack} style={s.breadcrumbBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="chevron-back" size={16} color={C.gold} />
-                  <Text style={s.breadcrumbBackTxt}>Retour</Text>
+                <TouchableOpacity onPress={goBack} style={s.breadBack}>
+                  <Ionicons name="chevron-back" size={15} color={C.gold} />
+                  <Text style={s.breadBackTxt}>Retour</Text>
                 </TouchableOpacity>
               )}
-              <Text style={s.breadcrumbTitle} numberOfLines={1}>
-                {manageView === 'sessions' && 'Toutes les sessions'}
-                {manageView === 'parties'  && selSession?.title}
-                {manageView === 'runs'     && selParty?.title}
+              <Text style={s.breadTitle} numberOfLines={1}>
+                {manageView === 'sessions' ? 'Sessions' : manageView === 'parties' ? selSession?.title : selParty?.title}
               </Text>
-              {manageView === 'sessions' && (
+              {/* Refresh ou Ajouter selon niveau */}
+              {manageView === 'sessions' ? (
                 <TouchableOpacity onPress={loadSessions} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="refresh-outline" size={17} color={C.muted} />
+                  <Ionicons name="refresh-outline" size={18} color={C.muted} />
                 </TouchableOpacity>
-              )}
-              {manageView === 'parties' && selSession && (
-                <TouchableOpacity onPress={() => openParties(selSession)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="refresh-outline" size={17} color={C.muted} />
-                </TouchableOpacity>
-              )}
-              {manageView === 'runs' && selParty && (
-                <TouchableOpacity onPress={() => openRuns(selParty)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="refresh-outline" size={17} color={C.muted} />
+              ) : (
+                <TouchableOpacity onPress={manageView === 'parties' ? manageAddParty : manageAddRun}
+                  style={s.addBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="add" size={16} color={C.bg} />
                 </TouchableOpacity>
               )}
             </View>
 
             <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-              {/* ── SESSIONS ── */}
-              {manageView === 'sessions' && (
-                <>
-                  {sessions.length === 0
-                    ? <EmptyState label="Aucune session" sub="Utilisez l'onglet Publier pour en créer une" />
-                    : sessions.map(sess => (
-                        <ManageSessionRow key={sess.id} session={sess}
-                          onOpen={() => openParties(sess)}
-                          onDelete={() => handleDeleteSession(sess)}
-                        />
-                      ))
-                  }
-                </>
+              {/* Sessions */}
+              {manageView === 'sessions' && (sessions.length === 0
+                ? <Empty label="Aucune session" sub="Utilisez l'onglet Publier pour créer votre première session" />
+                : sessions.map(sess => (
+                    <ManageRow key={sess.id} icon="albums-outline" iconColor={C.gold}
+                      title={sess.title} sub={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'}
+                      onOpen={() => openParties(sess)} onDelete={() => delSession(sess)} />
+                  ))
               )}
 
-              {/* ── PARTIES ── */}
+              {/* Parties */}
               {manageView === 'parties' && (
                 <>
                   {parties.length === 0
-                    ? <EmptyState label="Aucun groupe" />
+                    ? <Empty label="Aucun groupe" sub="Appuyez sur + pour en ajouter" />
                     : parties.map(party => (
-                        <ManagePartyRow key={party.id} party={party}
+                        <ManageRow key={party.id} icon="people-outline" iconColor={C.info}
+                          title={`${party.title}${party.is_initial ? ' ⭐' : ''}`}
+                          sub={party.is_initial ? 'Groupe initial' : `Score min: ${party.min_score}${party.min_rank ? ` · Top ${party.min_rank}` : ''}`}
                           onOpen={() => openRuns(party)}
-                          onDelete={() => handleDeleteParty(party)}
-                        />
+                          onDelete={party.is_initial ? undefined : () => delParty(party)} />
                       ))
                   }
+                  <AddRowButton label="Ajouter un groupe" onPress={manageAddParty} />
                 </>
               )}
 
-              {/* ── RUNS ── */}
+              {/* Runs */}
               {manageView === 'runs' && (
                 <>
                   {runs.length === 0
-                    ? <EmptyState label="Aucun run" sub="Utilisez l'onglet Publier pour créer des questions" />
+                    ? <Empty label="Aucun run" sub="Appuyez sur + pour créer une question" />
                     : runs.map(run => (
-                        <ManageRunRow key={run.id} run={run}
-                          onVisibility={(v) => handleVisibility(run, v)}
-                          onClose={(c)      => handleClose(run, c)}
-                          onStats={() => handleStats(run)}
-                          onDelete={() => handleDeleteRun(run)}
-                        />
+                        <RunCard key={run.id} run={run}
+                          onAction={(a) => manageRunAction(run, a)}
+                          onDelete={() => delRun(run)} />
                       ))
                   }
+                  <AddRowButton label="Ajouter une question" onPress={manageAddRun} />
                 </>
               )}
 
@@ -601,69 +516,92 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
         )}
       </Animated.View>
 
-      {/* ── MODAL CROSS-PLATFORM ────────────────────────────────────────── */}
+      {/* ═══ MODAL FORMULAIRE ═══ */}
       <Modal transparent animationType="fade" visible={modal.visible} onRequestClose={closeModal} statusBarTranslucent>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.overlay}>
           <View style={s.modalBox}>
-
-            <LinearGradient colors={['#1E1A00', '#16161A']} style={s.modalHeader}>
-              <Ionicons name="create-outline" size={17} color={C.gold} />
-              <View>
-                <Text style={s.modalTitle}>{modal.title}</Text>
-                {modal.subtitle && <Text style={s.modalSubtitle}>{modal.subtitle}</Text>}
+            <LinearGradient colors={['#1E1A00', '#16161A']} style={s.mHeader}>
+              <Ionicons name="create-outline" size={15} color={C.gold} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.mTitle}>{modal.title}</Text>
+                {modal.subtitle && <Text style={s.mSub}>{modal.subtitle}</Text>}
               </View>
             </LinearGradient>
 
-            <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView style={s.mBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {modal.fields.map((f, i) => (
-                <View key={f.key} style={s.fieldWrap}>
+                <View key={f.key} style={{ marginBottom: 12 }}>
                   <Text style={s.fieldLabel}>{f.label}</Text>
                   {f.isBoolean ? (
-                    <View style={s.switchRow}>
-                      <View style={[s.answerToggle, { backgroundColor: (modalVals[f.key] ? C.success : C.danger) + '22', borderColor: (modalVals[f.key] ? C.success : C.danger) + '66' }]}>
-                        <Ionicons name={modalVals[f.key] ? 'checkmark-circle' : 'close-circle'} size={22} color={modalVals[f.key] ? C.success : C.danger} />
-                        <Text style={[s.switchLabel, { color: modalVals[f.key] ? C.success : C.danger }]}>
-                          {modalVals[f.key] ? 'VRAI' : 'FAUX'}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={[s.answerBadge, { backgroundColor: (mVals[f.key] ? C.success : C.danger) + '22', borderColor: (mVals[f.key] ? C.success : C.danger) + '55' }]}>
+                        <Ionicons name={mVals[f.key] ? 'checkmark-circle' : 'close-circle'} size={19} color={mVals[f.key] ? C.success : C.danger} />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: mVals[f.key] ? C.success : C.danger }}>
+                          {mVals[f.key] ? 'VRAI' : 'FAUX'}
                         </Text>
                       </View>
-                      <Switch
-                        value={!!modalVals[f.key]}
-                        onValueChange={v => setModalVals(p => ({ ...p, [f.key]: v }))}
-                        thumbColor={modalVals[f.key] ? C.success : C.danger}
-                        trackColor={{ false: C.danger + '55', true: C.success + '55' }}
-                      />
+                      <Switch value={!!mVals[f.key]} onValueChange={v => setMVals(p => ({ ...p, [f.key]: v }))}
+                        thumbColor={mVals[f.key] ? C.success : C.danger}
+                        trackColor={{ false: C.danger + '55', true: C.success + '55' }} />
                     </View>
                   ) : (
                     <TextInput
-                      style={[s.fieldInput, f.multiline && s.fieldInputMulti]}
-                      placeholder={f.placeholder}
-                      placeholderTextColor={C.muted}
-                      value={String(modalVals[f.key] ?? '')}
-                      onChangeText={v => setModalVals(p => ({ ...p, [f.key]: v }))}
-                      keyboardType={f.isNumber ? 'numeric' : 'default'}
-                      autoFocus={i === 0}
-                      returnKeyType={f.multiline ? 'default' : 'next'}
-                      multiline={f.multiline}
-                      numberOfLines={f.multiline ? 4 : 1}
-                      textAlignVertical={f.multiline ? 'top' : 'center'}
-                    />
+                      style={[s.fieldInput, f.multiline && { minHeight: 75, paddingTop: 10 }]}
+                      placeholder={f.placeholder} placeholderTextColor={C.muted}
+                      value={String(mVals[f.key] ?? '')} onChangeText={v => setMVals(p => ({ ...p, [f.key]: v }))}
+                      keyboardType={f.isNumber ? 'numeric' : 'default'} autoFocus={i === 0}
+                      multiline={f.multiline} numberOfLines={f.multiline ? 3 : 1}
+                      textAlignVertical={f.multiline ? 'top' : 'center'} />
                   )}
                 </View>
               ))}
             </ScrollView>
 
-            <View style={s.modalFooter}>
-              <TouchableOpacity style={s.modalCancel} onPress={closeModal}>
-                <Text style={s.modalCancelTxt}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.modalConfirmWrap} onPress={submitModal}>
-                <LinearGradient colors={[C.goldLight, C.gold]} style={s.modalConfirmGrad}>
-                  <Text style={s.modalConfirmTxt}>Valider</Text>
+            <View style={s.mFooter}>
+              <TouchableOpacity style={s.mCancel} onPress={closeModal}><Text style={s.mCancelTxt}>Annuler</Text></TouchableOpacity>
+              <TouchableOpacity style={s.mConfirmWrap} onPress={submitModal}>
+                <LinearGradient colors={[C.goldLight, C.gold]} style={s.mConfirmGrad}>
+                  <Text style={s.mConfirmTxt}>Valider</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ═══ MODAL CONFIRM / ALERT (remplace Alert.alert sur web) ═══ */}
+      <Modal transparent animationType="fade" visible={confirm.visible} onRequestClose={() => setConfirm(c => ({ ...c, visible: false }))} statusBarTranslucent>
+        <View style={[s.overlay, { justifyContent: 'center' }]}>
+          <View style={[s.modalBox, { maxWidth: 340 }]}>
+            <View style={[s.mHeader, { backgroundColor: C.surfaceHigh }]}>
+              <Ionicons name={confirm.isDestructive ? 'warning-outline' : 'information-circle-outline'} size={16} color={confirm.isDestructive ? C.danger : C.gold} />
+              <Text style={[s.mTitle, { flex: 1 }]}>{confirm.title}</Text>
+            </View>
+            <View style={{ padding: 18 }}>
+              <Text style={{ color: C.cream, fontSize: 14, lineHeight: 20 }}>{confirm.message}</Text>
+            </View>
+            <View style={s.mFooter}>
+              {confirm.isDestructive ? (
+                <>
+                  <TouchableOpacity style={s.mCancel} onPress={() => setConfirm(c => ({ ...c, visible: false }))}>
+                    <Text style={s.mCancelTxt}>Annuler</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.mConfirmWrap} onPress={() => { setConfirm(c => ({ ...c, visible: false })); confirm.onConfirm(); }}>
+                    <LinearGradient colors={['#E74C3C', '#8B1A1A']} style={s.mConfirmGrad}>
+                      <Text style={[s.mConfirmTxt, { color: C.white }]}>Supprimer</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity style={s.mConfirmWrap} onPress={() => setConfirm(c => ({ ...c, visible: false }))}>
+                  <LinearGradient colors={[C.goldLight, C.gold]} style={s.mConfirmGrad}>
+                    <Text style={s.mConfirmTxt}>OK</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -671,160 +609,146 @@ export default function AwaleAdmin({ adminEmail, adminPassword, onBack }: AwaleA
 
 // ─── Sous-composants ──────────────────────────────────────────────────────────
 
-function GuideStep({ n, text, done }: { n: number; text: string; done: boolean }) {
+function StepCard({ step, done, disabled, title, sub, id, onReset, onAction, label }: any) {
   return (
-    <View style={gs.row}>
-      <View style={[gs.dot, done ? gs.dotDone : gs.dotPending]}>
-        {done
-          ? <Ionicons name="checkmark" size={10} color={C.bg} />
-          : <Text style={gs.dotNum}>{n}</Text>
-        }
-      </View>
-      <Text style={[gs.txt, done && gs.txtDone]}>{text}</Text>
-    </View>
-  );
-}
-const gs = StyleSheet.create({
-  row:        { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  dot:        { width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-  dotDone:    { backgroundColor: C.gold },
-  dotPending: { backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
-  dotNum:     { color: C.muted, fontSize: 10, fontWeight: '700' },
-  txt:        { flex: 1, fontSize: 13, color: C.muted },
-  txtDone:    { color: C.cream },
-});
-
-function StepCard({ step, done, disabled, title, subtitle, idValue, onReset, onAction, actionLabel }: any) {
-  return (
-    <View style={[s.stepCard, disabled && s.stepDisabled]}>
-      <View style={s.stepHeader}>
-        <View style={[s.stepBadge, done ? s.stepBadgeDone : s.stepBadgePending]}>
-          {done ? <Ionicons name="checkmark" size={13} color={C.bg} /> : <Text style={s.stepNum}>{step}</Text>}
+    <View style={[s.stepCard, disabled && { opacity: 0.35 }]}>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 11 }}>
+        <View style={[s.dot, done ? s.dotDone : s.dotPending]}>
+          {done ? <Ionicons name="checkmark" size={11} color={C.bg} /> : <Text style={s.dotNum}>{step}</Text>}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={s.stepTitle}>{title}</Text>
-          <Text style={s.stepSub}>{subtitle}</Text>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: C.cream }}>{title}</Text>
+          <Text style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{sub}</Text>
         </View>
       </View>
       {done ? (
-        <View style={s.idRow}>
-          <View style={s.idBox}>
-            <Ionicons name="checkmark-circle-outline" size={12} color={C.success} />
-            <Text style={s.idText} numberOfLines={1}>{idValue}</Text>
+        <View style={{ flexDirection: 'row', gap: 7 }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.surfaceHigh, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, borderWidth: 1, borderColor: C.success + '44' }}>
+            <Ionicons name="checkmark-circle-outline" size={11} color={C.success} />
+            <Text style={{ flex: 1, color: C.success, fontSize: 10, fontFamily: Platform.select({ ios: 'Courier', android: 'monospace', default: 'monospace' }) }} numberOfLines={1}>{id}</Text>
           </View>
-          <TouchableOpacity style={s.resetBtn} onPress={onReset} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="refresh-outline" size={14} color={C.muted} />
+          <TouchableOpacity onPress={onReset} style={{ width: 29, height: 29, borderRadius: 9, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
+            <Ionicons name="refresh-outline" size={12} color={C.muted} />
           </TouchableOpacity>
         </View>
       ) : (
-        <TouchableOpacity style={[s.stepBtn, disabled && s.stepBtnOff]} onPress={onAction} disabled={!!disabled}>
-          <Ionicons name="add-circle-outline" size={16} color={disabled ? C.muted : C.bg} />
-          <Text style={[s.stepBtnTxt, !!disabled && { color: C.muted }]}>{actionLabel}</Text>
+        <TouchableOpacity onPress={onAction} disabled={!!disabled}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: disabled ? C.surfaceHigh : C.gold, paddingVertical: 10, borderRadius: 10 }}>
+          <Ionicons name="add-circle-outline" size={14} color={disabled ? C.muted : C.bg} />
+          <Text style={{ fontSize: 13, fontWeight: '700', color: disabled ? C.muted : C.bg }}>{label}</Text>
         </TouchableOpacity>
       )}
     </View>
   );
 }
 
-function EmptyState({ label, sub }: { label: string; sub?: string }) {
+function PrimaryBtn({ icon, color, title, sub, onPress }: any) {
   return (
-    <View style={s.emptyState}>
-      <Ionicons name="cube-outline" size={34} color={C.muted} />
-      <Text style={s.emptyLabel}>{label}</Text>
-      {sub && <Text style={s.emptySub}>{sub}</Text>}
-    </View>
-  );
-}
-
-function ManageSessionRow({ session, onOpen, onDelete }: any) {
-  return (
-    <TouchableOpacity style={s.listRow} onPress={onOpen} activeOpacity={0.75}>
-      <View style={s.listRowIcon}>
-        <Ionicons name="albums-outline" size={18} color={C.gold} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={s.listRowTitle}>{session.title}</Text>
-        <Text style={s.listRowSub}>{session.is_paid ? `💰 ${session.price_cfa} CFA` : 'Gratuit'}</Text>
-      </View>
-      <TouchableOpacity onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginRight: 8 }}>
-        <Ionicons name="trash-outline" size={16} color={C.danger} />
-      </TouchableOpacity>
-      <Ionicons name="chevron-forward" size={16} color={C.muted} />
+    <TouchableOpacity style={{ borderRadius: 12, overflow: 'hidden', marginBottom: 8 }} onPress={onPress}>
+      <LinearGradient colors={[color + 'EE', color + '99']} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15 }}>
+        <Ionicons name={icon} size={24} color={C.white} />
+        <View>
+          <Text style={{ fontSize: 14, fontWeight: '800', color: C.white, marginBottom: 1 }}>{title}</Text>
+          <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)' }}>{sub}</Text>
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 }
 
-function ManagePartyRow({ party, onOpen, onDelete }: any) {
+function SmallBtn({ icon, label, color, onPress }: any) {
+  return (
+    <TouchableOpacity onPress={onPress} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, borderRadius: 11, borderWidth: 1, borderColor: color + '55', backgroundColor: color + '18' }}>
+      <Ionicons name={icon} size={16} color={color} />
+      <Text style={{ fontSize: 12, fontWeight: '700', color }}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function ManageRow({ icon, iconColor, title, sub, onOpen, onDelete }: any) {
   return (
     <TouchableOpacity style={s.listRow} onPress={onOpen} activeOpacity={0.75}>
-      <View style={s.listRowIcon}>
-        <Ionicons name="people-outline" size={18} color={C.info} />
+      <View style={[s.listIcon, { borderColor: iconColor + '44' }]}>
+        <Ionicons name={icon} size={16} color={iconColor} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={s.listRowTitle}>{party.title} {party.is_initial ? '⭐' : ''}</Text>
-        <Text style={s.listRowSub}>{party.is_initial ? 'Party initiale' : `Score min: ${party.min_score}`}</Text>
+        <Text style={s.listTitle}>{title}</Text>
+        {sub && <Text style={s.listSub}>{sub}</Text>}
       </View>
-      {!party.is_initial && (
-        <TouchableOpacity onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginRight: 8 }}>
-          <Ionicons name="trash-outline" size={16} color={C.danger} />
+      {onDelete && (
+        <TouchableOpacity onPress={onDelete} style={{ marginRight: 9 }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="trash-outline" size={15} color={C.danger} />
         </TouchableOpacity>
       )}
-      <Ionicons name="chevron-forward" size={16} color={C.muted} />
+      <Ionicons name="chevron-forward" size={14} color={C.muted} />
     </TouchableOpacity>
   );
 }
 
-function ManageRunRow({ run, onVisibility, onClose, onStats, onDelete }: any) {
+function RunCard({ run, onAction, onDelete }: any) {
+  const next = !run.is_started ? 'start' : !run.is_visible && !run.is_closed ? 'publish' : run.is_visible && !run.is_closed ? 'close' : null;
+  const nextLabel = next === 'start' ? 'Démarrer' : next === 'publish' ? 'Lancer !' : next === 'close' ? 'Fermer & Révéler' : null;
+  const nextColor = next === 'start' ? C.info : next === 'publish' ? C.success : C.danger;
+
   return (
-    <View style={s.runRow}>
-      {/* Titre + badges */}
-      <View style={s.runRowTop}>
-        <Text style={s.listRowTitle} numberOfLines={2}>{run.title}</Text>
-        <View style={s.runBadges}>
-          <Pill label={run.is_visible ? 'Visible' : 'Caché'}  color={run.is_visible ? C.success : C.muted} />
-          <Pill label={run.is_closed  ? 'Fermé'  : 'Ouvert'}  color={run.is_closed  ? C.danger  : C.info}  />
-          {run.is_started && <Pill label="Démarré" color={C.gold} />}
+    <View style={s.runCard}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 9 }}>
+        <Text style={[s.listTitle, { flex: 1, marginBottom: 0 }]} numberOfLines={2}>{run.title}</Text>
+        <View style={{ flexDirection: 'row', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '48%' }}>
+          <MiniPill label={run.is_visible ? 'Visible' : 'Caché'}  color={run.is_visible ? C.success : C.muted} />
+          <MiniPill label={run.is_closed  ? 'Fermé'  : 'Ouvert'}  color={run.is_closed  ? C.danger  : C.info} />
+          {run.is_started && <MiniPill label="Démarré" color={C.gold} />}
         </View>
       </View>
-
-      {/* Actions rapides */}
-      <View style={s.runRowActions}>
-        <RunActionBtn
-          icon={run.is_visible ? 'eye-off-outline' : 'eye-outline'}
-          label={run.is_visible ? 'Masquer' : 'Publier'}
-          color={run.is_visible ? C.muted : C.success}
-          onPress={() => onVisibility(!run.is_visible)}
-        />
-        <RunActionBtn
-          icon={run.is_closed ? 'lock-open-outline' : 'lock-closed-outline'}
-          label={run.is_closed ? 'Réouvrir' : 'Fermer'}
-          color={run.is_closed ? C.gold : C.danger}
-          onPress={() => onClose(!run.is_closed)}
-        />
-        <RunActionBtn icon="bar-chart-outline" label="Stats"   color={C.info}   onPress={onStats} />
-        <RunActionBtn icon="trash-outline"     label="Supp."   color={C.danger} onPress={onDelete} />
+      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+        {next && nextLabel && (
+          <TouchableOpacity style={[s.runBtn, { borderColor: nextColor + '55', backgroundColor: nextColor + '18' }]} onPress={() => onAction(next)}>
+            <Ionicons name={next === 'close' ? 'lock-closed-outline' : next === 'publish' ? 'eye-outline' : 'play-outline'} size={12} color={nextColor} />
+            <Text style={[s.runBtnTxt, { color: nextColor }]}>{nextLabel}</Text>
+          </TouchableOpacity>
+        )}
+        {run.is_closed && (
+          <TouchableOpacity style={[s.runBtn, { borderColor: C.gold + '55' }]} onPress={() => onAction('reopen')}>
+            <Ionicons name="lock-open-outline" size={12} color={C.gold} />
+            <Text style={[s.runBtnTxt, { color: C.gold }]}>Réouvrir</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={[s.runBtn, { borderColor: C.info + '44' }]} onPress={() => onAction('stats')}>
+          <Ionicons name="bar-chart-outline" size={12} color={C.info} />
+          <Text style={[s.runBtnTxt, { color: C.info }]}>Stats</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.runBtn, { borderColor: C.danger + '44' }]} onPress={onDelete}>
+          <Ionicons name="trash-outline" size={12} color={C.danger} />
+          <Text style={[s.runBtnTxt, { color: C.danger }]}>Supprimer</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-function RunActionBtn({ icon, label, color, onPress }: any) {
+function MiniPill({ label, color }: { label: string; color: string }) {
   return (
-    <TouchableOpacity
-      style={[s.runActionBtn, { borderColor: color + '44' }]}
-      onPress={onPress}
-      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-    >
-      <Ionicons name={icon} size={15} color={color} />
-      <Text style={[s.runActionTxt, { color }]}>{label}</Text>
+    <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 20, backgroundColor: color + '22', borderWidth: 1, borderColor: color + '55' }}>
+      <Text style={{ fontSize: 9, fontWeight: '700', color }}>{label}</Text>
+    </View>
+  );
+}
+
+function AddRowButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, borderColor: C.gold + '55', marginTop: 6 }}>
+      <Ionicons name="add-circle-outline" size={17} color={C.gold} />
+      <Text style={{ color: C.gold, fontSize: 13, fontWeight: '700' }}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function Pill({ label, color }: { label: string; color: string }) {
+function Empty({ label, sub }: { label: string; sub?: string }) {
   return (
-    <View style={[s.pill, { backgroundColor: color + '22', borderColor: color + '55' }]}>
-      <Text style={[s.pillTxt, { color }]}>{label}</Text>
+    <View style={{ backgroundColor: C.surface, borderRadius: 13, padding: 26, alignItems: 'center', borderWidth: 1, borderColor: C.border, marginTop: 6 }}>
+      <Ionicons name="cube-outline" size={30} color={C.muted} />
+      <Text style={{ color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 9 }}>{label}</Text>
+      {sub && <Text style={{ color: C.muted, fontSize: 12, marginTop: 4, textAlign: 'center' }}>{sub}</Text>}
     </View>
   );
 }
@@ -833,12 +757,11 @@ function Pill({ label, color }: { label: string; color: string }) {
 const s = StyleSheet.create({
   root:          { flex: 1, backgroundColor: C.bg },
   header:        { paddingTop: Platform.OS === 'android' ? 14 : 8, paddingBottom: 14, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.border },
-  backBtn:       { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border, marginRight: 12 },
+  backBtn:       { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border, marginRight: 10 },
   headerCenter:  { flex: 1, alignItems: 'center' },
-  crownRow:      { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 1 },
-  headerBadge:   { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 2 },
-  headerTitle:   { fontSize: 20, fontWeight: '800', color: C.cream },
-  onlineDot:     { width: 9, height: 9, borderRadius: 5, backgroundColor: C.success, marginLeft: 12 },
+  headerBadge:   { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 2 },
+  headerTitle:   { fontSize: 19, fontWeight: '800', color: C.cream },
+  onlineDot:     { width: 9, height: 9, borderRadius: 5, backgroundColor: C.success, marginLeft: 8 },
 
   tabRow:        { flexDirection: 'row', backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   tab:           { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
@@ -846,114 +769,65 @@ const s = StyleSheet.create({
   tabText:       { fontSize: 13, fontWeight: '600', color: C.muted },
   tabTextActive: { color: C.gold },
 
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'center', alignItems: 'center', zIndex: 99 },
-  loadingBox:     { backgroundColor: C.surface, borderRadius: 16, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44' },
-  loadingText:    { color: C.cream, marginTop: 12, fontSize: 14, fontWeight: '600' },
+  loadingBar:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 7, backgroundColor: C.surfaceHigh, borderBottomWidth: 1, borderBottomColor: C.border },
+  loadingBarTxt: { color: C.gold, fontSize: 12, fontWeight: '600' },
 
   scroll: { padding: 16 },
 
-  // Guide
-  guideCard:  { backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: C.gold + '33' },
-  guideTitle: { fontSize: 11, fontWeight: '800', color: C.gold, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
+  guideCard:  { backgroundColor: C.surface, borderRadius: 13, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: C.gold + '33' },
+  guideTitle: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 10 },
+  dot:        { width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  dotDone:    { backgroundColor: C.gold },
+  dotPending: { backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
+  dotNum:     { color: C.muted, fontSize: 9, fontWeight: '700' },
 
-  // Steps
-  stepCard:        { backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: C.border },
-  stepDisabled:    { opacity: 0.38 },
-  stepHeader:      { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
-  stepBadge:       { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  stepBadgeDone:   { backgroundColor: C.gold },
-  stepBadgePending:{ backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
-  stepNum:         { color: C.muted, fontSize: 12, fontWeight: '700' },
-  stepTitle:       { fontSize: 15, fontWeight: '700', color: C.cream, marginBottom: 2 },
-  stepSub:         { fontSize: 12, color: C.muted },
-  idRow:           { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  idBox:           { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.surfaceHigh, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: C.success + '44' },
-  idText:          { flex: 1, color: C.success, fontSize: 11, fontFamily: Platform.select({ ios: 'Courier', android: 'monospace', default: 'monospace' }) },
-  resetBtn:        { width: 32, height: 32, borderRadius: 10, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
-  stepBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.gold, paddingVertical: 12, borderRadius: 12 },
-  stepBtnOff:      { backgroundColor: C.surfaceHigh },
-  stepBtnTxt:      { fontSize: 14, fontWeight: '700', color: C.bg },
+  stepCard: { backgroundColor: C.surface, borderRadius: 13, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border },
 
-  // Question preview
-  questionPreview:      { backgroundColor: C.surfaceHigh, borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: C.gold + '44' },
-  questionPreviewLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 8 },
-  questionPreviewText:  { fontSize: 15, color: C.cream, fontWeight: '600', lineHeight: 22, marginBottom: 12 },
-  questionPreviewMeta:  { flexDirection: 'row', gap: 10, alignItems: 'center' },
-  answerBadge:          { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
-  answerBadgeTxt:       { fontSize: 12, fontWeight: '800' },
-  scoreBadge:           { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  scoreBadgeTxt:        { fontSize: 13, color: C.gold, fontWeight: '600' },
+  qPreview:     { backgroundColor: C.surfaceHigh, borderRadius: 12, padding: 13, marginBottom: 10, borderWidth: 1, borderColor: C.gold + '44' },
+  qPreviewLabel:{ fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 6 },
+  qPreviewText: { fontSize: 14, color: C.cream, fontWeight: '600', lineHeight: 20 },
+  answerBadge:  { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 20, borderWidth: 1 },
 
-  // Publish card
-  publishCard:   { backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: C.gold + '33' },
-  publishLabel:  { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 14 },
-  publishBtn:    { borderRadius: 14, overflow: 'hidden', marginBottom: 4 },
-  publishBtnGrad:{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
-  publishBtnTitle:{ fontSize: 16, fontWeight: '800', color: C.white, marginBottom: 2 },
-  publishBtnSub: { fontSize: 12, color: 'rgba(255,255,255,0.75)' },
+  ctrlCard:  { backgroundColor: C.surface, borderRadius: 13, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.gold + '33' },
+  ctrlLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 11 },
 
-  liveCard:  { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.success + '18', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: C.success + '44', marginBottom: 12 },
-  liveDot:   { width: 10, height: 10, borderRadius: 5, backgroundColor: C.success, shadowColor: C.success, shadowRadius: 4, shadowOpacity: 0.8, elevation: 4 },
-  liveTxt:   { flex: 1, color: C.success, fontSize: 13, fontWeight: '600' },
+  liveBanner: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: C.success + '18', borderRadius: 11, padding: 11, borderWidth: 1, borderColor: C.success + '44', marginBottom: 9 },
+  liveDot:    { width: 8, height: 8, borderRadius: 4, backgroundColor: C.success },
+  liveTxt:    { flex: 1, color: C.success, fontSize: 12, fontWeight: '600' },
 
-  controlRow:  { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  controlHalf: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 13, borderRadius: 12, borderWidth: 1, backgroundColor: C.surfaceHigh },
-  controlHalfTxt: { fontSize: 13, fontWeight: '600' },
-  controlFull:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 11, borderRadius: 12, borderWidth: 1, backgroundColor: C.surfaceHigh },
-  controlFullTxt: { fontSize: 12, fontWeight: '600' },
+  row2:    { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  nextBtn: { borderRadius: 12, overflow: 'hidden', marginTop: 2 },
+  nextBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13 },
 
-  closedCard:  { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.gold + '18', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: C.gold + '44', marginBottom: 12 },
-  closedTitle: { fontSize: 14, fontWeight: '800', color: C.gold, marginBottom: 2 },
-  closedSub:   { fontSize: 12, color: C.muted },
+  // Gérer
+  breadcrumb:  { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.surface },
+  breadBack:   { flexDirection: 'row', alignItems: 'center', gap: 3, marginRight: 9 },
+  breadBackTxt:{ color: C.gold, fontSize: 13, fontWeight: '600' },
+  breadTitle:  { flex: 1, color: C.cream, fontSize: 14, fontWeight: '700' },
+  addBtn:      { width: 28, height: 28, borderRadius: 14, backgroundColor: C.gold, justifyContent: 'center', alignItems: 'center' },
 
-  nextQuestionBtn:  { borderRadius: 14, overflow: 'hidden', marginTop: 4 },
-  nextQuestionGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15 },
-  nextQuestionTxt:  { fontSize: 15, fontWeight: '800', color: C.bg },
+  listRow:  { backgroundColor: C.surface, borderRadius: 11, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
+  listIcon: { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', marginRight: 10, borderWidth: 1 },
+  listTitle:{ fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 2 },
+  listSub:  { fontSize: 11, color: C.muted },
 
-  // Breadcrumb
-  breadcrumb:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.surface },
-  breadcrumbBack:    { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 10 },
-  breadcrumbBackTxt: { color: C.gold, fontSize: 13, fontWeight: '600' },
-  breadcrumbTitle:   { flex: 1, color: C.cream, fontSize: 14, fontWeight: '700' },
-
-  // List rows
-  listRow:      { backgroundColor: C.surface, borderRadius: 12, padding: 13, marginBottom: 8, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
-  listRowIcon:  { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: C.border },
-  listRowTitle: { fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 2 },
-  listRowSub:   { fontSize: 11, color: C.muted },
-
-  runRow:        { backgroundColor: C.surface, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
-  runRowTop:     { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', padding: 13, paddingBottom: 8 },
-  runBadges:     { flexDirection: 'row', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '50%' },
-  runRowActions: { flexDirection: 'row', gap: 6, paddingHorizontal: 13, paddingBottom: 12, flexWrap: 'wrap' },
-  runActionBtn:  { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, borderWidth: 1, backgroundColor: C.surfaceHigh },
-  runActionTxt:  { fontSize: 11, fontWeight: '600' },
-
-  // Misc
-  emptyState:  { backgroundColor: C.surface, borderRadius: 14, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: C.border },
-  emptyLabel:  { color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 10 },
-  emptySub:    { color: C.muted, fontSize: 12, marginTop: 4, textAlign: 'center' },
-  pill:        { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20, borderWidth: 1 },
-  pillTxt:     { fontSize: 9, fontWeight: '700' },
+  runCard:   { backgroundColor: C.surface, borderRadius: 11, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: C.border },
+  runBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 9, borderWidth: 1, backgroundColor: C.surfaceHigh },
+  runBtnTxt: { fontSize: 11, fontWeight: '700' },
 
   // Modal
-  modalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalBox:        { width: '100%', maxWidth: 480, backgroundColor: C.surface, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: C.gold + '55' },
-  modalHeader:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 16, borderBottomWidth: 1, borderBottomColor: C.border },
-  modalTitle:      { fontSize: 16, fontWeight: '700', color: C.cream },
-  modalSubtitle:   { fontSize: 11, color: C.gold, marginTop: 2 },
-  modalBody:       { padding: 16, maxHeight: 420 },
-  fieldWrap:       { marginBottom: 14 },
-  fieldLabel:      { fontSize: 9, fontWeight: '700', color: C.gold, marginBottom: 6, letterSpacing: 1, textTransform: 'uppercase' },
-  fieldInput:      { backgroundColor: C.surfaceHigh, borderRadius: 10, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 10, fontSize: 15, color: C.cream, borderWidth: 1, borderColor: C.border },
-  fieldInputMulti: { minHeight: 90, paddingTop: 12 },
-  switchRow:       { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  answerToggle:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
-  switchLabel:     { fontSize: 15, fontWeight: '800' },
-  modalFooter:     { flexDirection: 'row', gap: 10, padding: 16, paddingTop: 4 },
-  modalCancel:     { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: C.surfaceHigh, alignItems: 'center', borderWidth: 1, borderColor: C.border },
-  modalCancelTxt:  { color: C.muted, fontWeight: '600', fontSize: 14 },
-  modalConfirmWrap:{ flex: 1, borderRadius: 12, overflow: 'hidden' },
-  modalConfirmGrad:{ paddingVertical: 13, alignItems: 'center' },
-  modalConfirmTxt: { color: C.bg, fontWeight: '800', fontSize: 14 },
+  overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalBox:     { width: '100%', maxWidth: 480, backgroundColor: C.surface, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: C.gold + '44' },
+  mHeader:      { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  mTitle:       { fontSize: 14, fontWeight: '700', color: C.cream },
+  mSub:         { fontSize: 10, color: C.gold, marginTop: 2 },
+  mBody:        { padding: 14, maxHeight: 380 },
+  fieldLabel:   { fontSize: 9, fontWeight: '700', color: C.gold, marginBottom: 5, letterSpacing: 1, textTransform: 'uppercase' },
+  fieldInput:   { backgroundColor: C.surfaceHigh, borderRadius: 9, paddingHorizontal: 12, paddingVertical: Platform.OS === 'ios' ? 12 : 9, fontSize: 14, color: C.cream, borderWidth: 1, borderColor: C.border },
+  mFooter:      { flexDirection: 'row', gap: 8, padding: 14, paddingTop: 4 },
+  mCancel:      { flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: C.surfaceHigh, alignItems: 'center', borderWidth: 1, borderColor: C.border },
+  mCancelTxt:   { color: C.muted, fontWeight: '600', fontSize: 13 },
+  mConfirmWrap: { flex: 1, borderRadius: 10, overflow: 'hidden' },
+  mConfirmGrad: { paddingVertical: 11, alignItems: 'center' },
+  mConfirmTxt:  { color: C.bg, fontWeight: '800', fontSize: 13 },
 });
