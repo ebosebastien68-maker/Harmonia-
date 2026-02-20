@@ -1,20 +1,20 @@
 /**
- * vrai-faux.tsx — 4 onglets permanents
+ * vrai-faux.tsx — 4 onglets — Compatible Web & Mobile
  *
- * ONGLET 1 "Sessions"   → mes sessions rejointes → groupes → Répondre aux questions
- * ONGLET 2 "Explorer"   → sessions disponibles → bouton Participer
- * ONGLET 3 "Réponses"   → sessions → groupes → mes réponses (VRAI/FAUX seulement, ZÉRO score)
- * ONGLET 4 "Résultats"  → sessions → groupes → bonne réponse + score (SI révélé par admin)
+ * ONGLET 1 "Sessions"  → mes sessions rejointes → groupes → Répondre
+ * ONGLET 2 "Explorer"  → sessions disponibles → Participer (RPC join_session_smart)
+ * ONGLET 3 "Réponses"  → sessions → groupes → MA réponse VRAI/FAUX (zéro score)
+ * ONGLET 4 "Résultats" → sessions → groupes → bonne réponse + score (SI admin révèle)
  *
- * CORRECTIONS v2 :
- *   - loadingCard : un état par carte pour éviter le spinner global sur tout
- *   - answerSess/resultSess rechargées à chaque activation d'onglet (pas seulement au init)
- *   - selSession1 / selSession3 / selSession4 séparés → plus de collision entre onglets
- *   - syncAll rafraîchit aussi l'onglet actif si on est en sous-écran
- *   - Onglet 4 : quand pending=true, affiche un message d'attente clair avec icône sablier
- *   - Onglet 3 : message explicite "scores révélés dans Résultats"
- *   - currentQIdx remis à 0 à chaque nouveau chargement de questions
- *   - Retour depuis questions → met à jour mySessions avec score rechargé
+ * SÉCURITÉ :
+ *   - access_token JWT envoyé à chaque requête backend
+ *   - Onglet 3 : correct_answer et score_awarded ABSENTS
+ *   - Onglet 4 : correct_answer + score UNIQUEMENT si reveal_answers=true côté DB
+ *   - Score total = somme des runs révélés seulement
+ *
+ * BACKEND :
+ *   - joinSession  → RPC join_session_smart(session_id) — pas besoin de party_id
+ *   - submitAnswer → RPC submit_answer — correct_answer reste dans PostgreSQL
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -30,11 +30,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const GAME_KEY    = 'vrai_faux';
 
+// Haptics — silencieux sur web
 const haptic = {
-  light:   () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); },
-  medium:  () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); },
+  light:   () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);   },
+  medium:  () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);  },
   success: () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); },
-  error:   () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); },
+  error:   () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);   },
 };
 
 const C = {
@@ -46,26 +47,24 @@ const C = {
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Tab         = 'mine' | 'explore' | 'answers' | 'results';
-type Sub13       = 'sessions' | 'parties' | 'questions';   // onglets 1 et 3
-type Sub4        = 'sessions' | 'parties' | 'results';     // onglet 4
+type Tab   = 'mine' | 'explore' | 'answers' | 'results';
+type Sub13 = 'sessions' | 'parties' | 'questions';
+type Sub4  = 'sessions' | 'parties' | 'results';
 
-interface SessionItem {
+interface SessionItem  {
   id: string; title: string; description?: string;
   is_paid: boolean; price_cfa: number; my_score?: number;
 }
-interface PartyItem {
+interface PartyItem    {
   id: string; title: string; is_initial: boolean;
   min_score: number; min_rank: number | null;
 }
-interface QuestionItem {
-  id: string; run_id: string; question_text: string; score: number;
-}
-interface MyAnswerRun {
+interface QuestionItem { id: string; run_id: string; question_text: string; score: number; }
+interface MyAnswerRun  {
   run_id: string; run_title: string;
   questions: { id: string; question_text: string; score: number; my_answer: boolean; }[];
 }
-interface MyResultRun {
+interface MyResultRun  {
   run_id: string; run_title: string;
   questions: {
     id: string; question_text: string; score: number;
@@ -79,72 +78,74 @@ interface VraiFauxProps { userId?: string; onBack?: () => void; }
 export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) {
 
   // ─── Navigation ──────────────────────────────────────────────────────────
-  const [tab, setTab]           = useState<Tab>('mine');
-  // Onglet 1
-  const [sub1, setSub1]         = useState<Sub13>('sessions');
-  // Onglet 3
-  const [sub3, setSub3]         = useState<Sub13>('sessions');
-  // Onglet 4
-  const [sub4, setSub4]         = useState<Sub4>('sessions');
+  const [tab,  setTab]  = useState<Tab>('mine');
+  const [sub1, setSub1] = useState<Sub13>('sessions');
+  const [sub3, setSub3] = useState<Sub13>('sessions');
+  const [sub4, setSub4] = useState<Sub4>('sessions');
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
-  const [userId, setUserId]     = useState<string>(userIdProp || '');
-  const userIdRef               = useRef<string>(userIdProp || '');
+  const [userId, setUserId]    = useState<string>(userIdProp || '');
+  const userIdRef              = useRef<string>(userIdProp || '');
+  const accessTokenRef         = useRef<string>('');   // JWT → auth.uid() backend
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   // ─── Données ─────────────────────────────────────────────────────────────
-  // Onglet 1 — Sessions rejointes
-  const [mySessions,    setMySessions]    = useState<SessionItem[]>([]);
-  const [selSess1,      setSelSess1]      = useState<SessionItem | null>(null);
-  const [parties1,      setParties1]      = useState<PartyItem[]>([]);
-  const [selParty1,     setSelParty1]     = useState<PartyItem | null>(null);
-  const [questions,     setQuestions]     = useState<QuestionItem[]>([]);
-  const [currentQIdx,   setCurrentQIdx]   = useState(0);
+  const [mySessions,   setMySessions]   = useState<SessionItem[]>([]);
+  const [selSess1,     setSelSess1]     = useState<SessionItem | null>(null);
+  const [parties1,     setParties1]     = useState<PartyItem[]>([]);
+  const [selParty1,    setSelParty1]    = useState<PartyItem | null>(null);
+  const [questions,    setQuestions]    = useState<QuestionItem[]>([]);
+  const [currentQIdx,  setCurrentQIdx]  = useState(0);
 
-  // Onglet 2 — Explorer
-  const [exploreSess,   setExploreSess]   = useState<SessionItem[]>([]);
+  const [exploreSess,  setExploreSess]  = useState<SessionItem[]>([]);
 
-  // Onglet 3 — Mes réponses
-  const [selSess3,      setSelSess3]      = useState<SessionItem | null>(null);
-  const [parties3,      setParties3]      = useState<PartyItem[]>([]);
-  const [selParty3,     setSelParty3]     = useState<PartyItem | null>(null);
-  const [myAnswerRuns,  setMyAnswerRuns]  = useState<MyAnswerRun[]>([]);
+  const [selSess3,     setSelSess3]     = useState<SessionItem | null>(null);
+  const [parties3,     setParties3]     = useState<PartyItem[]>([]);
+  const [selParty3,    setSelParty3]    = useState<PartyItem | null>(null);
+  const [myAnswerRuns, setMyAnswerRuns] = useState<MyAnswerRun[]>([]);
 
-  // Onglet 4 — Résultats
-  const [selSess4,      setSelSess4]      = useState<SessionItem | null>(null);
-  const [parties4,      setParties4]      = useState<PartyItem[]>([]);
-  const [selParty4,     setSelParty4]     = useState<PartyItem | null>(null);
-  const [myResultRuns,  setMyResultRuns]  = useState<MyResultRun[]>([]);
-  const [totalScore,    setTotalScore]    = useState<number>(0);
-  const [resultPending, setResultPending] = useState(false);
-  const [resultMsg,     setResultMsg]     = useState('');
+  const [selSess4,     setSelSess4]     = useState<SessionItem | null>(null);
+  const [parties4,     setParties4]     = useState<PartyItem[]>([]);
+  const [selParty4,    setSelParty4]    = useState<PartyItem | null>(null);
+  const [myResultRuns, setMyResultRuns] = useState<MyResultRun[]>([]);
+  const [totalScore,   setTotalScore]   = useState<number>(0);
+  const [resultPending,setResultPending]= useState(false);
+  const [resultMsg,    setResultMsg]    = useState('');
 
   // ─── UI ──────────────────────────────────────────────────────────────────
   const [initLoading,   setInitLoading]   = useState(true);
-  const [loadingCard,   setLoadingCard]   = useState<string | null>(null); // id de la carte en cours
+  const [loadingCard,   setLoadingCard]   = useState<string | null>(null);
   const [answerLoading, setAnswerLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
   const [error,         setError]         = useState('');
 
   // Refs
-  const isMounted         = useRef(true);
-  const fadeAnim          = useRef(new Animated.Value(0)).current;
-  const questionFadeAnim  = useRef(new Animated.Value(1)).current;
+  const isMounted        = useRef(true);
+  const fadeAnim         = useRef(new Animated.Value(0)).current;
+  const questionFadeAnim = useRef(new Animated.Value(1)).current;
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     isMounted.current = true;
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, {
+      toValue: 1, duration: 400, useNativeDriver: false,  // false = compatible web
+    }).start();
 
     const init = async () => {
-      let uid = userIdProp || '';
+      let uid   = userIdProp || '';
+      let token = '';
       if (!uid) {
         try {
           const raw = await AsyncStorage.getItem('harmonia_session');
-          if (raw) { const p = JSON.parse(raw); uid = p?.user?.id || ''; }
+          if (raw) {
+            const p = JSON.parse(raw);
+            uid   = p?.user?.id            || '';
+            token = p?.session?.access_token || '';
+          }
         } catch {}
       }
-      if (uid) { setUserId(uid); userIdRef.current = uid; }
+      if (uid)   { setUserId(uid); userIdRef.current = uid; }
+      if (token) { accessTokenRef.current = token; }
       await Promise.all([loadMySessions(uid), loadExploreSessions(uid)]);
       if (isMounted.current) setInitLoading(false);
     };
@@ -152,35 +153,37 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     return () => { isMounted.current = false; };
   }, []);
 
-  // ─── API ──────────────────────────────────────────────────────────────────
+  // ─── API centrale ─────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
-    const uid = userIdRef.current;
-    if (!uid) throw new Error('Non connecté');
+    const uid   = userIdRef.current;
+    const token = accessTokenRef.current;
+    if (!uid)   throw new Error('Non connecté');
+    if (!token) throw new Error('Session expirée — reconnectez-vous');
     const res = await fetch(`${BACKEND_URL}/game`, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: uid, ...body }),
+      body:    JSON.stringify({ user_id: uid, access_token: token, ...body }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Erreur HTTP ${res.status}`);
-    }
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `Erreur ${res.status}`);
+    return data;
   }, []);
 
-  // ─── Chargements ─────────────────────────────────────────────────────────
+  // ─── Chargements initiaux ─────────────────────────────────────────────────
   const loadMySessions = useCallback(async (uid?: string) => {
     try {
       const u = uid || userIdRef.current;
       if (!u) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: u, function: 'listMySessions', game_key: GAME_KEY }),
+        body: JSON.stringify({
+          user_id: u, access_token: accessTokenRef.current,
+          function: 'listMySessions', game_key: GAME_KEY,
+        }),
       });
       const data = await res.json();
-      if (isMounted.current && data.success) {
+      if (isMounted.current && data.success)
         setMySessions(data.sessions || []);
-      }
     } catch {}
   }, []);
 
@@ -190,10 +193,14 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
       if (!u) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: u, function: 'listAvailableSessions', game_key: GAME_KEY }),
+        body: JSON.stringify({
+          user_id: u, access_token: accessTokenRef.current,
+          function: 'listAvailableSessions', game_key: GAME_KEY,
+        }),
       });
       const data = await res.json();
-      if (isMounted.current && data.success) setExploreSess(data.sessions || []);
+      if (isMounted.current && data.success)
+        setExploreSess(data.sessions || []);
     } catch {}
   }, []);
 
@@ -203,17 +210,12 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     if (isMounted.current) setRefreshing(false);
   }, [loadMySessions, loadExploreSessions]);
 
-  // ─── ONGLET 2 : Explorer → Participer ────────────────────────────────────
+  // ─── ONGLET 2 — Explorer → Participer ─────────────────────────────────────
+  // Utilise le RPC join_session_smart → session_id suffit, pas besoin de party_id
   const joinSession = async (session: SessionItem) => {
-    setLoadingCard(session.id); haptic.medium();
+    setLoadingCard(session.id); setError(''); haptic.medium();
     try {
-      const partiesData = await api({ function: 'listPartiesForSession', session_id: session.id });
-      const initialParty = (partiesData.parties as PartyItem[]).find(p => p.is_initial);
-      if (!initialParty) { setError("Aucun groupe d'entrée disponible"); return; }
-
-      const joinData = await api({ function: 'joinSession', session_id: session.id, party_id: initialParty.id });
-      if (!joinData.success) { setError(joinData.error || 'Erreur participation'); return; }
-
+      await api({ function: 'joinSession', session_id: session.id });
       haptic.success();
       setExploreSess(prev => prev.filter(s => s.id !== session.id));
       setMySessions(prev => [...prev, { ...session, my_score: 0 }]);
@@ -222,7 +224,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 1 : Sessions → Parties → Questions ───────────────────────────
+  // ─── ONGLET 1 — Sessions → Parties ────────────────────────────────────────
   const openSession1 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
@@ -233,6 +235,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
+  // ─── ONGLET 1 — Parties → Questions ───────────────────────────────────────
+  // joinSession avec session_id uniquement (RPC gère l'inscription si besoin)
+  // puis getUnansweredQuestions avec party_id
   const enterParty1 = async (party: PartyItem) => {
     if (!selSess1) return;
     const myScore = mySessions.find(s => s.id === selSess1.id)?.my_score ?? 0;
@@ -242,7 +247,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     }
     setLoadingCard(party.id); setError(''); haptic.medium();
     try {
-      await api({ function: 'joinSession', session_id: selSess1.id, party_id: party.id });
+      // S'assurer que l'utilisateur est bien inscrit dans la session
+      await api({ function: 'joinSession', session_id: selSess1.id });
+      // Charger les questions non répondues de cette party
       const data = await api({ function: 'getUnansweredQuestions', party_id: party.id });
       setSelParty1(party);
       setQuestions(data.questions || []);
@@ -253,32 +260,36 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── Soumettre une réponse ────────────────────────────────────────────────
+  // ─── Soumettre une réponse ─────────────────────────────────────────────────
+  // Backend : RPC submit_answer SECURITY DEFINER
+  // correct_answer reste dans PostgreSQL — frontend reçoit uniquement success
   const submitAnswer = async (answer: boolean) => {
     const question = questions[currentQIdx];
     if (!question || answerLoading) return;
     setAnswerLoading(true); haptic.medium();
     try {
-      const data = await api({ function: 'submitAnswer', run_question_id: question.id, answer });
+      const data = await api({
+        function: 'submitAnswer', run_question_id: question.id, answer,
+      });
       if (!isMounted.current) return;
       if (data.success) {
         haptic.success();
-        Animated.timing(questionFadeAnim, { toValue: 0, duration: 200, useNativeDriver: false })
-          .start(() => {
-            if (!isMounted.current) return;
-            setQuestions(prev => {
-              const next = prev.filter((_, i) => i !== currentQIdx);
-              if (next.length === 0) {
-                // Tout répondu → retour aux parties + refresh score
-                setSub1('parties');
-                loadMySessions();
-              } else {
-                setCurrentQIdx(i => Math.min(i, next.length - 1));
-              }
-              return next;
-            });
-            questionFadeAnim.setValue(1);
+        Animated.timing(questionFadeAnim, {
+          toValue: 0, duration: 200, useNativeDriver: false,
+        }).start(() => {
+          if (!isMounted.current) return;
+          setQuestions(prev => {
+            const next = prev.filter((_, i) => i !== currentQIdx);
+            if (next.length === 0) {
+              setSub1('parties');
+              loadMySessions();   // rafraîchir le score de la session
+            } else {
+              setCurrentQIdx(i => Math.min(i, next.length - 1));
+            }
+            return next;
           });
+          questionFadeAnim.setValue(1);
+        });
       } else {
         setError(data.error || 'Erreur envoi'); haptic.error();
       }
@@ -286,7 +297,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setAnswerLoading(false); }
   };
 
-  // ─── ONGLET 3 : Mes réponses ─────────────────────────────────────────────
+  // ─── ONGLET 3 — Mes Réponses ──────────────────────────────────────────────
   const openSession3 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
@@ -307,7 +318,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 4 : Résultats ────────────────────────────────────────────────
+  // ─── ONGLET 4 — Résultats ─────────────────────────────────────────────────
   const openSession4 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
@@ -323,10 +334,10 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     try {
       const data = await api({ function: 'getMyResults', party_id: party.id });
       setSelParty4(party);
-      setMyResultRuns(data.runs || []);
+      setMyResultRuns(data.runs   || []);
       setTotalScore(data.total_score ?? 0);
-      setResultPending(data.pending ?? false);
-      setResultMsg(data.message || '');
+      setResultPending(data.pending   ?? false);
+      setResultMsg(data.message       || '');
       setSub4('results');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
@@ -336,18 +347,18 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
   const goBack = () => {
     setError('');
     if (tab === 'mine') {
-      if (sub1 === 'questions') { setSub1('parties'); }
-      else if (sub1 === 'parties') { setSub1('sessions'); setSelSess1(null); setParties1([]); }
+      if      (sub1 === 'questions') { setSub1('parties'); }
+      else if (sub1 === 'parties')   { setSub1('sessions'); setSelSess1(null); setParties1([]); }
       else { onBack?.(); }
     } else if (tab === 'explore') {
       onBack?.();
     } else if (tab === 'answers') {
-      if (sub3 === 'questions') { setSub3('parties'); setMyAnswerRuns([]); }
-      else if (sub3 === 'parties') { setSub3('sessions'); setSelSess3(null); setParties3([]); }
+      if      (sub3 === 'questions') { setSub3('parties'); setMyAnswerRuns([]); }
+      else if (sub3 === 'parties')   { setSub3('sessions'); setSelSess3(null); setParties3([]); }
       else { onBack?.(); }
     } else if (tab === 'results') {
-      if (sub4 === 'results') { setSub4('parties'); setMyResultRuns([]); }
-      else if (sub4 === 'parties') { setSub4('sessions'); setSelSess4(null); setParties4([]); }
+      if      (sub4 === 'results')  { setSub4('parties'); setMyResultRuns([]); }
+      else if (sub4 === 'parties')  { setSub4('sessions'); setSelSess4(null); setParties4([]); }
       else { onBack?.(); }
     }
   };
@@ -359,7 +370,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     return false;
   };
 
-  // ─── Titre du header dynamique ────────────────────────────────────────────
   const headerSub = () => {
     if (tab === 'mine') {
       if (sub1 === 'parties')   return selSess1?.title?.toUpperCase() ?? 'GROUPES';
@@ -372,7 +382,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
       if (sub3 === 'questions') return selParty3?.title?.toUpperCase() ?? 'MES RÉPONSES';
       return 'MES RÉPONSES';
     }
-    // results
     if (sub4 === 'parties') return selSess4?.title?.toUpperCase() ?? 'GROUPES';
     if (sub4 === 'results') return selParty4?.title?.toUpperCase() ?? 'MES RÉSULTATS';
     return 'MES RÉSULTATS';
@@ -397,11 +406,11 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
 
         {/* ── HEADER ── */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
-          {(isOnSubScreen() || onBack) ? (
-            <TouchableOpacity onPress={goBack} style={s.iconBtn}>
-              <Ionicons name="arrow-back" size={19} color={C.gold} />
-            </TouchableOpacity>
-          ) : <View style={s.iconBtn} />}
+          {(isOnSubScreen() || onBack)
+            ? <TouchableOpacity onPress={goBack} style={s.iconBtn}>
+                <Ionicons name="arrow-back" size={19} color={C.gold} />
+              </TouchableOpacity>
+            : <View style={s.iconBtn} />}
 
           <View style={s.headerCenter}>
             <Text style={s.headerSub}>{headerSub()}</Text>
@@ -415,32 +424,33 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </TouchableOpacity>
         </LinearGradient>
 
-        {/* ── BARRE D'ERREUR ── */}
+        {/* ── ERREUR ── */}
         {error !== '' && (
           <View style={s.errorBar}>
             <Ionicons name="warning-outline" size={13} color={C.danger} />
             <Text style={s.errorTxt} numberOfLines={2}>{error}</Text>
-            <TouchableOpacity onPress={() => setError('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={() => setError('')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close" size={15} color={C.danger} />
             </TouchableOpacity>
           </View>
         )}
 
-        {/* ── BARRE D'ONGLETS ── */}
+        {/* ── ONGLETS ── */}
         <View style={s.tabBar}>
-          <TabBtn icon="bookmark-outline"  label="Sessions"  active={tab==='mine'}
+          <TabBtn icon="bookmark-outline"  label="Sessions"  active={tab === 'mine'}
             onPress={() => { setTab('mine');    setSub1('sessions'); }} />
-          <TabBtn icon="compass-outline"   label="Explorer"  active={tab==='explore'}
+          <TabBtn icon="compass-outline"   label="Explorer"  active={tab === 'explore'}
             onPress={() => { setTab('explore'); }} badge={exploreSess.length} />
-          <TabBtn icon="chatbox-outline"   label="Réponses"  active={tab==='answers'}
+          <TabBtn icon="chatbox-outline"   label="Réponses"  active={tab === 'answers'}
             onPress={() => { setTab('answers'); setSub3('sessions'); }} />
-          <TabBtn icon="trophy-outline"    label="Résultats" active={tab==='results'}
+          <TabBtn icon="trophy-outline"    label="Résultats" active={tab === 'results'}
             onPress={() => { setTab('results'); setSub4('sessions'); }} />
         </View>
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════════
             ONGLET 1 — MES SESSIONS
-        ══════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════════ */}
 
         {tab === 'mine' && sub1 === 'sessions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
@@ -456,7 +466,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>{sess.title}</Text>
-                  {sess.description && <Text style={s.cardSub} numberOfLines={1}>{sess.description}</Text>}
+                  {sess.description
+                    ? <Text style={s.cardSub} numberOfLines={1}>{sess.description}</Text>
+                    : null}
                   <View style={s.pillRow}>
                     <ScorePill score={sess.my_score ?? 0} />
                   </View>
@@ -470,6 +482,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </ScrollView>
         )}
 
+        {/* Groupes de la session sélectionnée */}
         {tab === 'mine' && sub1 === 'parties' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>GROUPES</Text>
@@ -479,7 +492,8 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
               return (
                 <View key={party.id} style={[s.card, locked && s.cardLocked]}>
                   <View style={[s.cardIcon, { borderColor: locked ? C.muted+'44' : C.info+'44' }]}>
-                    <Ionicons name={locked ? 'lock-closed-outline' : 'people-outline'}
+                    <Ionicons
+                      name={locked ? 'lock-closed-outline' : 'people-outline'}
                       size={17} color={locked ? C.muted : C.info} />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -489,7 +503,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                     <Text style={s.cardSub}>
                       {locked
                         ? `🔒 Requis : ${party.min_score} pts · Vous : ${myScore} pts`
-                        : party.is_initial ? 'Groupe ouvert à tous' : `Score min : ${party.min_score} pts`}
+                        : party.is_initial
+                          ? 'Groupe ouvert à tous'
+                          : `Score min : ${party.min_score} pts`}
                     </Text>
                   </View>
                   {!locked && (
@@ -508,6 +524,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </ScrollView>
         )}
 
+        {/* Questions */}
         {tab === 'mine' && sub1 === 'questions' && (
           <View style={{ flex: 1 }}>
             {questions.length === 0 ? (
@@ -523,21 +540,23 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
               </View>
             ) : (
               <Animated.View style={{ flex: 1, opacity: questionFadeAnim }}>
+
                 {/* Barre progression */}
                 <View style={s.qCounter}>
                   <Text style={s.qCounterTxt}>
                     Question {currentQIdx + 1} / {questions.length}
                   </Text>
                   <View style={s.qProgressBar}>
-                    <View style={[s.qProgressFill,
-                      { width: `${((currentQIdx + 1) / questions.length) * 100}%` as any }]} />
+                    <View style={[s.qProgressFill, {
+                      width: `${((currentQIdx + 1) / questions.length) * 100}%` as any,
+                    }]} />
                   </View>
                 </View>
 
                 <ScrollView contentContainerStyle={[s.scroll, { paddingTop: 8 }]}
                   showsVerticalScrollIndicator={false}>
 
-                  {/* Question */}
+                  {/* Carte question */}
                   <View style={s.questionCard}>
                     <View style={s.scoreBadge}>
                       <Text style={s.scoreBadgeTxt}>{questions[currentQIdx]?.score} pts</Text>
@@ -545,7 +564,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                     <Text style={s.questionTxt}>{questions[currentQIdx]?.question_text}</Text>
                   </View>
 
-                  {/* Boutons réponse */}
+                  {/* Boutons VRAI / FAUX */}
                   <View style={s.answerRow}>
                     <AnsBtn label="VRAI" icon="checkmark-circle-outline" color={C.vrai}
                       loading={answerLoading} disabled={answerLoading}
@@ -555,7 +574,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                       onPress={() => submitAnswer(false)} />
                   </View>
 
-                  {/* Navigation précédente / suivante */}
+                  {/* Navigation entre questions */}
                   {questions.length > 1 && (
                     <View style={s.qNav}>
                       <TouchableOpacity
@@ -587,9 +606,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </View>
         )}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════════
             ONGLET 2 — EXPLORER
-        ══════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════════ */}
 
         {tab === 'explore' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
@@ -604,9 +623,12 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>{sess.title}</Text>
-                  {sess.description && <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text>}
+                  {sess.description
+                    ? <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text>
+                    : null}
                   <View style={{ marginTop: 5 }}>
-                    <Pill label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'}
+                    <Pill
+                      label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'}
                       color={sess.is_paid ? C.gold : C.success} />
                   </View>
                 </View>
@@ -623,11 +645,10 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </ScrollView>
         )}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════════
             ONGLET 3 — MES RÉPONSES
-            Séquence : sessions → parties → questions répondues
-            ZÉRO correct_answer, ZÉRO score ici
-        ══════════════════════════════════════════════════════ */}
+            MA réponse (VRAI/FAUX) uniquement — zéro score, zéro bonne réponse
+        ══════════════════════════════════════════════════ */}
 
         {tab === 'answers' && sub3 === 'sessions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
@@ -677,12 +698,14 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
         {tab === 'answers' && sub3 === 'questions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>MES RÉPONSES</Text>
-            {/* Bandeaux informatif */}
+
+            {/* Bandeau info — scores visibles seulement dans Résultats */}
             <View style={s.infoBar}>
               <Ionicons name="information-circle-outline" size={14} color={C.info} />
               <Text style={s.infoBarTxt}>
                 Les scores et les bonnes réponses seront révélés par l'administrateur
-                dans l'onglet <Text style={{ fontWeight: '800' }}>Résultats</Text>
+                dans l'onglet{' '}
+                <Text style={{ fontWeight: '800' }}>Résultats</Text>
               </Text>
             </View>
 
@@ -694,16 +717,20 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                 <Text style={s.runTitle}>{run.run_title}</Text>
                 {run.questions.map(q => (
                   <View key={q.id} style={s.qRow}>
-                    <View style={[s.dot,
-                      { backgroundColor: (q.my_answer ? C.vrai : C.faux)+'22',
-                        borderColor: (q.my_answer ? C.vrai : C.faux)+'55' }]}>
-                      <Ionicons name={q.my_answer ? 'checkmark' : 'close'}
+                    <View style={[s.dot, {
+                      backgroundColor: (q.my_answer ? C.vrai : C.faux) + '22',
+                      borderColor:     (q.my_answer ? C.vrai : C.faux) + '55',
+                    }]}>
+                      <Ionicons
+                        name={q.my_answer ? 'checkmark' : 'close'}
                         size={12} color={q.my_answer ? C.vrai : C.faux} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={s.qTxt} numberOfLines={3}>{q.question_text}</Text>
-                      <Text style={{ fontSize: 11, color: q.my_answer ? C.vrai : C.faux,
-                        fontWeight: '700', marginTop: 3 }}>
+                      <Text style={{
+                        fontSize: 11, fontWeight: '700', marginTop: 3,
+                        color: q.my_answer ? C.vrai : C.faux,
+                      }}>
                         J'ai répondu : {q.my_answer ? 'VRAI' : 'FAUX'}
                       </Text>
                     </View>
@@ -715,10 +742,12 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </ScrollView>
         )}
 
-        {/* ══════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════════
             ONGLET 4 — MES RÉSULTATS
-            correct_answer + score révélés UNIQUEMENT si admin a fermé le run
-        ══════════════════════════════════════════════════════ */}
+            correct_answer + score révélés UNIQUEMENT si
+            admin a fermé le run ET activé reveal_answers
+            Score total = somme runs révélés seulement
+        ══════════════════════════════════════════════════ */}
 
         {tab === 'results' && sub4 === 'sessions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
@@ -782,18 +811,16 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
               </View>
             ) : (
               <>
-                {/* Score total */}
-                {totalScore > 0 && (
-                  <View style={s.totalBand}>
-                    <Ionicons name="trophy-outline" size={16} color={C.gold} />
-                    <Text style={s.totalBandTxt}>
-                      Score total :{' '}
-                      <Text style={{ color: C.gold, fontWeight: '800' }}>{totalScore} pts</Text>
-                    </Text>
-                  </View>
-                )}
+                {/* Score total des runs révélés */}
+                <View style={s.totalBand}>
+                  <Ionicons name="trophy-outline" size={16} color={C.gold} />
+                  <Text style={s.totalBandTxt}>
+                    Score révélé :{' '}
+                    <Text style={{ color: C.gold, fontWeight: '800' }}>{totalScore} pts</Text>
+                  </Text>
+                </View>
 
-                {/* Questions révélées */}
+                {/* Questions + résultats */}
                 {myResultRuns.map(run => (
                   <View key={run.run_id} style={s.runCard}>
                     <Text style={s.runTitle}>{run.run_title}</Text>
@@ -806,22 +833,28 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                         : correct ? 'checkmark-circle' : 'close-circle';
                       return (
                         <View key={q.id} style={s.qRow}>
-                          <View style={[s.dot,
-                            { backgroundColor: dotColor+'22', borderColor: dotColor+'55' }]}>
+                          <View style={[s.dot, {
+                            backgroundColor: dotColor + '22',
+                            borderColor:     dotColor + '55',
+                          }]}>
                             <Ionicons name={dotIcon} size={12} color={dotColor} />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={s.qTxt} numberOfLines={3}>{q.question_text}</Text>
-                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 4,
-                              flexWrap: 'wrap', alignItems: 'center' }}>
+                            <View style={{
+                              flexDirection: 'row', gap: 6, marginTop: 4,
+                              flexWrap: 'wrap', alignItems: 'center',
+                            }}>
                               {/* Bonne réponse */}
                               {q.correct_answer !== null && (
                                 <View style={[s.chip, {
-                                  backgroundColor: (q.correct_answer ? C.vrai : C.faux)+'18',
-                                  borderColor:     (q.correct_answer ? C.vrai : C.faux)+'44',
+                                  backgroundColor: (q.correct_answer ? C.vrai : C.faux) + '18',
+                                  borderColor:     (q.correct_answer ? C.vrai : C.faux) + '44',
                                 }]}>
-                                  <Text style={{ fontSize: 9, fontWeight: '800',
-                                    color: q.correct_answer ? C.vrai : C.faux }}>
+                                  <Text style={{
+                                    fontSize: 9, fontWeight: '800',
+                                    color: q.correct_answer ? C.vrai : C.faux,
+                                  }}>
                                     ✓ {q.correct_answer ? 'VRAI' : 'FAUX'}
                                   </Text>
                                 </View>
@@ -829,19 +862,24 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                               {/* Ma mauvaise réponse */}
                               {incorrect && (
                                 <View style={[s.chip, {
-                                  backgroundColor: C.danger+'18', borderColor: C.danger+'44' }]}>
+                                  backgroundColor: C.danger + '18',
+                                  borderColor:     C.danger + '44',
+                                }]}>
                                   <Text style={{ fontSize: 9, fontWeight: '800', color: C.danger }}>
                                     ✗ {q.my_answer ? 'VRAI' : 'FAUX'}
                                   </Text>
                                 </View>
                               )}
+                              {/* Non joué */}
                               {!q.answered && (
                                 <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>
                               )}
-                              {/* Score */}
+                              {/* Points */}
                               {q.answered && (
-                                <Text style={{ fontSize: 10, fontWeight: '700',
-                                  color: correct ? C.gold : C.muted }}>
+                                <Text style={{
+                                  fontSize: 10, fontWeight: '700',
+                                  color: correct ? C.gold : C.muted,
+                                }}>
                                   {correct ? `+${q.score_awarded}` : '+0'} pts
                                 </Text>
                               )}
@@ -871,7 +909,9 @@ function TabBtn({ icon, label, active, onPress, badge }: any) {
       <Ionicons name={icon} size={15} color={active ? C.gold : C.muted} />
       <Text style={[s.tabTxt, active && s.tabTxtActive]}>{label}</Text>
       {!!badge && badge > 0 && (
-        <View style={s.tabBadge}><Text style={s.tabBadgeTxt}>{badge}</Text></View>
+        <View style={s.tabBadge}>
+          <Text style={s.tabBadgeTxt}>{badge}</Text>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -901,8 +941,10 @@ function ScorePill({ score }: { score: number }) {
 
 function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
-      backgroundColor: color+'22', borderWidth: 1, borderColor: color+'55' }}>
+    <View style={{
+      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
+      backgroundColor: color + '22', borderWidth: 1, borderColor: color + '55',
+    }}>
       <Text style={{ fontSize: 11, fontWeight: '700', color }}>{label}</Text>
     </View>
   );
@@ -916,8 +958,10 @@ function EmptyState({ icon, title, sub, actionLabel, onAction, iconColor }: any)
         {title}
       </Text>
       {sub && (
-        <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center',
-          lineHeight: 19, paddingHorizontal: 20 }}>
+        <Text style={{
+          fontSize: 13, color: C.muted, textAlign: 'center',
+          lineHeight: 19, paddingHorizontal: 20,
+        }}>
           {sub}
         </Text>
       )}
@@ -936,83 +980,76 @@ const s = StyleSheet.create({
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, padding: 30 },
   initTitle: { fontSize: 22, fontWeight: '800', color: C.cream, textAlign: 'center' },
 
-  header:       { paddingTop: Platform.OS === 'android' ? 14 : 8, paddingBottom: 13,
-                  paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center',
-                  borderBottomWidth: 1, borderBottomColor: C.border },
-  iconBtn:      { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surface,
-                  justifyContent: 'center', alignItems: 'center',
-                  borderWidth: 1, borderColor: C.border },
+  header: {
+    paddingTop: Platform.OS === 'android' ? 14 : 8,
+    paddingBottom: 13, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center',
+    borderBottomWidth: 1, borderBottomColor: C.border,
+  },
+  iconBtn: {
+    width: 33, height: 33, borderRadius: 16,
+    backgroundColor: C.surface,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: C.border,
+  },
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerSub:    { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
+  headerSub:    { fontSize: 9,  fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
   headerTitle:  { fontSize: 19, fontWeight: '800', color: C.cream },
 
-  errorBar: { flexDirection: 'row', alignItems: 'center', gap: 8,
-              backgroundColor: C.danger+'18', paddingHorizontal: 14, paddingVertical: 7,
-              borderBottomWidth: 1, borderBottomColor: C.danger+'33' },
+  errorBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: C.danger + '18',
+    paddingHorizontal: 14, paddingVertical: 7,
+    borderBottomWidth: 1, borderBottomColor: C.danger + '33',
+  },
   errorTxt: { flex: 1, color: C.danger, fontSize: 12 },
 
-  tabBar:       { flexDirection: 'row', backgroundColor: C.surface,
-                  borderBottomWidth: 1, borderBottomColor: C.border },
-  tab:          { flex: 1, alignItems: 'center', justifyContent: 'center',
-                  paddingVertical: 10, gap: 3 },
+  tabBar:       { flexDirection: 'row', backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  tab:          { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 3 },
   tabActive:    { borderBottomWidth: 2, borderBottomColor: C.gold },
   tabTxt:       { fontSize: 10, color: C.muted, fontWeight: '600' },
   tabTxtActive: { color: C.gold },
-  tabBadge:     { backgroundColor: C.gold, borderRadius: 8, paddingHorizontal: 5,
-                  paddingVertical: 1, position: 'absolute', top: 4, right: 8 },
+  tabBadge:     { backgroundColor: C.gold, borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1, position: 'absolute', top: 4, right: 8 },
   tabBadgeTxt:  { fontSize: 9, color: '#000', fontWeight: '800' },
 
-  infoBar:    { flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-                backgroundColor: C.info+'15', paddingHorizontal: 14, paddingVertical: 10,
-                borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: C.info+'33' },
+  infoBar:    {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: C.info + '15', paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: C.info + '33',
+  },
   infoBarTxt: { flex: 1, color: C.info, fontSize: 12, lineHeight: 17 },
 
   scroll: { padding: 16 },
   sLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 2, marginBottom: 11 },
 
-  card:       { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 8,
-                borderWidth: 1, borderColor: C.border, flexDirection: 'row',
-                alignItems: 'center', gap: 11 },
+  card:       { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 8, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', gap: 11 },
   cardLocked: { opacity: 0.5 },
-  cardIcon:   { width: 34, height: 34, borderRadius: 17, backgroundColor: C.surfaceHigh,
-                justifyContent: 'center', alignItems: 'center',
-                borderWidth: 1, borderColor: C.gold+'44', flexShrink: 0 },
+  cardIcon:   { width: 34, height: 34, borderRadius: 17, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44', flexShrink: 0 },
   cardTitle:  { fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 2 },
   cardSub:    { fontSize: 12, color: C.muted },
 
-  pillRow:   { flexDirection: 'row', marginTop: 4 },
-  scorePill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8,
-               paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold+'22',
-               borderWidth: 1, borderColor: C.gold+'44' },
+  pillRow:      { flexDirection: 'row', marginTop: 4 },
+  scorePill:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold + '22', borderWidth: 1, borderColor: C.gold + '44' },
   scorePillTxt: { fontSize: 11, fontWeight: '700', color: C.gold },
 
-  joinBtn:    { backgroundColor: C.gold, borderRadius: 10, paddingHorizontal: 13,
-                paddingVertical: 8, minWidth: 80, alignItems: 'center' },
+  joinBtn:    { backgroundColor: C.gold, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
   joinBtnTxt: { color: '#000', fontWeight: '800', fontSize: 12 },
 
-  repondreBtn: { backgroundColor: C.info, borderRadius: 10, paddingHorizontal: 12,
-                 paddingVertical: 8, minWidth: 80, alignItems: 'center' },
+  repondreBtn: { backgroundColor: C.info, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
   repBtnTxt:   { color: C.white, fontWeight: '800', fontSize: 12 },
 
-  actionBtn:    { flexDirection: 'row', alignItems: 'center', gap: 8,
-                  backgroundColor: C.gold+'22', borderRadius: 12,
-                  paddingHorizontal: 18, paddingVertical: 11, marginTop: 8,
-                  borderWidth: 1, borderColor: C.gold+'55' },
+  actionBtn:    { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.gold + '22', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 11, marginTop: 8, borderWidth: 1, borderColor: C.gold + '55' },
   actionBtnTxt: { color: C.gold, fontWeight: '700', fontSize: 13 },
 
   qCounter:     { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
   qCounterTxt:  { fontSize: 11, color: C.muted, fontWeight: '600', marginBottom: 6 },
   qProgressBar: { height: 3, backgroundColor: C.border, borderRadius: 2 },
-  qProgressFill:{ height: 3, backgroundColor: C.gold, borderRadius: 2 },
+  qProgressFill:{ height: 3, backgroundColor: C.gold,   borderRadius: 2 },
 
-  questionCard:  { backgroundColor: C.surface, borderRadius: 16, padding: 22,
-                   borderWidth: 1, borderColor: C.border, marginBottom: 20,
-                   alignItems: 'center', gap: 14 },
-  scoreBadge:    { backgroundColor: C.gold+'22', borderRadius: 20, paddingHorizontal: 12,
-                   paddingVertical: 4, borderWidth: 1, borderColor: C.gold+'55' },
+  questionCard:  { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 20, alignItems: 'center', gap: 14 },
+  scoreBadge:    { backgroundColor: C.gold + '22', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.gold + '55' },
   scoreBadgeTxt: { fontSize: 12, fontWeight: '700', color: C.gold },
-  questionTxt:   { fontSize: 20, fontWeight: '700', color: C.cream,
-                   lineHeight: 30, textAlign: 'center' },
+  questionTxt:   { fontSize: 20, fontWeight: '700', color: C.cream, lineHeight: 30, textAlign: 'center' },
 
   answerRow:    { flexDirection: 'row', gap: 12, marginBottom: 16 },
   answerBtn:    { flex: 1, borderRadius: 16, paddingVertical: 32, alignItems: 'center', gap: 8 },
@@ -1020,32 +1057,22 @@ const s = StyleSheet.create({
   answerBtnTxt: { fontSize: 20, fontWeight: '900', color: C.white, letterSpacing: 1 },
 
   qNav:       { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
-  qNavBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 10,
-                paddingHorizontal: 14, borderRadius: 10, backgroundColor: C.surface,
-                borderWidth: 1, borderColor: C.border },
+  qNavBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   qNavBtnDis: { opacity: 0.35 },
   qNavTxt:    { fontSize: 13, color: C.cream, fontWeight: '600' },
 
-  runCard:  { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9,
-              borderWidth: 1, borderColor: C.border },
-  runTitle: { fontSize: 11, fontWeight: '700', color: C.gold, marginBottom: 8,
-              letterSpacing: 0.5, textTransform: 'uppercase' },
+  runCard:  { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: C.border },
+  runTitle: { fontSize: 11, fontWeight: '700', color: C.gold, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' },
 
-  qRow: { flexDirection: 'row', gap: 10, paddingVertical: 9,
-          borderTopWidth: 1, borderTopColor: C.border+'55', alignItems: 'flex-start' },
-  dot:  { width: 26, height: 26, borderRadius: 13, justifyContent: 'center',
-          alignItems: 'center', borderWidth: 1, flexShrink: 0, marginTop: 1 },
+  qRow: { flexDirection: 'row', gap: 10, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.border + '55', alignItems: 'flex-start' },
+  dot:  { width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 1, flexShrink: 0, marginTop: 1 },
   qTxt: { fontSize: 13, color: C.cream, lineHeight: 18, fontWeight: '500' },
   chip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1 },
 
-  totalBand:    { flexDirection: 'row', alignItems: 'center', gap: 7,
-                  backgroundColor: C.gold+'18', paddingHorizontal: 14, paddingVertical: 10,
-                  borderRadius: 12, borderWidth: 1, borderColor: C.gold+'33', marginBottom: 16 },
+  totalBand:    { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.gold + '18', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: C.gold + '33', marginBottom: 16 },
   totalBandTxt: { color: C.muted, fontSize: 13 },
 
-  pendingBox:   { alignItems: 'center', paddingVertical: 40, gap: 12,
-                  backgroundColor: C.surface, borderRadius: 14,
-                  borderWidth: 1, borderColor: C.border, padding: 24, marginTop: 8 },
+  pendingBox:   { alignItems: 'center', paddingVertical: 40, gap: 12, backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, padding: 24, marginTop: 8 },
   pendingTitle: { fontSize: 16, fontWeight: '700', color: C.cream, textAlign: 'center' },
   pendingSub:   { fontSize: 13, color: C.muted, textAlign: 'center', lineHeight: 19 },
 });
