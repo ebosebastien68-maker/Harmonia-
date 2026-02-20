@@ -1,11 +1,18 @@
 /**
- * vrai-faux.tsx
+ * vrai-faux.tsx — Version finale refactorisée
  *
- * ✅ Sync silencieuse — aucun spinner, transition fluide + bouton sync manuel
- * ✅ Clic party → questions non-répondues + historique chargés
- * ✅ Historique complet — toutes questions, réponses, scores, score total party
- * ✅ AsyncStorage via 'harmonia_session'
- * ✅ FIXED: isMounted useRef ajouté
+ * FLUX COMPLET :
+ *  Tab "Mes Sessions"   → sessions déjà rejointes + scores
+ *  Tab "Explorer"       → sessions disponibles + bouton Participer
+ *  → Parties            → liste parties + bouton "Répondre" (vérifie rang/score)
+ *  → Questions          → questions non-répondues une à une (disparaissent après réponse)
+ *  → Historique         → toutes les questions répondues, scores, total
+ *
+ * FIXES :
+ *  ✅ isMounted useRef déclaré
+ *  ✅ Iconicons → Ionicons (typo corrigé)
+ *  ✅ useNativeDriver: false sur web
+ *  ✅ Pas de useCallback importé mais non utilisé
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -21,89 +28,77 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BACKEND_URL   = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const GAME_KEY      = 'vrai_faux';
 const POLL_MS       = 3000;
-const RESULT_TTL_MS = 12000;
 
 const haptic = {
   medium:  () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); },
   success: () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); },
+  error:   () => { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); },
 };
 
 const C = {
   bg: '#0A0A0C', surface: '#14141A', surfaceHigh: '#1C1C24',
-  border: '#262630', gold: '#C9A84C', goldLight: '#E8C96A',
+  border: '#262630', gold: '#C9A84C',
   cream: '#F0E8D5', muted: '#5A5A6A',
   success: '#27AE60', danger: '#E74C3C', info: '#2980B9',
   vrai: '#16A34A', faux: '#DC2626', white: '#FFFFFF',
 };
 
-type Screen    = 'sessions' | 'parties' | 'lobby';
-type GameState = 'waiting' | 'question' | 'answered' | 'result';
+// ─── Types ────────────────────────────────────────────────────────────────────
+type MainTab   = 'mine' | 'explore';
+type Screen    = 'home' | 'parties' | 'questions' | 'history';
 
-interface SessionItem { id: string; title: string; description?: string; is_paid: boolean; price_cfa: number; }
-interface PartyItem   { id: string; title: string; is_initial: boolean; min_score: number; min_rank: number | null; }
-interface RunItem     { id: string; title: string; is_visible: boolean; is_closed: boolean; }
-interface QuestionItem {
-  id: string; question_text: string; score: number;
-  correct_answer: boolean | null; answered: boolean;
-  my_answer: boolean | null; score_awarded: number | null;
-}
-interface HistoryRun { run_id: string; run_title: string; questions: QuestionItem[]; }
-interface LeaderEntry {
-  rank: number; user_id: string; nom: string; prenom: string;
-  run_score: number; is_current_user: boolean; avatar_url: string | null;
-}
+interface SessionItem  { id: string; title: string; description?: string; is_paid: boolean; price_cfa: number; my_score?: number; }
+interface PartyItem    { id: string; title: string; is_initial: boolean; min_score: number; min_rank: number | null; }
+interface QuestionItem { id: string; question_text: string; score: number; correct_answer: boolean | null; answered: boolean; my_answer: boolean | null; score_awarded: number | null; }
+interface HistoryRun   { run_id: string; run_title: string; questions: QuestionItem[]; }
 interface VraiFauxProps { userId?: string; userNom?: string; onBack?: () => void; }
 
 export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFauxProps) {
-  const [screen,     setScreen]     = useState<Screen>('sessions');
-  const [gameState,  setGameState]  = useState<GameState>('waiting');
+  const [tab,        setTab]        = useState<MainTab>('mine');
+  const [screen,     setScreen]     = useState<Screen>('home');
   const [selSession, setSelSession] = useState<SessionItem | null>(null);
   const [selParty,   setSelParty]   = useState<PartyItem   | null>(null);
   const [userId,     setUserId]     = useState<string>(userIdProp || '');
 
-  const [sessions,    setSessions]    = useState<SessionItem[]>([]);
-  const [parties,     setParties]     = useState<PartyItem[]>([]);
-  const [activeRun,   setActiveRun]   = useState<RunItem | null>(null);
-  const [question,    setQuestion]    = useState<QuestionItem | null>(null);
-  const [myAnswer,    setMyAnswer]    = useState<boolean | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderEntry[]>([]);
-  const [myRunScore,  setMyRunScore]  = useState(0);
-  const [pointsWon,   setPointsWon]   = useState(0);
-  const [history,     setHistory]     = useState<HistoryRun[]>([]);
-  const [totalScore,  setTotalScore]  = useState<number | null>(null);
-  const [isMember,    setIsMember]    = useState(false);
+  // Données
+  const [mySessions,   setMySessions]   = useState<SessionItem[]>([]);
+  const [exploreSess,  setExploreSess]  = useState<SessionItem[]>([]);
+  const [parties,      setParties]      = useState<PartyItem[]>([]);
+  const [questions,    setQuestions]    = useState<QuestionItem[]>([]);  // non-répondues
+  const [currentQIdx,  setCurrentQIdx]  = useState(0);
+  const [history,      setHistory]      = useState<HistoryRun[]>([]);
+  const [totalScore,   setTotalScore]   = useState<number | null>(null);
+  const [partyScores,  setPartyScores]  = useState<Record<string, number>>({});  // party_id → score
 
+  // UI
   const [initLoading,   setInitLoading]   = useState(true);
-  const [joiningParty,  setJoiningParty]  = useState(false);
-  const [syncing,       setSyncing]       = useState(false);
+  const [loadingAction, setLoadingAction] = useState(false);
   const [answerLoading, setAnswerLoading] = useState(false);
-  const [newDataFlash,  setNewDataFlash]  = useState(false);
+  const [syncing,       setSyncing]       = useState(false);
   const [error,         setError]         = useState('');
+  const [joinedId,      setJoinedId]      = useState<string | null>(null); // flash après participation
 
-  const isMounted       = useRef(true); // ✅ FIX: Déclaration du ref manquant
-  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastRunId       = useRef<string | null>(null);
-  const questionFetched = useRef<string | null>(null);
-  const seenRunIds      = useRef<Set<string>>(new Set());
-  const resultTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const userIdRef       = useRef<string>(userId);
-  const selPartyRef     = useRef<PartyItem | null>(null);
-  const resultScheduled = useRef(false); // ✅ Aussi ajouter ce ref s'il manquait
+  // Refs
+  const isMounted   = useRef(true);
+  const userIdRef   = useRef<string>(userIdProp || '');
+  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const pulseAnim    = useRef(new Animated.Value(1)).current;
-  const fadeAnim     = useRef(new Animated.Value(0)).current;
-  const flashAnim    = useRef(new Animated.Value(0)).current;
-  const questionAnim = useRef(new Animated.Value(0)).current;
+  // Animations
+  const fadeAnim    = useRef(new Animated.Value(0)).current;
+  const slideAnim   = useRef(new Animated.Value(30)).current;
+  const questionFadeAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => { userIdRef.current = userId; }, [userId]);
-  useEffect(() => { selPartyRef.current = selParty; }, [selParty]);
 
-  // ─── Init ─────────────────────────────────────────────────────────────────
+  // ─── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+    isMounted.current = true;
+    Animated.parallel([
+      Animated.timing(fadeAnim,  { toValue: 1, duration: 400, useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: false }),
+    ]).start();
+
     const init = async () => {
-      // 1. Charger userId
       let uid = userIdProp || '';
       if (!uid) {
         try {
@@ -112,61 +107,18 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
         } catch {}
       }
       if (uid) { setUserId(uid); userIdRef.current = uid; }
-
-      // 2. Restaurer l'état lobby si on était en jeu (évite la disparition sur remontage)
-      try {
-        const savedLobby = await AsyncStorage.getItem('vf_lobby_state');
-        if (savedLobby) {
-          const lb = JSON.parse(savedLobby);
-          if (lb.sessionId && lb.partyId && lb.sessionTitle && lb.partyTitle) {
-            const sess: SessionItem = { id: lb.sessionId, title: lb.sessionTitle, description: lb.sessionDesc, is_paid: false, price_cfa: 0 };
-            const party: PartyItem  = { id: lb.partyId, title: lb.partyTitle, is_initial: lb.partyInitial ?? true, min_score: 0, min_rank: null };
-            setSelSession(sess);
-            setSelParty(party); selPartyRef.current = party;
-            setScreen('lobby');
-            setGameState('waiting');
-            // Recharger l'historique silencieusement
-            if (uid) {
-              const histRes = await fetch(`${BACKEND_URL}/game`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: uid, function: 'getPartyHistory', party_id: lb.partyId }),
-              });
-              const histData = await histRes.json();
-              if (histData.success) { setHistory(histData.history || []); setTotalScore(histData.total_score); setIsMember(histData.is_member); }
-            }
-            startPolling(lb.sessionId);
-            setInitLoading(false);
-            return; // pas besoin de charger les sessions
-          }
-        }
-      } catch {}
-
-      // 3. Sinon charger les sessions normalement
-      await loadSessionsInternal(uid);
+      await loadHome(uid);
       setInitLoading(false);
     };
     init();
-    isMounted.current = true; // (re)montage
+
     return () => {
-      isMounted.current = false; // démontage → stopper tout
-      if (pollRef.current)    clearInterval(pollRef.current);
-      if (resultTimer.current) clearTimeout(resultTimer.current);
-      if (flashTimer.current)  clearTimeout(flashTimer.current);
+      isMounted.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
 
-  useEffect(() => {
-    if (gameState === 'waiting') {
-      const loop = Animated.loop(Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: false }),
-      ]));
-      loop.start();
-      return () => loop.stop();
-    }
-  }, [gameState]);
-
-  // ─── API ──────────────────────────────────────────────────────────────────
+  // ─── API ───────────────────────────────────────────────────────────────────
   const getUid = async (): Promise<string> => {
     let uid = userIdRef.current;
     if (!uid) {
@@ -175,11 +127,11 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
         if (raw) { const p = JSON.parse(raw); uid = p?.user?.id || ''; if (uid) { setUserId(uid); userIdRef.current = uid; } }
       } catch {}
     }
-    if (!uid) throw new Error('non connecté');
+    if (!uid) throw new Error('Non connecté');
     return uid;
   };
 
-  const gamePost = async (body: Record<string, any>) => {
+  const api = async (body: Record<string, any>) => {
     const uid = await getUid();
     const res = await fetch(`${BACKEND_URL}/game`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -188,265 +140,162 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     return res.json();
   };
 
-  const animateIn = () => {
-    questionAnim.setValue(0);
-    Animated.timing(questionAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
-  };
-
-  const triggerFlash = () => {
-    setNewDataFlash(true);
-    flashAnim.setValue(1);
-    Animated.timing(flashAnim, { toValue: 0, duration: 2000, useNativeDriver: false }).start();
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setNewDataFlash(false), 2200);
-  };
-
-  // ─── Sessions ─────────────────────────────────────────────────────────────
-  const loadSessionsInternal = async (uid?: string) => {
+  // ─── Chargement home (mes sessions + explorer) ─────────────────────────────
+  const loadHome = async (uid?: string) => {
     try {
       const u = uid || userIdRef.current;
       if (!u) return;
-      const res = await fetch(`${BACKEND_URL}/game`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: u, function: 'listSessions', game_key: GAME_KEY }),
-      });
-      const data = await res.json();
-      if (data.success) setSessions(data.sessions || []);
-      else setError(data.error || 'Impossible de charger les sessions');
-    } catch { setError('Erreur réseau — vérifiez votre connexion'); }
+      const [myData, exploreData] = await Promise.all([
+        fetch(`${BACKEND_URL}/game`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u, function: 'listMySessions', game_key: GAME_KEY }) }).then(r => r.json()),
+        fetch(`${BACKEND_URL}/game`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u, function: 'listAvailableSessions', game_key: GAME_KEY }) }).then(r => r.json()),
+      ]);
+      if (!isMounted.current) return;
+      if (myData.success) setMySessions(myData.sessions || []);
+      if (exploreData.success) setExploreSess(exploreData.sessions || []);
+    } catch { if (isMounted.current) setError('Erreur réseau'); }
   };
 
-  const syncSessions = async () => {
+  const syncHome = async () => {
     setSyncing(true); setError('');
-    await loadSessionsInternal();
-    setSyncing(false);
+    await loadHome();
+    if (isMounted.current) setSyncing(false);
   };
 
-  const selectSession = async (session: SessionItem) => {
-    setSelSession(session); setError('');
-    try {
-      const data = await gamePost({ function: 'listPartiesForSession', session_id: session.id });
-      if (data.success) { setParties(data.parties || []); setScreen('parties'); }
-      else setError(data.error || 'Impossible de charger les groupes');
-    } catch { setError('Erreur réseau'); }
-  };
-
-  // ─── Parties : rejoindre + charger historique ──────────────────────────────
-  const openParty = async (party: PartyItem) => {
-    if (!selSession) return;
-    setSelParty(party); selPartyRef.current = party;
-    setJoiningParty(true); setError('');
+  // ─── Explorer : rejoindre une session ──────────────────────────────────────
+  const joinSession = async (session: SessionItem) => {
+    setLoadingAction(true); setError('');
     haptic.medium();
     try {
-      const joinData = await gamePost({ function: 'joinSession', session_id: selSession.id, party_id: party.id });
-      if (!joinData.success) { setError(joinData.error || 'Impossible de rejoindre'); setSelParty(null); return; }
-      haptic.success();
+      // Trouver la party initiale et rejoindre
+      const partiesData = await api({ function: 'listPartiesForSession', session_id: session.id });
+      if (!partiesData.success) { setError(partiesData.error || 'Impossible de charger les groupes'); return; }
 
-      // Charger historique
-      const histData = await gamePost({ function: 'getPartyHistory', party_id: party.id });
+      const initialParty = (partiesData.parties as PartyItem[]).find(p => p.is_initial);
+      if (!initialParty) { setError('Aucun groupe d\'entrée disponible'); return; }
+
+      const joinData = await api({ function: 'joinSession', session_id: session.id, party_id: initialParty.id });
+      if (!joinData.success) { setError(joinData.error || 'Impossible de rejoindre'); return; }
+
+      haptic.success();
+      setJoinedId(session.id);
+      setTimeout(() => { if (isMounted.current) setJoinedId(null); }, 3000);
+
+      // Mettre à jour les listes
+      setExploreSess(prev => prev.filter(s => s.id !== session.id));
+      setMySessions(prev => [...prev, { ...session, my_score: 0 }]);
+      setTab('mine');
+    } catch { setError('Erreur réseau'); haptic.error(); }
+    finally  { if (isMounted.current) setLoadingAction(false); }
+  };
+
+  // ─── Ouvrir les parties d'une session ──────────────────────────────────────
+  const openSession = async (session: SessionItem) => {
+    setSelSession(session); setLoadingAction(true); setError('');
+    try {
+      const data = await api({ function: 'listPartiesForSession', session_id: session.id });
+      if (!data.success) { setError(data.error || 'Impossible de charger'); return; }
+      setParties(data.parties || []);
+      setScreen('parties');
+    } catch { setError('Erreur réseau'); }
+    finally  { if (isMounted.current) setLoadingAction(false); }
+  };
+
+  // ─── Entrer dans une party : vérif rang/score + charger questions ───────────
+  const enterParty = async (party: PartyItem) => {
+    if (!selSession) return;
+
+    // Vérification rang/score (côté client, le serveur re-vérifie aussi)
+    const mySessionScore = mySessions.find(s => s.id === selSession.id)?.my_score ?? 0;
+    if (!party.is_initial) {
+      if (party.min_score > 0 && mySessionScore < party.min_score) {
+        setError(`Score insuffisant — vous avez ${mySessionScore} pts, il en faut ${party.min_score}`);
+        return;
+      }
+    }
+
+    setSelParty(party); setLoadingAction(true); setError('');
+    haptic.medium();
+    try {
+      // Rejoindre si pas déjà inscrit (idempotent)
+      await api({ function: 'joinSession', session_id: selSession.id, party_id: party.id });
+
+      // Charger toutes les questions non-répondues
+      const [unansweredData, histData] = await Promise.all([
+        api({ function: 'getUnansweredQuestions', party_id: party.id }),
+        api({ function: 'getPartyHistory', party_id: party.id }),
+      ]);
+
+      if (!isMounted.current) return;
+
+      if (unansweredData.success) {
+        setQuestions(unansweredData.questions || []);
+        setCurrentQIdx(0);
+      }
       if (histData.success) {
         setHistory(histData.history || []);
         setTotalScore(histData.total_score);
-        setIsMember(histData.is_member);
       }
 
-      setScreen('lobby'); setGameState('waiting');
-      // Persister l'état lobby pour restauration si le composant est remonté
-      try {
-        await AsyncStorage.setItem('vf_lobby_state', JSON.stringify({
-          sessionId:    selSession.id,
-          sessionTitle: selSession.title,
-          sessionDesc:  selSession.description || '',
-          partyId:      party.id,
-          partyTitle:   party.title,
-          partyInitial: party.is_initial,
-        }));
-      } catch {}
-      startPolling(selSession.id);
-    } catch { setError('Erreur réseau'); setSelParty(null); }
-    finally  { setJoiningParty(false); }
-  };
-
-  // ─── Polling silencieux ────────────────────────────────────────────────────
-  const startPolling = (sessionId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => pollSilent(sessionId), POLL_MS);
-    pollSilent(sessionId);
-  };
-
-  const stopPolling = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
-
-  const syncHistorySilent = async (partyId: string) => {
-    try {
-      const data = await gamePost({ function: 'getPartyHistory', party_id: partyId });
-      if (data.success) {
-        const changed = data.total_score !== totalScore || (data.history || []).length !== history.length;
-        setHistory(data.history || []);
-        setTotalScore(data.total_score);
-        setIsMember(data.is_member);
-        if (changed) triggerFlash();
-      }
-    } catch {}
-  };
-
-  const pollSilent = async (sessionId: string) => {
-    if (!isMounted.current) return; // composant démonté → ignorer
-    try {
-      const data = await gamePost({ function: 'listVisibleRuns', session_id: sessionId });
-      if (!data.success || !isMounted.current) return;
-      const runs: RunItem[] = data.runs || [];
-
-      if (runs.length === 0) {
-        setGameState(prev => (prev === 'answered' || prev === 'result') ? prev : 'waiting');
-        return;
-      }
-
-      const latest = runs[runs.length - 1];
-
-      if (lastRunId.current && latest.id !== lastRunId.current) {
-        lastRunId.current = latest.id;
-        questionFetched.current = null; // reset pour charger la nouvelle question
-        seenRunIds.current.add(latest.id); // marquer comme vu en direct
-        setActiveRun(latest); setMyAnswer(null); setQuestion(null); setLeaderboard([]);
-        setGameState('question'); fetchQuestionSilent(latest.id); return;
-      }
-      if (!lastRunId.current) lastRunId.current = latest.id;
-      // Marquer ce run comme "vu en direct" si pas encore fermé
-      if (!latest.is_closed) seenRunIds.current.add(latest.id);
-      // Mettre à jour activeRun seulement si l'état a changé (évite re-render inutile)
-      setActiveRun(prev => {
-        if (!prev || prev.is_closed !== latest.is_closed || prev.is_visible !== latest.is_visible) {
-          return latest;
-        }
-        return prev;
-      });
-
-      if (latest.is_closed) {
-        // N'afficher les résultats que si l'utilisateur a VU ce run en direct
-        if (!seenRunIds.current.has(latest.id)) {
-          // Run fermé non vu → ignorer, rester en waiting
-          lastRunId.current = null;
-          return;
-        }
-        // Appels async HORS du setter React (interdit dedans)
-        if (!resultScheduled.current) {
-          resultScheduled.current = true;
-          setGameState('result');
-          fetchResultsSilent(latest.id);
-          scheduleReturnToWaiting();
-        }
-      } else {
-        // Run ouvert : afficher la question si pas encore fait
-        setGameState(prev => {
-          if (prev === 'answered' || prev === 'result') return prev;
-          if (prev !== 'question') {
-            fetchQuestionSilent(latest.id);
-            return 'question';
-          }
-          return prev;
-        });
-      }
-    } catch {}
-  };
-
-  const scheduleReturnToWaiting = () => {
-    if (resultTimer.current) clearTimeout(resultTimer.current);
-    resultTimer.current = setTimeout(async () => {
-      if (!isMounted.current) return;
-      if (selPartyRef.current) await syncHistorySilent(selPartyRef.current.id);
-      if (!isMounted.current) return;
-      lastRunId.current = null;
-      questionFetched.current = null;
-      resultScheduled.current = false; // reset pour le prochain run
-      setActiveRun(null); setQuestion(null); setMyAnswer(null); setLeaderboard([]);
-      setGameState('waiting');
-    }, RESULT_TTL_MS);
-  };
-
-  const fetchQuestionSilent = async (runId: string) => {
-    if (!isMounted.current) return;
-    // Éviter de re-charger si on a déjà la question de ce run
-    if (questionFetched.current === runId) return;
-    questionFetched.current = runId;
-    try {
-      const data = await gamePost({ function: 'getQuestions', run_id: runId });
-      if (!isMounted.current) return;
-      if (data.success && data.questions?.length > 0) {
-        const unanswered = (data.questions as QuestionItem[]).filter(q => !q.answered);
-        if (unanswered.length > 0) { setQuestion(unanswered[0]); animateIn(); haptic.medium(); }
-        else { setGameState('answered'); }
-      }
-    } catch {
-      questionFetched.current = null; // reset pour permettre un retry
-    }
-  };
-
-  const fetchResultsSilent = async (runId: string) => {
-    if (!isMounted.current) return;
-    try {
-      const [lbData, qData] = await Promise.all([
-        gamePost({ function: 'getLeaderboard', run_id: runId }),
-        gamePost({ function: 'getQuestions',   run_id: runId }),
-      ]);
-      if (!isMounted.current) return;
-      if (lbData.success) {
-        const lb: LeaderEntry[] = lbData.leaderboard || [];
-        setLeaderboard(lb);
-        setMyRunScore(lb.find(e => e.is_current_user)?.run_score ?? 0);
-      }
-      if (qData.success && qData.questions?.length > 0) {
-        const q: QuestionItem = qData.questions[0];
-        setQuestion(q);
-        if (q.score_awarded !== null) setPointsWon(q.score_awarded);
-        else if (q.correct_answer !== null && myAnswer !== null) setPointsWon(myAnswer === q.correct_answer ? (q.score ?? 0) : 0);
-        animateIn();
-      }
+      setScreen('questions');
       haptic.success();
-    } catch {}
+    } catch { setError('Erreur réseau'); }
+    finally  { if (isMounted.current) setLoadingAction(false); }
   };
 
+  // ─── Répondre à une question ───────────────────────────────────────────────
   const submitAnswer = async (answer: boolean) => {
-    if (!question || !activeRun || answerLoading) return;
-    setMyAnswer(answer); setAnswerLoading(true); haptic.medium();
+    const question = questions[currentQIdx];
+    if (!question || answerLoading) return;
+    setAnswerLoading(true); haptic.medium();
     try {
-      const data = await gamePost({ function: 'submitAnswer', run_question_id: question.id, answer });
-      if (data.success) { setGameState('answered'); haptic.success(); }
-      else { setMyAnswer(null); setError(data.error || 'Erreur lors de l\'envoi'); }
-    } catch { setMyAnswer(null); setError('Erreur réseau'); }
-    finally  { setAnswerLoading(false); }
+      const data = await api({ function: 'submitAnswer', run_question_id: question.id, answer });
+      if (!isMounted.current) return;
+      if (data.success) {
+        haptic.success();
+        // Fade out la question actuelle
+        Animated.timing(questionFadeAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
+          if (!isMounted.current) return;
+          // Supprimer la question de la liste
+          setQuestions(prev => {
+            const next = prev.filter((_, i) => i !== currentQIdx);
+            // Si c'était la dernière → retour parties
+            if (next.length === 0) {
+              // Rafraîchir l'historique et retourner aux parties
+              api({ function: 'getPartyHistory', party_id: selParty!.id }).then(d => {
+                if (!isMounted.current) return;
+                if (d.success) { setHistory(d.history || []); setTotalScore(d.total_score); }
+              });
+              setScreen('parties');
+            }
+            return next;
+          });
+          questionFadeAnim.setValue(1);
+        });
+      } else {
+        setError(data.error || 'Erreur lors de l\'envoi');
+        haptic.error();
+      }
+    } catch { setError('Erreur réseau'); haptic.error(); }
+    finally  { if (isMounted.current) setAnswerLoading(false); }
   };
 
-  const manualSync = async () => {
-    if (!selParty || syncing) return;
-    setSyncing(true); await syncHistorySilent(selParty.id); setSyncing(false);
-  };
-
+  // ─── Navigation ────────────────────────────────────────────────────────────
   const goBack = () => {
-    if (screen === 'lobby') {
-      stopPolling(); if (resultTimer.current) clearTimeout(resultTimer.current);
-      lastRunId.current = null; selPartyRef.current = null;
-      resultScheduled.current = false; questionFetched.current = null;
-      seenRunIds.current.clear();
-      // Effacer l'état lobby persisté
-      try { AsyncStorage.removeItem('vf_lobby_state'); } catch {}
-      setScreen('parties'); setGameState('waiting');
-      setActiveRun(null); setQuestion(null); setMyAnswer(null);
-      setLeaderboard([]); setHistory([]); setTotalScore(null); setIsMember(false);
-    } else if (screen === 'parties') {
-      setScreen('sessions'); setSelSession(null); setParties([]);
-    } else { onBack?.(); }
+    setError('');
+    if (screen === 'questions') { setScreen('parties'); }
+    else if (screen === 'history') { setScreen('parties'); }
+    else if (screen === 'parties') { setScreen('home'); setSelSession(null); setParties([]); }
+    else { onBack?.(); }
   };
 
-  // ─── RENDER ───────────────────────────────────────────────────────────────
+  // ─── RENDER ────────────────────────────────────────────────────────────────
   if (initLoading) {
     return (
       <SafeAreaView style={s.root}>
         <View style={s.initLoader}>
-          <Ionicons name="game-controller-outline" size={42} color={C.gold} />
-          <Text style={s.initLoaderTxt}>Vrai ou Faux</Text>
-          <ActivityIndicator size="small" color={C.muted} style={{ marginTop: 20 }} />
+          <Ionicons name="game-controller-outline" size={44} color={C.gold} />
+          <Text style={s.initTitle}>Vrai ou Faux</Text>
+          <ActivityIndicator size="small" color={C.muted} style={{ marginTop: 22 }} />
         </View>
       </SafeAreaView>
     );
@@ -456,249 +305,289 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
     <SafeAreaView style={s.root}>
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
 
-        {/* HEADER */}
+        {/* ── HEADER ── */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
-          {(screen !== 'sessions' || onBack) && (
+          {(screen !== 'home' || onBack) && (
             <TouchableOpacity onPress={goBack} style={s.iconBtn}>
               <Ionicons name="arrow-back" size={19} color={C.gold} />
             </TouchableOpacity>
           )}
           <View style={s.headerCenter}>
             <Text style={s.headerSub}>
-              {screen === 'sessions' ? 'CHOISIR UNE SESSION'
-               : screen === 'parties' ? selSession?.title?.toUpperCase()
-               : selParty?.title?.toUpperCase()}
+              {screen === 'home'      ? (tab === 'mine' ? 'MES SESSIONS' : 'EXPLORER')
+               : screen === 'parties'  ? selSession?.title?.toUpperCase()
+               : screen === 'questions'? selParty?.title?.toUpperCase()
+               : 'HISTORIQUE'}
             </Text>
             <Text style={s.headerTitle}>Vrai ou Faux</Text>
           </View>
-          <TouchableOpacity
-            onPress={screen === 'lobby' ? manualSync : syncSessions}
-            style={s.iconBtn} disabled={syncing}
-          >
+          <TouchableOpacity onPress={syncHome} style={s.iconBtn} disabled={syncing}>
             {syncing
               ? <ActivityIndicator size="small" color={C.gold} />
-              : <Ionicons name={screen === 'lobby' ? 'sync-outline' : 'refresh-outline'} size={17} color={C.muted} />}
+              : <Ionicons name="refresh-outline" size={17} color={C.muted} />}
           </TouchableOpacity>
         </LinearGradient>
-
-        {/* Flash discret nouvelles données */}
-        {newDataFlash && (
-          <Animated.View style={[s.flashBanner, { opacity: flashAnim }]}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.success }} />
-            <Text style={s.flashTxt}>Mise à jour</Text>
-          </Animated.View>
-        )}
 
         {/* Erreur inline */}
         {error !== '' && (
           <View style={s.errorBar}>
             <Ionicons name="warning-outline" size={13} color={C.danger} />
-            <Text style={s.errorBarTxt} numberOfLines={1}>{error}</Text>
+            <Text style={s.errorBarTxt} numberOfLines={2}>{error}</Text>
             <TouchableOpacity onPress={() => setError('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close" size={15} color={C.danger} />
             </TouchableOpacity>
           </View>
         )}
 
-        {/* ══ SESSIONS ══ */}
-        {screen === 'sessions' && (
-          <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-            <Text style={s.sLabel}>SESSIONS DISPONIBLES</Text>
-            {sessions.length === 0
-              ? <EmptyCard label="Aucune session" sub="Actualisez ou revenez plus tard" onRefresh={syncSessions} />
-              : sessions.map(sess => (
-                  <TouchableOpacity key={sess.id} style={s.card} onPress={() => selectSession(sess)} activeOpacity={0.8}>
-                    <View style={s.cardIcon}>
-                      <Ionicons name="albums-outline" size={17} color={C.gold} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.cardTitle}>{sess.title}</Text>
-                      {sess.description && <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text>}
-                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 5 }}>
-                        <Pill label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'} color={sess.is_paid ? C.gold : C.success} />
-                      </View>
-                    </View>
-                    <Ionicons name="chevron-forward" size={15} color={C.muted} />
-                  </TouchableOpacity>
-                ))
-            }
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        )}
-
-        {/* ══ PARTIES ══ */}
-        {screen === 'parties' && (
-          <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-            <Text style={s.sLabel}>CHOISIR UN GROUPE</Text>
-            {parties.length === 0
-              ? <EmptyCard label="Aucun groupe" sub="Cette session n'a pas encore de groupes" />
-              : parties.map(party => (
-                  <TouchableOpacity key={party.id} style={s.card} onPress={() => openParty(party)} disabled={joiningParty} activeOpacity={0.8}>
-                    <View style={[s.cardIcon, { borderColor: C.info + '44' }]}>
-                      <Ionicons name="people-outline" size={17} color={C.info} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.cardTitle}>{party.title}{party.is_initial ? ' ⭐' : ''}</Text>
-                      <Text style={s.cardSub}>
-                        {party.is_initial ? 'Groupe ouvert à tous'
-                          : [party.min_score > 0 ? `Score min : ${party.min_score}` : '', party.min_rank ? `Top ${party.min_rank}` : ''].filter(Boolean).join(' · ') || 'Groupe spécial'}
-                      </Text>
-                    </View>
-                    {joiningParty && selParty?.id === party.id
-                      ? <ActivityIndicator size="small" color={C.gold} />
-                      : <Ionicons name="chevron-forward" size={15} color={C.muted} />}
-                  </TouchableOpacity>
-                ))
-            }
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        )}
-
-        {/* ══ LOBBY ══ */}
-        {screen === 'lobby' && (
+        {/* ══════════════════ ÉCRAN HOME ══════════════════ */}
+        {screen === 'home' && (
           <View style={{ flex: 1 }}>
+            {/* Tabs */}
+            <View style={s.tabBar}>
+              <TouchableOpacity style={[s.tab, tab === 'mine' && s.tabActive]} onPress={() => setTab('mine')}>
+                <Ionicons name="bookmark-outline" size={15} color={tab === 'mine' ? C.gold : C.muted} />
+                <Text style={[s.tabTxt, tab === 'mine' && s.tabTxtActive]}>Mes Sessions</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.tab, tab === 'explore' && s.tabActive]} onPress={() => setTab('explore')}>
+                <Ionicons name="compass-outline" size={15} color={tab === 'explore' ? C.gold : C.muted} />
+                <Text style={[s.tabTxt, tab === 'explore' && s.tabTxtActive]}>Explorer</Text>
+                {exploreSess.length > 0 && <View style={s.tabBadge}><Text style={s.tabBadgeTxt}>{exploreSess.length}</Text></View>}
+              </TouchableOpacity>
+            </View>
 
-            {/* Bandeau score total */}
-            {isMember && totalScore !== null && (
-              <View style={s.scoreBand}>
-                <Ionicons name="trophy-outline" size={13} color={C.gold} />
-                <Text style={s.scoreBandTxt}>Score total : <Text style={s.scoreBandVal}>{totalScore} pts</Text></Text>
-              </View>
-            )}
-
-            {/* WAITING */}
-            {gameState === 'waiting' && (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
-                <View style={s.waitSection}>
-                  <Animated.View style={[s.orb, { transform: [{ scale: pulseAnim }] }]}>
-                    <Ionicons name="hourglass-outline" size={36} color={C.gold} />
-                  </Animated.View>
-                  <Text style={s.waitTitle}>En attente…</Text>
-                  <Text style={s.waitSub}>L'administrateur va lancer la prochaine question</Text>
-                  <View style={s.pollRow}>
-                    <View style={s.pollDot} />
-                    <Text style={s.pollTxt}>Surveillance active</Text>
-                  </View>
-                </View>
-
-                {/* Historique */}
-                {history.length > 0 && (
-                  <View style={{ paddingHorizontal: 16, paddingBottom: 30 }}>
-                    <Text style={s.sLabel}>QUESTIONS PRÉCÉDENTES</Text>
-                    {history.map(run => (
-                      <View key={run.run_id} style={s.histRunCard}>
-                        <Text style={s.histRunTitle}>{run.run_title}</Text>
-                        {run.questions.map(q => <HistoryQRow key={q.id} q={q} />)}
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </ScrollView>
-            )}
-
-            {/* QUESTION */}
-            {gameState === 'question' && question && (
-              <ScrollView
-                contentContainerStyle={[s.scroll, { alignItems: 'stretch' }]}
-                showsVerticalScrollIndicator={false}
-              >
-                <View style={s.liveBadge}>
-                  <View style={s.liveDot} />
-                  <Text style={s.liveTxt}>EN DIRECT</Text>
-                  <Text style={{ color: C.gold, fontSize: 11, fontWeight: '700' }}>{question.score} pts</Text>
-                </View>
-
-                <View style={s.questionCard}>
-                  <Text style={s.questionTxt}>{question.question_text}</Text>
-                </View>
-
-                <View style={s.answerRow}>
-                  <AnsBtn label="VRAI" icon="checkmark-circle-outline" color={C.vrai}
-                    selected={myAnswer === true} disabled={answerLoading || myAnswer !== null}
-                    loading={answerLoading && myAnswer === true} onPress={() => submitAnswer(true)} />
-                  <AnsBtn label="FAUX" icon="close-circle-outline" color={C.faux}
-                    selected={myAnswer === false} disabled={answerLoading || myAnswer !== null}
-                    loading={answerLoading && myAnswer === false} onPress={() => submitAnswer(false)} />
-                </View>
-              </ScrollView>
-            )}
-
-            {/* ANSWERED */}
-            {gameState === 'answered' && (
-              <View style={s.centerState}>
-                <View style={[s.answerGiven, {
-                  backgroundColor: (myAnswer ? C.vrai : C.faux) + '22',
-                  borderColor:     (myAnswer ? C.vrai : C.faux) + '55',
-                }]}>
-                  <Ionicons name={myAnswer ? 'checkmark-circle' : 'close-circle'} size={38} color={myAnswer ? C.vrai : C.faux} />
-                  <Text style={[s.answerGivenTxt, { color: myAnswer ? C.vrai : C.faux }]}>{myAnswer ? 'VRAI' : 'FAUX'}</Text>
-                </View>
-                <Text style={s.waitTitle}>Réponse enregistrée !</Text>
-                <Text style={s.waitSub}>En attente que l'administrateur clôture</Text>
-                <View style={s.pollRow}><View style={s.pollDot} /><Text style={s.pollTxt}>Surveillance active</Text></View>
-              </View>
-            )}
-
-            {/* RÉSULTATS */}
-            {gameState === 'result' && question && (
+            {/* Tab Mes Sessions */}
+            {tab === 'mine' && (
               <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-                {/* Bonne réponse */}
-                <View style={s.revealCard}>
-                  <Text style={s.revealLabel}>BONNE RÉPONSE</Text>
-                  <View style={[s.revealBadge, {
-                    backgroundColor: (question.correct_answer ? C.vrai : C.faux) + '22',
-                    borderColor:     (question.correct_answer ? C.vrai : C.faux) + '55',
-                  }]}>
-                    <Ionicons name={question.correct_answer ? 'checkmark-circle' : 'close-circle'} size={24} color={question.correct_answer ? C.vrai : C.faux} />
-                    <Text style={[s.revealBadgeTxt, { color: question.correct_answer ? C.vrai : C.faux }]}>
-                      {question.correct_answer ? 'VRAI' : 'FAUX'}
-                    </Text>
+                {mySessions.length === 0 ? (
+                  <View style={s.emptyState}>
+                    <Ionicons name="albums-outline" size={48} color={C.muted} />
+                    <Text style={s.emptyTitle}>Aucune session rejointe</Text>
+                    <Text style={s.emptySub}>Explorez les sessions disponibles et participez !</Text>
+                    <TouchableOpacity style={s.exploreBtn} onPress={() => setTab('explore')}>
+                      <Ionicons name="compass-outline" size={16} color={C.gold} />
+                      <Text style={s.exploreBtnTxt}>Explorer les Sessions</Text>
+                    </TouchableOpacity>
                   </View>
-                </View>
-
-                {/* Performance */}
-                <View style={s.perfCard}>
-                  {myAnswer !== null && question.correct_answer !== null ? (
-                    myAnswer === question.correct_answer ? (
-                      <><Ionicons name="trophy-outline" size={26} color={C.gold} />
-                        <Text style={s.perfGood}>Bonne réponse !</Text>
-                        <Text style={s.perfPts}>+{pointsWon || question.score} pts</Text></>
-                    ) : (
-                      <><Ionicons name="sad-outline" size={26} color={C.muted} />
-                        <Text style={s.perfBad}>Mauvaise réponse</Text>
-                        <Text style={[s.perfPts, { color: C.muted, fontSize: 18 }]}>+0 pt</Text></>
-                    )
-                  ) : (
-                    <><Iconicons name="time-outline" size={26} color={C.muted} />
-                      <Text style={s.perfBad}>Pas de réponse</Text></>
-                  )}
-                  <Text style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Score ce run : {myRunScore} pts</Text>
-                </View>
-
-                {/* Classement */}
-                {leaderboard.length > 0 && (
-                  <View style={s.lbCard}>
-                    <Text style={s.sLabel}>CLASSEMENT</Text>
-                    {leaderboard.map(e => (
-                      <View key={e.user_id} style={[s.lbRow, e.is_current_user && s.lbRowMe]}>
-                        <Text style={[s.lbRank, { color: e.rank === 1 ? C.gold : e.rank === 2 ? '#C0C0C0' : e.rank === 3 ? '#CD7F32' : C.muted }]}>
-                          {e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : `#${e.rank}`}
-                        </Text>
-                        <Text style={[s.lbName, e.is_current_user && { color: C.gold }]} numberOfLines={1}>{e.nom} {e.prenom}</Text>
-                        <Text style={[s.lbScore, e.is_current_user && { color: C.gold }]}>{e.run_score} pts</Text>
-                      </View>
+                ) : (
+                  <>
+                    {mySessions.map(sess => (
+                      <TouchableOpacity key={sess.id} style={s.card} onPress={() => openSession(sess)} activeOpacity={0.8}>
+                        <View style={s.cardIcon}>
+                          <Ionicons name="albums-outline" size={17} color={C.gold} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.cardTitle}>{sess.title}</Text>
+                          {sess.description && <Text style={s.cardSub} numberOfLines={1}>{sess.description}</Text>}
+                          <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                            <View style={s.scorePill}>
+                              <Ionicons name="trophy-outline" size={11} color={C.gold} />
+                              <Text style={s.scorePillTxt}>{sess.my_score ?? 0} pts</Text>
+                            </View>
+                          </View>
+                        </View>
+                        {loadingAction ? <ActivityIndicator size="small" color={C.gold} /> : <Ionicons name="chevron-forward" size={15} color={C.muted} />}
+                      </TouchableOpacity>
                     ))}
-                  </View>
+                    <TouchableOpacity style={s.exploreLink} onPress={() => setTab('explore')}>
+                      <Ionicons name="compass-outline" size={14} color={C.muted} />
+                      <Text style={s.exploreLinkTxt}>Rejoindre d'autres sessions</Text>
+                    </TouchableOpacity>
+                  </>
                 )}
+                <View style={{ height: 40 }} />
+              </ScrollView>
+            )}
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16 }}>
-                  <View style={s.pollDot} />
-                  <Text style={s.pollTxt}>En attente de la prochaine question…</Text>
-                </View>
+            {/* Tab Explorer */}
+            {tab === 'explore' && (
+              <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+                {exploreSess.length === 0 ? (
+                  <View style={s.emptyState}>
+                    <Ionicons name="checkmark-circle-outline" size={48} color={C.success} />
+                    <Text style={s.emptyTitle}>Tout rejoint !</Text>
+                    <Text style={s.emptySub}>Vous participez à toutes les sessions disponibles.</Text>
+                  </View>
+                ) : (
+                  exploreSess.map(sess => (
+                    <View key={sess.id} style={[s.card, joinedId === sess.id && s.cardJoined]}>
+                      <View style={s.cardIcon}>
+                        <Ionicons name="albums-outline" size={17} color={C.gold} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.cardTitle}>{sess.title}</Text>
+                        {sess.description && <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text>}
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 5 }}>
+                          <Pill label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'} color={sess.is_paid ? C.gold : C.success} />
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        style={s.joinBtn}
+                        onPress={() => joinSession(sess)}
+                        disabled={loadingAction}
+                      >
+                        {loadingAction
+                          ? <ActivityIndicator size="small" color={C.white} />
+                          : <Text style={s.joinBtnTxt}>Participer</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+                <View style={{ height: 40 }} />
               </ScrollView>
             )}
           </View>
         )}
+
+        {/* ══════════════════ ÉCRAN PARTIES ══════════════════ */}
+        {screen === 'parties' && (
+          <View style={{ flex: 1 }}>
+            <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+              <Text style={s.sLabel}>GROUPES</Text>
+              {parties.map(party => {
+                const myScore = mySessions.find(s => s.id === selSession?.id)?.my_score ?? 0;
+                const locked  = !party.is_initial && party.min_score > 0 && myScore < party.min_score;
+                return (
+                  <View key={party.id} style={[s.card, locked && s.cardLocked]}>
+                    <View style={[s.cardIcon, { borderColor: locked ? C.muted + '44' : C.info + '44' }]}>
+                      <Ionicons name={locked ? 'lock-closed-outline' : 'people-outline'} size={17} color={locked ? C.muted : C.info} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.cardTitle, locked && { color: C.muted }]}>{party.title}{party.is_initial ? ' ⭐' : ''}</Text>
+                      <Text style={s.cardSub}>
+                        {party.is_initial ? 'Groupe ouvert à tous'
+                          : locked
+                            ? `🔒 Score requis : ${party.min_score} pts (vous : ${myScore})`
+                            : [party.min_score > 0 ? `Score min : ${party.min_score}` : '', party.min_rank ? `Top ${party.min_rank}` : ''].filter(Boolean).join(' · ') || 'Groupe spécial'}
+                      </Text>
+                    </View>
+                    {!locked && (
+                      <TouchableOpacity
+                        style={s.repondreBtn}
+                        onPress={() => enterParty(party)}
+                        disabled={loadingAction}
+                      >
+                        {loadingAction && selParty?.id === party.id
+                          ? <ActivityIndicator size="small" color={C.white} />
+                          : <Text style={s.reponderBtnTxt}>Répondre</Text>}
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
+
+              {/* Bouton Historique */}
+              {history.length > 0 && (
+                <TouchableOpacity style={s.histBtn} onPress={() => setScreen('history')}>
+                  <Ionicons name="time-outline" size={15} color={C.gold} />
+                  <Text style={s.histBtnTxt}>Voir l'historique de mes réponses</Text>
+                  <Ionicons name="chevron-forward" size={13} color={C.muted} />
+                </TouchableOpacity>
+              )}
+
+              {totalScore !== null && (
+                <View style={s.scoreBand}>
+                  <Ionicons name="trophy-outline" size={13} color={C.gold} />
+                  <Text style={s.scoreBandTxt}>Score total : <Text style={s.scoreBandVal}>{totalScore} pts</Text></Text>
+                </View>
+              )}
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+        )}
+
+        {/* ══════════════════ ÉCRAN QUESTIONS ══════════════════ */}
+        {screen === 'questions' && (
+          <View style={{ flex: 1 }}>
+            {questions.length === 0 ? (
+              // Toutes répondues
+              <View style={s.initLoader}>
+                <Ionicons name="checkmark-circle-outline" size={56} color={C.success} />
+                <Text style={[s.initTitle, { color: C.success, fontSize: 18 }]}>Toutes les questions répondues !</Text>
+                <TouchableOpacity style={s.exploreBtn} onPress={() => setScreen('parties')}>
+                  <Text style={s.exploreBtnTxt}>Retour aux groupes</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <Animated.View style={{ flex: 1, opacity: questionFadeAnim }}>
+                {/* Compteur */}
+                <View style={s.qCounter}>
+                  <Text style={s.qCounterTxt}>Question {currentQIdx + 1} / {questions.length}</Text>
+                  <View style={s.qProgressBar}>
+                    <View style={[s.qProgressFill, { width: `${((currentQIdx) / questions.length) * 100}%` as any }]} />
+                  </View>
+                </View>
+
+                <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'stretch', paddingTop: 8 }]} showsVerticalScrollIndicator={false}>
+                  <View style={s.questionCard}>
+                    <View style={s.questionScoreBadge}>
+                      <Text style={s.questionScoreTxt}>{questions[currentQIdx]?.score} pts</Text>
+                    </View>
+                    <Text style={s.questionTxt}>{questions[currentQIdx]?.question_text}</Text>
+                  </View>
+
+                  <View style={s.answerRow}>
+                    <AnsBtn label="VRAI" icon="checkmark-circle-outline" color={C.vrai}
+                      loading={answerLoading} disabled={answerLoading} onPress={() => submitAnswer(true)} />
+                    <AnsBtn label="FAUX" icon="close-circle-outline" color={C.faux}
+                      loading={answerLoading} disabled={answerLoading} onPress={() => submitAnswer(false)} />
+                  </View>
+
+                  {/* Navigation entre questions */}
+                  {questions.length > 1 && (
+                    <View style={s.qNav}>
+                      <TouchableOpacity
+                        style={[s.qNavBtn, currentQIdx === 0 && s.qNavBtnDisabled]}
+                        onPress={() => setCurrentQIdx(p => Math.max(0, p - 1))}
+                        disabled={currentQIdx === 0}
+                      >
+                        <Ionicons name="chevron-back" size={16} color={currentQIdx === 0 ? C.muted : C.cream} />
+                        <Text style={[s.qNavTxt, currentQIdx === 0 && { color: C.muted }]}>Précédente</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.qNavBtn, currentQIdx === questions.length - 1 && s.qNavBtnDisabled]}
+                        onPress={() => setCurrentQIdx(p => Math.min(questions.length - 1, p + 1))}
+                        disabled={currentQIdx === questions.length - 1}
+                      >
+                        <Text style={[s.qNavTxt, currentQIdx === questions.length - 1 && { color: C.muted }]}>Suivante</Text>
+                        <Ionicons name="chevron-forward" size={16} color={currentQIdx === questions.length - 1 ? C.muted : C.cream} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </ScrollView>
+              </Animated.View>
+            )}
+          </View>
+        )}
+
+        {/* ══════════════════ ÉCRAN HISTORIQUE ══════════════════ */}
+        {screen === 'history' && (
+          <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+            {totalScore !== null && (
+              <View style={[s.scoreBand, { marginBottom: 16, borderRadius: 12, borderWidth: 1, borderColor: C.gold + '33' }]}>
+                <Ionicons name="trophy-outline" size={16} color={C.gold} />
+                <Text style={s.scoreBandTxt}>Score total dans cette party : <Text style={s.scoreBandVal}>{totalScore} pts</Text></Text>
+              </View>
+            )}
+
+            {history.length === 0 ? (
+              <View style={s.emptyState}>
+                <Ionicons name="time-outline" size={40} color={C.muted} />
+                <Text style={s.emptyTitle}>Aucune réponse pour l'instant</Text>
+                <Text style={s.emptySub}>Répondez à des questions pour voir votre historique ici</Text>
+              </View>
+            ) : (
+              history.map(run => (
+                <View key={run.run_id} style={s.histRunCard}>
+                  <Text style={s.histRunTitle}>{run.run_title}</Text>
+                  {run.questions.map(q => <HistoryQRow key={q.id} q={q} />)}
+                </View>
+              ))
+            )}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        )}
+
       </Animated.View>
     </SafeAreaView>
   );
@@ -706,10 +595,10 @@ export default function VraiFaux({ userId: userIdProp, userNom, onBack }: VraiFa
 
 // ─── Sous-composants ──────────────────────────────────────────────────────────
 
-function AnsBtn({ label, icon, color, selected, disabled, loading, onPress }: any) {
+function AnsBtn({ label, icon, color, disabled, loading, onPress }: any) {
   return (
     <TouchableOpacity
-      style={[s.answerBtn, { backgroundColor: color + 'EE' }, selected && s.answerSelected, (disabled && !selected) && s.answerDisabled]}
+      style={[s.answerBtn, { backgroundColor: color + 'EE' }, disabled && s.answerDisabled]}
       onPress={onPress} disabled={disabled} activeOpacity={0.85}
     >
       {loading ? <ActivityIndicator color={C.white} size="large" /> : <Ionicons name={icon} size={32} color={C.white} />}
@@ -722,7 +611,7 @@ function HistoryQRow({ q }: { q: QuestionItem }) {
   const correct   = q.answered && q.my_answer === q.correct_answer;
   const incorrect = q.answered && q.my_answer !== q.correct_answer;
   const dotColor  = !q.answered ? C.muted : correct ? C.success : C.danger;
-  const dotIcon   = !q.answered ? 'remove-circle-outline' : correct ? 'checkmark-circle' : 'close-circle';
+  const dotIcon: any = !q.answered ? 'remove-circle-outline' : correct ? 'checkmark-circle' : 'close-circle';
 
   return (
     <View style={s.histQRow}>
@@ -732,21 +621,19 @@ function HistoryQRow({ q }: { q: QuestionItem }) {
       <View style={{ flex: 1 }}>
         <Text style={s.histQText} numberOfLines={3}>{q.question_text}</Text>
         <View style={{ flexDirection: 'row', gap: 7, marginTop: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Bonne réponse */}
-          <View style={[s.histQChip, { backgroundColor: (q.correct_answer ? C.vrai : C.faux) + '18', borderColor: (q.correct_answer ? C.vrai : C.faux) + '44' }]}>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: q.correct_answer ? C.vrai : C.faux }}>✓ {q.correct_answer ? 'VRAI' : 'FAUX'}</Text>
-          </View>
-          {/* Ma mauvaise réponse */}
+          {q.correct_answer !== null && (
+            <View style={[s.histQChip, { backgroundColor: (q.correct_answer ? C.vrai : C.faux) + '18', borderColor: (q.correct_answer ? C.vrai : C.faux) + '44' }]}>
+              <Text style={{ fontSize: 9, fontWeight: '800', color: q.correct_answer ? C.vrai : C.faux }}>✓ {q.correct_answer ? 'VRAI' : 'FAUX'}</Text>
+            </View>
+          )}
           {incorrect && (
             <View style={[s.histQChip, { backgroundColor: C.danger + '18', borderColor: C.danger + '44' }]}>
               <Text style={{ fontSize: 9, fontWeight: '800', color: C.danger }}>✗ {q.my_answer ? 'VRAI' : 'FAUX'}</Text>
             </View>
           )}
-          {/* Score */}
           {q.answered
             ? <Text style={{ fontSize: 10, fontWeight: '700', color: correct ? C.gold : C.muted }}>{correct ? `+${q.score_awarded ?? q.score}` : '+0'} pts</Text>
-            : <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>
-          }
+            : <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>}
         </View>
       </View>
     </View>
@@ -761,98 +648,87 @@ function Pill({ label, color }: { label: string; color: string }) {
   );
 }
 
-function EmptyCard({ label, sub, onRefresh }: { label: string; sub?: string; onRefresh?: () => void }) {
-  return (
-    <View style={{ backgroundColor: C.surface, borderRadius: 13, padding: 26, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
-      <Ionicons name="cube-outline" size={30} color={C.muted} />
-      <Text style={{ color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 9 }}>{label}</Text>
-      {sub && <Text style={{ color: C.muted, fontSize: 12, marginTop: 4, textAlign: 'center' }}>{sub}</Text>}
-      {onRefresh && (
-        <TouchableOpacity onPress={onRefresh} style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 9, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border }}>
-          <Ionicons name="refresh-outline" size={14} color={C.muted} />
-          <Text style={{ color: C.muted, fontSize: 12, fontWeight: '600' }}>Actualiser</Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
-  initLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10 },
-  initLoaderTxt: { fontSize: 22, fontWeight: '800', color: C.cream },
+  initLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, padding: 30 },
+  initTitle:  { fontSize: 22, fontWeight: '800', color: C.cream, textAlign: 'center' },
 
   header: { paddingTop: Platform.OS === 'android' ? 14 : 8, paddingBottom: 13, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.border },
   iconBtn: { width: 33, height: 33, borderRadius: 16, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerSub: { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
-  headerTitle: { fontSize: 19, fontWeight: '800', color: C.cream },
+  headerSub:    { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
+  headerTitle:  { fontSize: 19, fontWeight: '800', color: C.cream },
 
-  flashBanner: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.success + '18', paddingHorizontal: 14, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.success + '33' },
-  flashTxt: { color: C.success, fontSize: 11, fontWeight: '600' },
+  tabBar:        { flexDirection: 'row', backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  tab:           { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
+  tabActive:     { borderBottomWidth: 2, borderBottomColor: C.gold },
+  tabTxt:        { fontSize: 13, color: C.muted, fontWeight: '600' },
+  tabTxtActive:  { color: C.gold },
+  tabBadge:      { backgroundColor: C.gold, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 1 },
+  tabBadgeTxt:   { fontSize: 10, color: '#000', fontWeight: '800' },
 
-  errorBar: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.danger + '18', paddingHorizontal: 14, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: C.danger + '33' },
+  errorBar:    { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.danger + '18', paddingHorizontal: 14, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: C.danger + '33' },
   errorBarTxt: { flex: 1, color: C.danger, fontSize: 12 },
 
-  scroll: { padding: 16 },
-  sLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 2, marginBottom: 11 },
+  scroll:  { padding: 16 },
+  sLabel:  { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 2, marginBottom: 11 },
 
-  card: { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 8, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  cardIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44', flexShrink: 0 },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 2 },
-  cardSub: { fontSize: 12, color: C.muted },
+  card:       { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 8, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  cardJoined: { borderColor: C.success + '66', backgroundColor: C.success + '08' },
+  cardLocked: { opacity: 0.6 },
+  cardIcon:   { width: 34, height: 34, borderRadius: 17, backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.gold + '44', flexShrink: 0 },
+  cardTitle:  { fontSize: 14, fontWeight: '700', color: C.cream, marginBottom: 2 },
+  cardSub:    { fontSize: 12, color: C.muted },
 
-  scoreBand: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.gold + '18', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.gold + '33' },
-  scoreBandTxt: { color: C.muted, fontSize: 12 },
+  scorePill:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold + '22', borderWidth: 1, borderColor: C.gold + '44' },
+  scorePillTxt: { fontSize: 11, fontWeight: '700', color: C.gold },
+
+  joinBtn:    { backgroundColor: C.gold, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
+  joinBtnTxt: { color: '#000', fontWeight: '800', fontSize: 12 },
+
+  repondreBtn:    { backgroundColor: C.info, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, minWidth: 78, alignItems: 'center' },
+  reponderBtnTxt: { color: C.white, fontWeight: '800', fontSize: 12 },
+
+  emptyState: { alignItems: 'center', paddingVertical: 50, gap: 10 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: C.cream, textAlign: 'center' },
+  emptySub:   { fontSize: 13, color: C.muted, textAlign: 'center', lineHeight: 19, paddingHorizontal: 20 },
+  exploreBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.gold + '22', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 11, marginTop: 8, borderWidth: 1, borderColor: C.gold + '55' },
+  exploreBtnTxt: { color: C.gold, fontWeight: '700', fontSize: 13 },
+  exploreLink:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14 },
+  exploreLinkTxt: { color: C.muted, fontSize: 12, fontWeight: '600' },
+
+  scoreBand:    { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.gold + '18', paddingHorizontal: 14, paddingVertical: 10 },
+  scoreBandTxt: { color: C.muted, fontSize: 13 },
   scoreBandVal: { color: C.gold, fontWeight: '800' },
 
-  waitSection: { alignItems: 'center', paddingTop: 38, paddingBottom: 24, paddingHorizontal: 30 },
-  orb: { width: 106, height: 106, borderRadius: 53, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: C.gold + '44', marginBottom: 20 },
-  waitTitle: { fontSize: 21, fontWeight: '800', color: C.cream, textAlign: 'center', marginBottom: 8 },
-  waitSub:   { fontSize: 13, color: C.muted, textAlign: 'center', lineHeight: 20, marginBottom: 18 },
-  pollRow:   { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  pollDot:   { width: 7, height: 7, borderRadius: 4, backgroundColor: C.success },
-  pollTxt:   { color: C.muted, fontSize: 12 },
+  histBtn:    { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 13, marginTop: 4, marginBottom: 12, borderWidth: 1, borderColor: C.gold + '33' },
+  histBtnTxt: { flex: 1, color: C.cream, fontSize: 13, fontWeight: '600' },
 
-  centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-  answerGiven: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 22, paddingVertical: 14, borderRadius: 20, borderWidth: 1, marginBottom: 20 },
-  answerGivenTxt: { fontSize: 22, fontWeight: '900' },
+  qCounter:     { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
+  qCounterTxt:  { fontSize: 11, color: C.muted, fontWeight: '600', marginBottom: 6 },
+  qProgressBar: { height: 3, backgroundColor: C.border, borderRadius: 2 },
+  qProgressFill:{ height: 3, backgroundColor: C.gold, borderRadius: 2 },
 
-  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.danger + '18', borderRadius: 20, paddingHorizontal: 13, paddingVertical: 6, alignSelf: 'center', borderWidth: 1, borderColor: C.danger + '44', marginBottom: 16 },
-  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.danger },
-  liveTxt: { color: C.danger, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  questionCard:       { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 20, alignItems: 'center', gap: 14 },
+  questionScoreBadge: { backgroundColor: C.gold + '22', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.gold + '55' },
+  questionScoreTxt:   { fontSize: 12, fontWeight: '700', color: C.gold },
+  questionTxt:        { fontSize: 20, fontWeight: '700', color: C.cream, lineHeight: 30, textAlign: 'center' },
 
-  questionCard: { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 22 },
-  questionTxt: { fontSize: 20, fontWeight: '700', color: C.cream, lineHeight: 29, textAlign: 'center' },
+  answerRow:      { flexDirection: 'row', gap: 12, marginBottom: 16 },
+  answerBtn:      { flex: 1, borderRadius: 16, paddingVertical: 32, alignItems: 'center', gap: 8 },
+  answerDisabled: { opacity: 0.45 },
+  answerBtnTxt:   { fontSize: 20, fontWeight: '900', color: C.white, letterSpacing: 1 },
 
-  answerRow: { flexDirection: 'row', gap: 12 },
-  answerBtn: { flex: 1, borderRadius: 16, paddingVertical: 32, alignItems: 'center', gap: 8 },
-  answerSelected: { opacity: 0.65, transform: [{ scale: 0.97 }] },
-  answerDisabled: { opacity: 0.35 },
-  answerBtnTxt: { fontSize: 20, fontWeight: '900', color: C.white, letterSpacing: 1 },
+  qNav:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  qNavBtn:       { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  qNavBtnDisabled: { opacity: 0.35 },
+  qNavTxt:       { fontSize: 13, color: C.cream, fontWeight: '600' },
 
-  revealCard: { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: C.gold + '33', alignItems: 'center' },
-  revealLabel: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 1.5, marginBottom: 12 },
-  revealBadge: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 22, borderWidth: 1 },
-  revealBadgeTxt: { fontSize: 24, fontWeight: '900' },
-
-  perfCard: { backgroundColor: C.surface, borderRadius: 14, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: C.border, alignItems: 'center', gap: 5 },
-  perfGood: { fontSize: 17, fontWeight: '800', color: C.success },
-  perfBad:  { fontSize: 15, fontWeight: '700', color: C.muted },
-  perfPts:  { fontSize: 22, fontWeight: '900', color: C.gold },
-
-  lbCard: { backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border },
-  lbRow:  { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border + '66' },
-  lbRowMe:{ backgroundColor: C.gold + '11', borderRadius: 9, paddingHorizontal: 5, marginHorizontal: -5 },
-  lbRank: { width: 34, fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  lbName: { flex: 1, fontSize: 13, color: C.cream, fontWeight: '600' },
-  lbScore:{ fontSize: 13, color: C.muted, fontWeight: '700' },
-
-  histRunCard: { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: C.border },
-  histRunTitle:{ fontSize: 11, fontWeight: '700', color: C.gold, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' },
-  histQRow:    { flexDirection: 'row', gap: 10, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.border + '55', alignItems: 'flex-start' },
+  histRunCard:  { backgroundColor: C.surface, borderRadius: 13, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: C.border },
+  histRunTitle: { fontSize: 11, fontWeight: '700', color: C.gold, marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' },
+  histQRow:     { flexDirection: 'row', gap: 10, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.border + '55', alignItems: 'flex-start' },
   histQIndicator: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', borderWidth: 1, flexShrink: 0, marginTop: 1 },
-  histQText:   { fontSize: 13, color: C.cream, lineHeight: 18, fontWeight: '500', marginBottom: 2 },
-  histQChip:   { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1 },
+  histQText:    { fontSize: 13, color: C.cream, lineHeight: 18, fontWeight: '500', marginBottom: 2 },
+  histQChip:    { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1 },
 });
