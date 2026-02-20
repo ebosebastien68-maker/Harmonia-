@@ -71,9 +71,9 @@ const CATEGORIES = [
     color: '#F59E0B',
     description: 'Montrez vos talents',
     items: [
-      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', component: Comedie },
-      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', component: Danse },
-      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', component: Theatre },
+      { id: '9',  key: 'comedie', title: 'Comédie', icon: 'happy',  color: '#F97316', component: Comedie },
+      { id: '10', key: 'danse',   title: 'Danse',    icon: 'body',   color: '#EC4899', component: Danse },
+      { id: '11', key: 'theatre', title: 'Théâtre',  icon: 'people', color: '#8B5CF6', component: Theatre },
     ],
   },
   {
@@ -83,10 +83,10 @@ const CATEGORIES = [
     color: '#14B8A6',
     description: 'Faites vibrer votre audience',
     items: [
-      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', component: Music },
-      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', component: Piano },
-      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', component: Guitare },
-      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', component: Djing },
+      { id: '12', key: 'music',   title: 'Chant',   icon: 'musical-notes', color: '#14B8A6', component: Music },
+      { id: '13', key: 'piano',   title: 'Piano',   icon: 'musical-note',  color: '#06B6D4', component: Piano },
+      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio',         color: '#3B82F6', component: Guitare },
+      { id: '15', key: 'djing',   title: 'DJ',      icon: 'disc',          color: '#8B5CF6', component: Djing },
     ],
   },
 ];
@@ -153,7 +153,7 @@ export default function GamesScreen() {
           <Text style={styles.heroEmoji}>🎮</Text>
           <Text style={styles.heroTitle}>Centre de Divertissement</Text>
           <Text style={styles.heroSubtitle}>Révélez votre talent au monde</Text>
-          
+
           <View style={styles.heroBadges}>
             <View style={styles.heroBadge}>
               <Ionicons name="trophy" size={16} color="#FFD700" />
@@ -177,7 +177,6 @@ export default function GamesScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Categories */}
         {CATEGORIES.map((category) => (
           <CategorySection key={category.id} category={category} />
         ))}
@@ -210,13 +209,13 @@ export default function GamesScreen() {
         onRequestClose={handleCloseGame}
       >
         <View style={styles.modalContainer}>
-          {/* Affichage du composant de jeu avec ses props */}
+          {/* [FIX] onBack remplace onClose pour brancher le bouton retour de vrai-faux.tsx */}
           {selectedGame && selectedGame.component && (
-            <selectedGame.component 
+            <selectedGame.component
               title={selectedGame.title}
               icon={selectedGame.icon}
               color={selectedGame.color}
-              onClose={handleCloseGame}
+              onBack={handleCloseGame}
             />
           )}
         </View>
