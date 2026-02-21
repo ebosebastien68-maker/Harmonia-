@@ -6,25 +6,17 @@
  * ONGLET 3 "Réponses"  → sessions → groupes → MA réponse VRAI/FAUX (zéro score)
  * ONGLET 4 "Résultats" → sessions → groupes → bonne réponse + score (SI admin révèle)
  *
- * SÉCURITÉ :
- *   - access_token JWT envoyé à chaque requête backend
- *   - Onglet 3 : correct_answer et score_awarded ABSENTS
- *   - Onglet 4 : correct_answer + score UNIQUEMENT si reveal_answers=true côté DB
- *   - Score total = somme des runs révélés seulement
- *
- * BACKEND :
- *   - joinSession  → RPC join_session_smart(session_id) — pas besoin de party_id
- *   - submitAnswer → RPC submit_answer — correct_answer reste dans PostgreSQL
- *
  * CORRECTIONS :
- *   [FIX 1] access_token lu depuis p.access_token (racine) et non p.session.access_token
- *   [FIX 2] userIdProp transmis correctement même sans AsyncStorage
- *   [FIX 3] joinSession dans enterParty1 ne bloque plus sur "Déjà inscrit"
- *   [FIX 4] loadMySessions() sorti du setState callback (race condition)
- *   [FIX 5] currentQIdx protégé contre -1 quand next.length === 0
- *   [FIX 6] useNativeDriver: Platform.OS !== 'web' (évite le warning web)
- *   [FIX 7] userIdProp réactif via useEffect
- *   [FIX 8] Accepte onBack ET onClose (compatibilité games.tsx qui passe onClose)
+ *   [FIX 1]  access_token lu depuis p.access_token (racine)
+ *   [FIX 2]  userIdProp transmis correctement même sans AsyncStorage
+ *   [FIX 3]  joinSession ne bloque plus sur "Déjà inscrit"
+ *   [FIX 4]  loadMySessions() sorti du setState callback
+ *   [FIX 5]  currentQIdx protégé contre -1
+ *   [FIX 6]  useNativeDriver compatible web
+ *   [FIX 7]  userIdProp réactif via useEffect
+ *   [FIX 8]  Accepte onBack ET onClose (games.tsx passe onClose)
+ *   [FIX 9]  AsyncStorage lazy → plus de crash SSR Vercel/Expo
+ *   [FIX 10] Bouton retour blanc légèrement sombre, visible sur fond sombre
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -35,12 +27,29 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [FIX 9] AsyncStorage lazy — JAMAIS importé à la racine du module.
+// Expo SSR (Vercel) exécute le bundle côté Node.js sans "window" ni AsyncStorage,
+// ce qui provoque : "Cannot convert undefined or null to object" → Object.keys().
+// Le wrapper charge AsyncStorage uniquement côté client (typeof window !== 'undefined').
+// ─────────────────────────────────────────────────────────────────────────────
+const Storage = {
+  getItem: async (key: string): Promise<string | null> => {
+    if (typeof window === 'undefined') return null; // SSR Node.js → skip
+    try {
+      const mod = await import('@react-native-async-storage/async-storage');
+      const AS  = (mod as any).default ?? mod;
+      return AS.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+};
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const GAME_KEY    = 'vrai_faux';
 
-// Haptics — silencieux sur web
 const haptic = {
   light:   () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);   },
   medium:  () => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);  },
@@ -56,7 +65,6 @@ const C = {
   vrai: '#16A34A', faux: '#DC2626', white: '#FFFFFF',
 };
 
-// useNativeDriver compatible web
 const NATIVE = Platform.OS !== 'web';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -87,13 +95,17 @@ interface MyResultRun {
 }
 
 interface VraiFauxProps {
-  userId?: string;
-  onBack?: () => void;
-  onClose?: () => void; // [FIX 8] alias — games.tsx passe onClose
+  userId?:  string;
+  onBack?:  () => void;
+  onClose?: () => void; // [FIX 8] games.tsx passe onClose
+  title?:   string;
+  icon?:    string;
+  color?:   string;
 }
 
 export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFauxProps) {
-  // [FIX 8] onClose (games.tsx) et onBack sont identiques — on unifie
+
+  // [FIX 8] unifie onBack et onClose
   const handleBack = onBack ?? onClose;
 
   // ─── Navigation ───────────────────────────────────────────────────────────
@@ -110,41 +122,35 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
 
   // [FIX 7] userIdProp réactif
   useEffect(() => {
-    if (userIdProp) {
-      setUserId(userIdProp);
-      userIdRef.current = userIdProp;
-    }
+    if (userIdProp) { setUserId(userIdProp); userIdRef.current = userIdProp; }
   }, [userIdProp]);
 
   // ─── Données ──────────────────────────────────────────────────────────────
-  const [mySessions,    setMySessions]    = useState<SessionItem[]>([]);
-  const [selSess1,      setSelSess1]      = useState<SessionItem | null>(null);
-  const [parties1,      setParties1]      = useState<PartyItem[]>([]);
-  const [selParty1,     setSelParty1]     = useState<PartyItem | null>(null);
-  const [questions,     setQuestions]     = useState<QuestionItem[]>([]);
-  const [currentQIdx,   setCurrentQIdx]   = useState(0);
-
-  const [exploreSess,   setExploreSess]   = useState<SessionItem[]>([]);
-
-  const [selSess3,      setSelSess3]      = useState<SessionItem | null>(null);
-  const [parties3,      setParties3]      = useState<PartyItem[]>([]);
-  const [selParty3,     setSelParty3]     = useState<PartyItem | null>(null);
-  const [myAnswerRuns,  setMyAnswerRuns]  = useState<MyAnswerRun[]>([]);
-
-  const [selSess4,      setSelSess4]      = useState<SessionItem | null>(null);
-  const [parties4,      setParties4]      = useState<PartyItem[]>([]);
-  const [selParty4,     setSelParty4]     = useState<PartyItem | null>(null);
-  const [myResultRuns,  setMyResultRuns]  = useState<MyResultRun[]>([]);
-  const [totalScore,    setTotalScore]    = useState<number>(0);
-  const [resultPending, setResultPending] = useState(false);
-  const [resultMsg,     setResultMsg]     = useState('');
+  const [mySessions,    setMySessions]   = useState<SessionItem[]>([]);
+  const [selSess1,      setSelSess1]     = useState<SessionItem | null>(null);
+  const [parties1,      setParties1]     = useState<PartyItem[]>([]);
+  const [selParty1,     setSelParty1]    = useState<PartyItem | null>(null);
+  const [questions,     setQuestions]    = useState<QuestionItem[]>([]);
+  const [currentQIdx,   setCurrentQIdx]  = useState(0);
+  const [exploreSess,   setExploreSess]  = useState<SessionItem[]>([]);
+  const [selSess3,      setSelSess3]     = useState<SessionItem | null>(null);
+  const [parties3,      setParties3]     = useState<PartyItem[]>([]);
+  const [selParty3,     setSelParty3]    = useState<PartyItem | null>(null);
+  const [myAnswerRuns,  setMyAnswerRuns] = useState<MyAnswerRun[]>([]);
+  const [selSess4,      setSelSess4]     = useState<SessionItem | null>(null);
+  const [parties4,      setParties4]     = useState<PartyItem[]>([]);
+  const [selParty4,     setSelParty4]    = useState<PartyItem | null>(null);
+  const [myResultRuns,  setMyResultRuns] = useState<MyResultRun[]>([]);
+  const [totalScore,    setTotalScore]   = useState<number>(0);
+  const [resultPending, setResultPending]= useState(false);
+  const [resultMsg,     setResultMsg]    = useState('');
 
   // ─── UI ───────────────────────────────────────────────────────────────────
-  const [initLoading,   setInitLoading]   = useState(true);
-  const [loadingCard,   setLoadingCard]   = useState<string | null>(null);
-  const [answerLoading, setAnswerLoading] = useState(false);
-  const [refreshing,    setRefreshing]    = useState(false);
-  const [error,         setError]         = useState('');
+  const [initLoading,   setInitLoading]  = useState(true);
+  const [loadingCard,   setLoadingCard]  = useState<string | null>(null);
+  const [answerLoading, setAnswerLoading]= useState(false);
+  const [refreshing,    setRefreshing]   = useState(false);
+  const [error,         setError]        = useState('');
 
   const isMounted        = useRef(true);
   const fadeAnim         = useRef(new Animated.Value(0)).current;
@@ -153,38 +159,27 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
   // ─── Init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     isMounted.current = true;
-
-    // [FIX 6] useNativeDriver: false sur web pour éviter le warning
-    Animated.timing(fadeAnim, {
-      toValue: 1, duration: 400, useNativeDriver: NATIVE,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: NATIVE }).start();
 
     const init = async () => {
       let uid   = userIdProp || '';
       let token = '';
-
-      if (!uid || !token) {
-        try {
-          const raw = await AsyncStorage.getItem('harmonia_session');
-          if (raw) {
-            const p = JSON.parse(raw);
-            // [FIX 1] : le token est à la racine de l'objet stocké (data.session),
-            // PAS dans p.session.access_token — c'était la cause du 401 systématique
-            uid   = uid   || p?.user?.id      || '';
-            token = token || p?.access_token  || '';
-          }
-        } catch (e) {
-          console.warn('[VraiFaux] AsyncStorage read error:', e);
+      try {
+        // [FIX 9] Storage.getItem est null-safe côté SSR
+        const raw = await Storage.getItem('harmonia_session');
+        if (raw) {
+          const p = JSON.parse(raw);
+          uid   = uid   || p?.user?.id     || ''; // [FIX 1]
+          token = token || p?.access_token || '';
         }
+      } catch (e) {
+        console.warn('[VraiFaux] Storage read error:', e);
       }
-
       if (uid)   { setUserId(uid); userIdRef.current = uid; }
       if (token) { accessTokenRef.current = token; }
-
       await Promise.all([loadMySessions(uid, token), loadExploreSessions(uid, token)]);
       if (isMounted.current) setInitLoading(false);
     };
-
     init();
     return () => { isMounted.current = false; };
   }, []);
@@ -196,54 +191,42 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     if (!uid)   throw new Error('Non connecté');
     if (!token) throw new Error('Session expirée — reconnectez-vous');
     const res = await fetch(`${BACKEND_URL}/game`, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ user_id: uid, access_token: token, ...body }),
+      body: JSON.stringify({ user_id: uid, access_token: token, ...body }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || `Erreur ${res.status}`);
     return data;
   }, []);
 
-  // ─── Chargements initiaux (acceptent uid/token en paramètre) ──────────────
+  // ─── Chargements ──────────────────────────────────────────────────────────
   const loadMySessions = useCallback(async (uid?: string, token?: string) => {
     try {
-      const u = uid || userIdRef.current;
+      const u = uid   || userIdRef.current;
       const t = token || accessTokenRef.current;
       if (!u || !t) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: u, access_token: t,
-          function: 'listMySessions', game_key: GAME_KEY,
-        }),
+        body: JSON.stringify({ user_id: u, access_token: t, function: 'listMySessions', game_key: GAME_KEY }),
       });
       const data = await res.json();
-      if (isMounted.current && data.success)
-        setMySessions(data.sessions || []);
-    } catch (e) {
-      console.warn('[VraiFaux] loadMySessions error:', e);
-    }
+      if (isMounted.current && data.success) setMySessions(data.sessions || []);
+    } catch (e) { console.warn('[VraiFaux] loadMySessions:', e); }
   }, []);
 
   const loadExploreSessions = useCallback(async (uid?: string, token?: string) => {
     try {
-      const u = uid || userIdRef.current;
+      const u = uid   || userIdRef.current;
       const t = token || accessTokenRef.current;
       if (!u || !t) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: u, access_token: t,
-          function: 'listAvailableSessions', game_key: GAME_KEY,
-        }),
+        body: JSON.stringify({ user_id: u, access_token: t, function: 'listAvailableSessions', game_key: GAME_KEY }),
       });
       const data = await res.json();
-      if (isMounted.current && data.success)
-        setExploreSess(data.sessions || []);
-    } catch (e) {
-      console.warn('[VraiFaux] loadExploreSessions error:', e);
-    }
+      if (isMounted.current && data.success) setExploreSess(data.sessions || []);
+    } catch (e) { console.warn('[VraiFaux] loadExploreSessions:', e); }
   }, []);
 
   const syncAll = useCallback(async () => {
@@ -252,7 +235,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     if (isMounted.current) setRefreshing(false);
   }, [loadMySessions, loadExploreSessions]);
 
-  // ─── ONGLET 2 — Explorer → Participer ────────────────────────────────────
+  // ─── Actions ──────────────────────────────────────────────────────────────
   const joinSession = async (session: SessionItem) => {
     setLoadingCard(session.id); setError(''); haptic.medium();
     try {
@@ -265,18 +248,15 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 1 — Sessions → Parties ───────────────────────────────────────
   const openSession1 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
       const data = await api({ function: 'listPartiesForSession', session_id: sess.id });
-      setSelSess1(sess); setParties1(data.parties || []);
-      setSub1('parties');
+      setSelSess1(sess); setParties1(data.parties || []); setSub1('parties');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 1 — Parties → Questions ──────────────────────────────────────
   const enterParty1 = async (party: PartyItem) => {
     if (!selSess1) return;
     const myScore = mySessions.find(s => s.id === selSess1.id)?.my_score ?? 0;
@@ -286,76 +266,50 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     }
     setLoadingCard(party.id); setError(''); haptic.medium();
     try {
-      // [FIX 3] joinSession ne bloque plus si "Déjà inscrit"
-      try {
+      try { // [FIX 3]
         await api({ function: 'joinSession', session_id: selSess1.id });
       } catch (joinErr: any) {
         if (!joinErr.message?.includes('Déjà inscrit')) throw joinErr;
-        // Déjà inscrit → on continue normalement
       }
-
       const data = await api({ function: 'getUnansweredQuestions', party_id: party.id });
-      setSelParty1(party);
-      setQuestions(data.questions || []);
-      setCurrentQIdx(0);
-      setSub1('questions');
-      haptic.success();
+      setSelParty1(party); setQuestions(data.questions || []); setCurrentQIdx(0);
+      setSub1('questions'); haptic.success();
     } catch (e: any) { setError(e.message || 'Erreur réseau'); haptic.error(); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── Soumettre une réponse ────────────────────────────────────────────────
   const submitAnswer = async (answer: boolean) => {
     const question = questions[currentQIdx];
     if (!question || answerLoading) return;
     setAnswerLoading(true); haptic.medium();
-
-    // [FIX 4] flag pour savoir si on doit revenir aux parties après setState
     let shouldGoBack = false;
-
     try {
-      const data = await api({
-        function: 'submitAnswer', run_question_id: question.id, answer,
-      });
+      const data = await api({ function: 'submitAnswer', run_question_id: question.id, answer });
       if (!isMounted.current) return;
-
       if (data.success) {
         haptic.success();
-        Animated.timing(questionFadeAnim, {
-          toValue: 0, duration: 200, useNativeDriver: NATIVE,
-        }).start(() => {
-          if (!isMounted.current) return;
-
-          setQuestions(prev => {
-            const next = prev.filter((_, i) => i !== currentQIdx);
-            // [FIX 5] currentQIdx ne peut pas être -1
-            setCurrentQIdx(i => next.length === 0 ? 0 : Math.min(i, next.length - 1));
-            if (next.length === 0) shouldGoBack = true;
-            return next;
+        Animated.timing(questionFadeAnim, { toValue: 0, duration: 200, useNativeDriver: NATIVE })
+          .start(() => {
+            if (!isMounted.current) return;
+            setQuestions(prev => {
+              const next = prev.filter((_, i) => i !== currentQIdx);
+              setCurrentQIdx(i => next.length === 0 ? 0 : Math.min(i, next.length - 1)); // [FIX 5]
+              if (next.length === 0) shouldGoBack = true;
+              return next;
+            });
+            questionFadeAnim.setValue(1);
+            if (shouldGoBack) { setSub1('parties'); loadMySessions(); } // [FIX 4]
           });
-
-          questionFadeAnim.setValue(1);
-
-          // [FIX 4] loadMySessions et navigation HORS du setState callback
-          if (shouldGoBack) {
-            setSub1('parties');
-            loadMySessions();
-          }
-        });
-      } else {
-        setError(data.error || 'Erreur envoi'); haptic.error();
-      }
+      } else { setError(data.error || 'Erreur envoi'); haptic.error(); }
     } catch (e: any) { setError(e.message || 'Erreur réseau'); haptic.error(); }
     finally { if (isMounted.current) setAnswerLoading(false); }
   };
 
-  // ─── ONGLET 3 — Mes Réponses ──────────────────────────────────────────────
   const openSession3 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
       const data = await api({ function: 'listPartiesForSession', session_id: sess.id });
-      setSelSess3(sess); setParties3(data.parties || []);
-      setSub3('parties');
+      setSelSess3(sess); setParties3(data.parties || []); setSub3('parties');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
@@ -364,19 +318,16 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     setLoadingCard(party.id); setError('');
     try {
       const data = await api({ function: 'getMyAnswers', party_id: party.id });
-      setSelParty3(party); setMyAnswerRuns(data.runs || []);
-      setSub3('questions');
+      setSelParty3(party); setMyAnswerRuns(data.runs || []); setSub3('questions');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 4 — Résultats ─────────────────────────────────────────────────
   const openSession4 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
       const data = await api({ function: 'listPartiesForSession', session_id: sess.id });
-      setSelSess4(sess); setParties4(data.parties || []);
-      setSub4('parties');
+      setSelSess4(sess); setParties4(data.parties || []); setSub4('parties');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
@@ -386,10 +337,10 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     try {
       const data = await api({ function: 'getMyResults', party_id: party.id });
       setSelParty4(party);
-      setMyResultRuns(data.runs        || []);
-      setTotalScore(data.total_score   ?? 0);
-      setResultPending(data.pending    ?? false);
-      setResultMsg(data.message        || '');
+      setMyResultRuns(data.runs       || []);
+      setTotalScore(data.total_score  ?? 0);
+      setResultPending(data.pending   ?? false);
+      setResultMsg(data.message       || '');
       setSub4('results');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
@@ -397,7 +348,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
 
   // ─── Navigation retour ────────────────────────────────────────────────────
   const goBack = () => {
-    setError('');
+    setError(''); haptic.light();
     if (tab === 'mine') {
       if      (sub1 === 'questions') { setSub1('parties'); }
       else if (sub1 === 'parties')   { setSub1('sessions'); setSelSess1(null); setParties1([]); }
@@ -415,14 +366,12 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     }
   };
 
-  const isOnSubScreen = () => {
-    if (tab === 'mine'    && sub1 !== 'sessions') return true;
-    if (tab === 'answers' && sub3 !== 'sessions') return true;
-    if (tab === 'results' && sub4 !== 'sessions') return true;
-    return false;
-  };
+  const isOnSubScreen = () =>
+    (tab === 'mine'    && sub1 !== 'sessions') ||
+    (tab === 'answers' && sub3 !== 'sessions') ||
+    (tab === 'results' && sub4 !== 'sessions');
 
-  // Bouton retour visible si sous-écran actif OU si un handler de fermeture existe
+  // [FIX 10] bouton retour toujours visible dès qu'un handler existe
   const showBackBtn = isOnSubScreen() || !!handleBack;
 
   const headerSub = () => {
@@ -461,14 +410,19 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
 
         {/* ── HEADER ── */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
-          {showBackBtn
-            ? <TouchableOpacity onPress={goBack} style={s.iconBtn}>
-                {/* arrow-back dans les sous-écrans, close pour fermer le jeu */}
-                <Ionicons
-                  name={isOnSubScreen() ? 'arrow-back' : 'close'}
-                  size={19} color={C.gold} />
-              </TouchableOpacity>
-            : <View style={s.iconBtn} />}
+
+          {/* [FIX 10] Bouton retour blanc légèrement sombre */}
+          {showBackBtn ? (
+            <TouchableOpacity onPress={goBack} style={s.backBtn} activeOpacity={0.7}>
+              <Ionicons
+                name={isOnSubScreen() ? 'chevron-back' : 'close'}
+                size={21}
+                color={C.white}
+              />
+            </TouchableOpacity>
+          ) : (
+            <View style={s.backBtnPlaceholder} />
+          )}
 
           <View style={s.headerCenter}>
             <Text style={s.headerSub}>{headerSub()}</Text>
@@ -497,7 +451,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
         {/* ── ONGLETS ── */}
         <View style={s.tabBar}>
           <TabBtn icon="bookmark-outline"  label="Sessions"  active={tab === 'mine'}
-            onPress={() => { setTab('mine');    setSub1('sessions'); }} />
+            onPress={() => { setTab('mine'); setSub1('sessions'); }} />
           <TabBtn icon="compass-outline"   label="Explorer"  active={tab === 'explore'}
             onPress={() => setTab('explore')} badge={exploreSess.length} />
           <TabBtn icon="chatbox-outline"   label="Réponses"  active={tab === 'answers'}
@@ -524,12 +478,8 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>{sess.title}</Text>
-                  {sess.description
-                    ? <Text style={s.cardSub} numberOfLines={1}>{sess.description}</Text>
-                    : null}
-                  <View style={s.pillRow}>
-                    <ScorePill score={sess.my_score ?? 0} />
-                  </View>
+                  {sess.description ? <Text style={s.cardSub} numberOfLines={1}>{sess.description}</Text> : null}
+                  <View style={s.pillRow}><ScorePill score={sess.my_score ?? 0} /></View>
                 </View>
                 {loadingCard === sess.id
                   ? <ActivityIndicator size="small" color={C.gold} />
@@ -540,7 +490,6 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
           </ScrollView>
         )}
 
-        {/* Groupes */}
         {tab === 'mine' && sub1 === 'parties' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>GROUPES</Text>
@@ -550,8 +499,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
               return (
                 <View key={party.id} style={[s.card, locked && s.cardLocked]}>
                   <View style={[s.cardIcon, { borderColor: locked ? C.muted + '44' : C.info + '44' }]}>
-                    <Ionicons
-                      name={locked ? 'lock-closed-outline' : 'people-outline'}
+                    <Ionicons name={locked ? 'lock-closed-outline' : 'people-outline'}
                       size={17} color={locked ? C.muted : C.info} />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -561,15 +509,12 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                     <Text style={s.cardSub}>
                       {locked
                         ? `🔒 Requis : ${party.min_score} pts · Vous : ${myScore} pts`
-                        : party.is_initial
-                          ? 'Groupe ouvert à tous'
-                          : `Score min : ${party.min_score} pts`}
+                        : party.is_initial ? 'Groupe ouvert à tous' : `Score min : ${party.min_score} pts`}
                     </Text>
                   </View>
                   {!locked && (
                     <TouchableOpacity style={s.repondreBtn}
-                      onPress={() => enterParty1(party)}
-                      disabled={loadingCard !== null}>
+                      onPress={() => enterParty1(party)} disabled={loadingCard !== null}>
                       {loadingCard === party.id
                         ? <ActivityIndicator size="small" color={C.white} />
                         : <Text style={s.repBtnTxt}>Répondre</Text>}
@@ -582,7 +527,6 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
           </ScrollView>
         )}
 
-        {/* Questions */}
         {tab === 'mine' && sub1 === 'questions' && (
           <View style={{ flex: 1 }}>
             {questions.length === 0 ? (
@@ -598,29 +542,22 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
               </View>
             ) : (
               <Animated.View style={{ flex: 1, opacity: questionFadeAnim }}>
-
-                {/* Barre progression */}
                 <View style={s.qCounter}>
-                  <Text style={s.qCounterTxt}>
-                    Question {currentQIdx + 1} / {questions.length}
-                  </Text>
+                  <Text style={s.qCounterTxt}>Question {currentQIdx + 1} / {questions.length}</Text>
                   <View style={s.qProgressBar}>
                     <View style={[s.qProgressFill, {
                       width: `${((currentQIdx + 1) / questions.length) * 100}%` as any,
                     }]} />
                   </View>
                 </View>
-
                 <ScrollView contentContainerStyle={[s.scroll, { paddingTop: 8 }]}
                   showsVerticalScrollIndicator={false}>
-
                   <View style={s.questionCard}>
                     <View style={s.scoreBadge}>
                       <Text style={s.scoreBadgeTxt}>{questions[currentQIdx]?.score} pts</Text>
                     </View>
                     <Text style={s.questionTxt}>{questions[currentQIdx]?.question_text}</Text>
                   </View>
-
                   <View style={s.answerRow}>
                     <AnsBtn label="VRAI" icon="checkmark-circle-outline" color={C.vrai}
                       loading={answerLoading} disabled={answerLoading}
@@ -629,7 +566,6 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                       loading={answerLoading} disabled={answerLoading}
                       onPress={() => submitAnswer(false)} />
                   </View>
-
                   {questions.length > 1 && (
                     <View style={s.qNav}>
                       <TouchableOpacity
@@ -638,18 +574,14 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                         disabled={currentQIdx === 0}>
                         <Ionicons name="chevron-back" size={16}
                           color={currentQIdx === 0 ? C.muted : C.cream} />
-                        <Text style={[s.qNavTxt, currentQIdx === 0 && { color: C.muted }]}>
-                          Précédente
-                        </Text>
+                        <Text style={[s.qNavTxt, currentQIdx === 0 && { color: C.muted }]}>Précédente</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[s.qNavBtn, currentQIdx === questions.length - 1 && s.qNavBtnDis]}
                         onPress={() => setCurrentQIdx(p => Math.min(questions.length - 1, p + 1))}
                         disabled={currentQIdx === questions.length - 1}>
                         <Text style={[s.qNavTxt,
-                          currentQIdx === questions.length - 1 && { color: C.muted }]}>
-                          Suivante
-                        </Text>
+                          currentQIdx === questions.length - 1 && { color: C.muted }]}>Suivante</Text>
                         <Ionicons name="chevron-forward" size={16}
                           color={currentQIdx === questions.length - 1 ? C.muted : C.cream} />
                       </TouchableOpacity>
@@ -669,8 +601,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             {exploreSess.length === 0 ? (
               <EmptyState icon="checkmark-circle-outline" title="Tout rejoint !"
-                sub="Vous participez à toutes les sessions disponibles."
-                iconColor={C.success} />
+                sub="Vous participez à toutes les sessions disponibles." iconColor={C.success} />
             ) : exploreSess.map(sess => (
               <View key={sess.id} style={s.card}>
                 <View style={s.cardIcon}>
@@ -678,18 +609,14 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>{sess.title}</Text>
-                  {sess.description
-                    ? <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text>
-                    : null}
+                  {sess.description ? <Text style={s.cardSub} numberOfLines={2}>{sess.description}</Text> : null}
                   <View style={{ marginTop: 5 }}>
-                    <Pill
-                      label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'}
+                    <Pill label={sess.is_paid ? `💰 ${sess.price_cfa} CFA` : 'Gratuit'}
                       color={sess.is_paid ? C.gold : C.success} />
                   </View>
                 </View>
                 <TouchableOpacity style={s.joinBtn}
-                  onPress={() => joinSession(sess)}
-                  disabled={loadingCard !== null}>
+                  onPress={() => joinSession(sess)} disabled={loadingCard !== null}>
                   {loadingCard === sess.id
                     ? <ActivityIndicator size="small" color={C.white} />
                     : <Text style={s.joinBtnTxt}>Participer</Text>}
@@ -752,16 +679,13 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
         {tab === 'answers' && sub3 === 'questions' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>MES RÉPONSES</Text>
-
             <View style={s.infoBar}>
               <Ionicons name="information-circle-outline" size={14} color={C.info} />
               <Text style={s.infoBarTxt}>
-                Les scores et les bonnes réponses seront révélés par l'administrateur
-                dans l'onglet{' '}
+                Les scores et les bonnes réponses seront révélés par l'administrateur dans l'onglet{' '}
                 <Text style={{ fontWeight: '800' }}>Résultats</Text>
               </Text>
             </View>
-
             {myAnswerRuns.length === 0 ? (
               <EmptyState icon="chatbox-outline" title="Aucune réponse"
                 sub="Vous n'avez pas encore répondu à des questions dans ce groupe." />
@@ -774,16 +698,13 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                       backgroundColor: (q.my_answer ? C.vrai : C.faux) + '22',
                       borderColor:     (q.my_answer ? C.vrai : C.faux) + '55',
                     }]}>
-                      <Ionicons
-                        name={q.my_answer ? 'checkmark' : 'close'}
+                      <Ionicons name={q.my_answer ? 'checkmark' : 'close'}
                         size={12} color={q.my_answer ? C.vrai : C.faux} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={s.qTxt} numberOfLines={3}>{q.question_text}</Text>
-                      <Text style={{
-                        fontSize: 11, fontWeight: '700', marginTop: 3,
-                        color: q.my_answer ? C.vrai : C.faux,
-                      }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', marginTop: 3,
+                        color: q.my_answer ? C.vrai : C.faux }}>
                         J'ai répondu : {q.my_answer ? 'VRAI' : 'FAUX'}
                       </Text>
                     </View>
@@ -813,9 +734,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>{sess.title}</Text>
-                  <View style={s.pillRow}>
-                    <ScorePill score={sess.my_score ?? 0} />
-                  </View>
+                  <View style={s.pillRow}><ScorePill score={sess.my_score ?? 0} /></View>
                 </View>
                 {loadingCard === sess.id
                   ? <ActivityIndicator size="small" color={C.gold} />
@@ -866,7 +785,6 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                     <Text style={{ color: C.gold, fontWeight: '800' }}>{totalScore} pts</Text>
                   </Text>
                 </View>
-
                 {myResultRuns.map(run => (
                   <View key={run.run_id} style={s.runCard}>
                     <Text style={s.runTitle}>{run.run_title}</Text>
@@ -874,54 +792,43 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
                       const correct   = q.answered && q.my_answer === q.correct_answer;
                       const incorrect = q.answered && q.my_answer !== q.correct_answer;
                       const dotColor  = !q.answered ? C.muted : correct ? C.success : C.danger;
-                      const dotIcon: any = !q.answered
-                        ? 'remove-outline'
+                      const dotIcon: any = !q.answered ? 'remove-outline'
                         : correct ? 'checkmark-circle' : 'close-circle';
                       return (
                         <View key={q.id} style={s.qRow}>
                           <View style={[s.dot, {
-                            backgroundColor: dotColor + '22',
-                            borderColor:     dotColor + '55',
+                            backgroundColor: dotColor + '22', borderColor: dotColor + '55',
                           }]}>
                             <Ionicons name={dotIcon} size={12} color={dotColor} />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={s.qTxt} numberOfLines={3}>{q.question_text}</Text>
-                            <View style={{
-                              flexDirection: 'row', gap: 6, marginTop: 4,
-                              flexWrap: 'wrap', alignItems: 'center',
-                            }}>
+                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 4,
+                              flexWrap: 'wrap', alignItems: 'center' }}>
                               {q.correct_answer !== null && (
                                 <View style={[s.chip, {
                                   backgroundColor: (q.correct_answer ? C.vrai : C.faux) + '18',
                                   borderColor:     (q.correct_answer ? C.vrai : C.faux) + '44',
                                 }]}>
-                                  <Text style={{
-                                    fontSize: 9, fontWeight: '800',
-                                    color: q.correct_answer ? C.vrai : C.faux,
-                                  }}>
+                                  <Text style={{ fontSize: 9, fontWeight: '800',
+                                    color: q.correct_answer ? C.vrai : C.faux }}>
                                     ✓ {q.correct_answer ? 'VRAI' : 'FAUX'}
                                   </Text>
                                 </View>
                               )}
                               {incorrect && (
                                 <View style={[s.chip, {
-                                  backgroundColor: C.danger + '18',
-                                  borderColor:     C.danger + '44',
+                                  backgroundColor: C.danger + '18', borderColor: C.danger + '44',
                                 }]}>
                                   <Text style={{ fontSize: 9, fontWeight: '800', color: C.danger }}>
                                     ✗ {q.my_answer ? 'VRAI' : 'FAUX'}
                                   </Text>
                                 </View>
                               )}
-                              {!q.answered && (
-                                <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>
-                              )}
+                              {!q.answered && <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>}
                               {q.answered && (
-                                <Text style={{
-                                  fontSize: 10, fontWeight: '700',
-                                  color: correct ? C.gold : C.muted,
-                                }}>
+                                <Text style={{ fontSize: 10, fontWeight: '700',
+                                  color: correct ? C.gold : C.muted }}>
                                   {correct ? `+${q.score_awarded}` : '+0'} pts
                                 </Text>
                               )}
@@ -951,9 +858,7 @@ function TabBtn({ icon, label, active, onPress, badge }: any) {
       <Ionicons name={icon} size={15} color={active ? C.gold : C.muted} />
       <Text style={[s.tabTxt, active && s.tabTxtActive]}>{label}</Text>
       {!!badge && badge > 0 && (
-        <View style={s.tabBadge}>
-          <Text style={s.tabBadgeTxt}>{badge}</Text>
-        </View>
+        <View style={s.tabBadge}><Text style={s.tabBadgeTxt}>{badge}</Text></View>
       )}
     </TouchableOpacity>
   );
@@ -983,10 +888,8 @@ function ScorePill({ score }: { score: number }) {
 
 function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <View style={{
-      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
-      backgroundColor: color + '22', borderWidth: 1, borderColor: color + '55',
-    }}>
+    <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
+      backgroundColor: color + '22', borderWidth: 1, borderColor: color + '55' }}>
       <Text style={{ fontSize: 11, fontWeight: '700', color }}>{label}</Text>
     </View>
   );
@@ -996,16 +899,10 @@ function EmptyState({ icon, title, sub, actionLabel, onAction, iconColor }: any)
   return (
     <View style={{ alignItems: 'center', paddingVertical: 50, gap: 10 }}>
       <Ionicons name={icon} size={48} color={iconColor || C.muted} />
-      <Text style={{ fontSize: 17, fontWeight: '700', color: C.cream, textAlign: 'center' }}>
-        {title}
-      </Text>
+      <Text style={{ fontSize: 17, fontWeight: '700', color: C.cream, textAlign: 'center' }}>{title}</Text>
       {sub && (
-        <Text style={{
-          fontSize: 13, color: C.muted, textAlign: 'center',
-          lineHeight: 19, paddingHorizontal: 20,
-        }}>
-          {sub}
-        </Text>
+        <Text style={{ fontSize: 13, color: C.muted, textAlign: 'center',
+          lineHeight: 19, paddingHorizontal: 20 }}>{sub}</Text>
       )}
       {actionLabel && onAction && (
         <TouchableOpacity style={s.actionBtn} onPress={onAction}>
@@ -1028,20 +925,30 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     borderBottomWidth: 1, borderBottomColor: C.border,
   },
+
+  // [FIX 10] Bouton retour : cercle blanc translucide légèrement sombre
+  backBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.13)',
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  backBtnPlaceholder: { width: 36, height: 36 },
+
   iconBtn: {
     width: 33, height: 33, borderRadius: 16,
     backgroundColor: C.surface,
     justifyContent: 'center', alignItems: 'center',
     borderWidth: 1, borderColor: C.border,
   },
+
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerSub:    { fontSize: 9,  fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
+  headerSub:    { fontSize: 9, fontWeight: '700', color: C.gold, letterSpacing: 1.5, marginBottom: 1 },
   headerTitle:  { fontSize: 19, fontWeight: '800', color: C.cream },
 
   errorBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: C.danger + '18',
-    paddingHorizontal: 14, paddingVertical: 7,
+    backgroundColor: C.danger + '18', paddingHorizontal: 14, paddingVertical: 7,
     borderBottomWidth: 1, borderBottomColor: C.danger + '33',
   },
   errorTxt: { flex: 1, color: C.danger, fontSize: 12 },
@@ -1074,8 +981,8 @@ const s = StyleSheet.create({
   scorePill:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: C.gold + '22', borderWidth: 1, borderColor: C.gold + '44' },
   scorePillTxt: { fontSize: 11, fontWeight: '700', color: C.gold },
 
-  joinBtn:    { backgroundColor: C.gold, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
-  joinBtnTxt: { color: '#000', fontWeight: '800', fontSize: 12 },
+  joinBtn:     { backgroundColor: C.gold, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
+  joinBtnTxt:  { color: '#000', fontWeight: '800', fontSize: 12 },
 
   repondreBtn: { backgroundColor: C.info, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, minWidth: 80, alignItems: 'center' },
   repBtnTxt:   { color: C.white, fontWeight: '800', fontSize: 12 },
@@ -1086,7 +993,7 @@ const s = StyleSheet.create({
   qCounter:      { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
   qCounterTxt:   { fontSize: 11, color: C.muted, fontWeight: '600', marginBottom: 6 },
   qProgressBar:  { height: 3, backgroundColor: C.border, borderRadius: 2 },
-  qProgressFill: { height: 3, backgroundColor: C.gold,   borderRadius: 2 },
+  qProgressFill: { height: 3, backgroundColor: C.gold, borderRadius: 2 },
 
   questionCard:  { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 20, alignItems: 'center', gap: 14 },
   scoreBadge:    { backgroundColor: C.gold + '22', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.gold + '55' },
