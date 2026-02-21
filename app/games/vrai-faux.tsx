@@ -15,6 +15,15 @@
  * BACKEND :
  *   - joinSession  → RPC join_session_smart(session_id) — pas besoin de party_id
  *   - submitAnswer → RPC submit_answer — correct_answer reste dans PostgreSQL
+ *
+ * CORRECTIONS :
+ *   [FIX 1] access_token lu depuis p.access_token (racine) et non p.session.access_token
+ *   [FIX 2] userIdProp transmis correctement même sans AsyncStorage
+ *   [FIX 3] joinSession dans enterParty1 ne bloque plus sur "Déjà inscrit"
+ *   [FIX 4] loadMySessions() sorti du setState callback (race condition)
+ *   [FIX 5] currentQIdx protégé contre -1 quand next.length === 0
+ *   [FIX 6] useNativeDriver: Platform.OS !== 'web' (évite le warning web)
+ *   [FIX 7] userIdProp réactif via useEffect
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -46,25 +55,28 @@ const C = {
   vrai: '#16A34A', faux: '#DC2626', white: '#FFFFFF',
 };
 
+// useNativeDriver compatible web
+const NATIVE = Platform.OS !== 'web';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Tab   = 'mine' | 'explore' | 'answers' | 'results';
 type Sub13 = 'sessions' | 'parties' | 'questions';
 type Sub4  = 'sessions' | 'parties' | 'results';
 
-interface SessionItem  {
+interface SessionItem {
   id: string; title: string; description?: string;
   is_paid: boolean; price_cfa: number; my_score?: number;
 }
-interface PartyItem    {
+interface PartyItem {
   id: string; title: string; is_initial: boolean;
   min_score: number; min_rank: number | null;
 }
 interface QuestionItem { id: string; run_id: string; question_text: string; score: number; }
-interface MyAnswerRun  {
+interface MyAnswerRun {
   run_id: string; run_title: string;
   questions: { id: string; question_text: string; score: number; my_answer: boolean; }[];
 }
-interface MyResultRun  {
+interface MyResultRun {
   run_id: string; run_title: string;
   questions: {
     id: string; question_text: string; score: number;
@@ -77,49 +89,56 @@ interface VraiFauxProps { userId?: string; onBack?: () => void; }
 
 export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) {
 
-  // ─── Navigation ──────────────────────────────────────────────────────────
+  // ─── Navigation ───────────────────────────────────────────────────────────
   const [tab,  setTab]  = useState<Tab>('mine');
   const [sub1, setSub1] = useState<Sub13>('sessions');
   const [sub3, setSub3] = useState<Sub13>('sessions');
   const [sub4, setSub4] = useState<Sub4>('sessions');
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
-  const [userId, setUserId]    = useState<string>(userIdProp || '');
-  const userIdRef              = useRef<string>(userIdProp || '');
-  const accessTokenRef         = useRef<string>('');   // JWT → auth.uid() backend
+  const [userId, setUserId] = useState<string>(userIdProp || '');
+  const userIdRef           = useRef<string>(userIdProp || '');
+  const accessTokenRef      = useRef<string>('');
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
-  // ─── Données ─────────────────────────────────────────────────────────────
-  const [mySessions,   setMySessions]   = useState<SessionItem[]>([]);
-  const [selSess1,     setSelSess1]     = useState<SessionItem | null>(null);
-  const [parties1,     setParties1]     = useState<PartyItem[]>([]);
-  const [selParty1,    setSelParty1]    = useState<PartyItem | null>(null);
-  const [questions,    setQuestions]    = useState<QuestionItem[]>([]);
-  const [currentQIdx,  setCurrentQIdx]  = useState(0);
+  // [FIX 7] userIdProp réactif
+  useEffect(() => {
+    if (userIdProp) {
+      setUserId(userIdProp);
+      userIdRef.current = userIdProp;
+    }
+  }, [userIdProp]);
 
-  const [exploreSess,  setExploreSess]  = useState<SessionItem[]>([]);
+  // ─── Données ──────────────────────────────────────────────────────────────
+  const [mySessions,    setMySessions]    = useState<SessionItem[]>([]);
+  const [selSess1,      setSelSess1]      = useState<SessionItem | null>(null);
+  const [parties1,      setParties1]      = useState<PartyItem[]>([]);
+  const [selParty1,     setSelParty1]     = useState<PartyItem | null>(null);
+  const [questions,     setQuestions]     = useState<QuestionItem[]>([]);
+  const [currentQIdx,   setCurrentQIdx]   = useState(0);
 
-  const [selSess3,     setSelSess3]     = useState<SessionItem | null>(null);
-  const [parties3,     setParties3]     = useState<PartyItem[]>([]);
-  const [selParty3,    setSelParty3]    = useState<PartyItem | null>(null);
-  const [myAnswerRuns, setMyAnswerRuns] = useState<MyAnswerRun[]>([]);
+  const [exploreSess,   setExploreSess]   = useState<SessionItem[]>([]);
 
-  const [selSess4,     setSelSess4]     = useState<SessionItem | null>(null);
-  const [parties4,     setParties4]     = useState<PartyItem[]>([]);
-  const [selParty4,    setSelParty4]    = useState<PartyItem | null>(null);
-  const [myResultRuns, setMyResultRuns] = useState<MyResultRun[]>([]);
-  const [totalScore,   setTotalScore]   = useState<number>(0);
-  const [resultPending,setResultPending]= useState(false);
-  const [resultMsg,    setResultMsg]    = useState('');
+  const [selSess3,      setSelSess3]      = useState<SessionItem | null>(null);
+  const [parties3,      setParties3]      = useState<PartyItem[]>([]);
+  const [selParty3,     setSelParty3]     = useState<PartyItem | null>(null);
+  const [myAnswerRuns,  setMyAnswerRuns]  = useState<MyAnswerRun[]>([]);
 
-  // ─── UI ──────────────────────────────────────────────────────────────────
+  const [selSess4,      setSelSess4]      = useState<SessionItem | null>(null);
+  const [parties4,      setParties4]      = useState<PartyItem[]>([]);
+  const [selParty4,     setSelParty4]     = useState<PartyItem | null>(null);
+  const [myResultRuns,  setMyResultRuns]  = useState<MyResultRun[]>([]);
+  const [totalScore,    setTotalScore]    = useState<number>(0);
+  const [resultPending, setResultPending] = useState(false);
+  const [resultMsg,     setResultMsg]     = useState('');
+
+  // ─── UI ───────────────────────────────────────────────────────────────────
   const [initLoading,   setInitLoading]   = useState(true);
   const [loadingCard,   setLoadingCard]   = useState<string | null>(null);
   const [answerLoading, setAnswerLoading] = useState(false);
   const [refreshing,    setRefreshing]    = useState(false);
   const [error,         setError]         = useState('');
 
-  // Refs
   const isMounted        = useRef(true);
   const fadeAnim         = useRef(new Animated.Value(0)).current;
   const questionFadeAnim = useRef(new Animated.Value(1)).current;
@@ -127,28 +146,38 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
   // ─── Init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     isMounted.current = true;
+
+    // [FIX 6] useNativeDriver: false sur web pour éviter le warning
     Animated.timing(fadeAnim, {
-      toValue: 1, duration: 400, useNativeDriver: false,  // false = compatible web
+      toValue: 1, duration: 400, useNativeDriver: NATIVE,
     }).start();
 
     const init = async () => {
       let uid   = userIdProp || '';
       let token = '';
-      if (!uid) {
+
+      if (!uid || !token) {
         try {
           const raw = await AsyncStorage.getItem('harmonia_session');
           if (raw) {
             const p = JSON.parse(raw);
-            uid   = p?.user?.id            || '';
-            token = p?.session?.access_token || '';
+            // [FIX 1] : le token est à la racine de l'objet stocké (data.session),
+            // PAS dans p.session.access_token — c'était la cause du 401 systématique
+            uid   = uid   || p?.user?.id      || '';
+            token = token || p?.access_token  || '';
           }
-        } catch {}
+        } catch (e) {
+          console.warn('[VraiFaux] AsyncStorage read error:', e);
+        }
       }
+
       if (uid)   { setUserId(uid); userIdRef.current = uid; }
       if (token) { accessTokenRef.current = token; }
-      await Promise.all([loadMySessions(uid), loadExploreSessions(uid)]);
+
+      await Promise.all([loadMySessions(uid, token), loadExploreSessions(uid, token)]);
       if (isMounted.current) setInitLoading(false);
     };
+
     init();
     return () => { isMounted.current = false; };
   }, []);
@@ -169,39 +198,45 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     return data;
   }, []);
 
-  // ─── Chargements initiaux ─────────────────────────────────────────────────
-  const loadMySessions = useCallback(async (uid?: string) => {
+  // ─── Chargements initiaux (acceptent uid/token en paramètre) ──────────────
+  const loadMySessions = useCallback(async (uid?: string, token?: string) => {
     try {
       const u = uid || userIdRef.current;
-      if (!u) return;
+      const t = token || accessTokenRef.current;
+      if (!u || !t) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: u, access_token: accessTokenRef.current,
+          user_id: u, access_token: t,
           function: 'listMySessions', game_key: GAME_KEY,
         }),
       });
       const data = await res.json();
       if (isMounted.current && data.success)
         setMySessions(data.sessions || []);
-    } catch {}
+    } catch (e) {
+      console.warn('[VraiFaux] loadMySessions error:', e);
+    }
   }, []);
 
-  const loadExploreSessions = useCallback(async (uid?: string) => {
+  const loadExploreSessions = useCallback(async (uid?: string, token?: string) => {
     try {
       const u = uid || userIdRef.current;
-      if (!u) return;
+      const t = token || accessTokenRef.current;
+      if (!u || !t) return;
       const res = await fetch(`${BACKEND_URL}/game`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: u, access_token: accessTokenRef.current,
+          user_id: u, access_token: t,
           function: 'listAvailableSessions', game_key: GAME_KEY,
         }),
       });
       const data = await res.json();
       if (isMounted.current && data.success)
         setExploreSess(data.sessions || []);
-    } catch {}
+    } catch (e) {
+      console.warn('[VraiFaux] loadExploreSessions error:', e);
+    }
   }, []);
 
   const syncAll = useCallback(async () => {
@@ -210,8 +245,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     if (isMounted.current) setRefreshing(false);
   }, [loadMySessions, loadExploreSessions]);
 
-  // ─── ONGLET 2 — Explorer → Participer ─────────────────────────────────────
-  // Utilise le RPC join_session_smart → session_id suffit, pas besoin de party_id
+  // ─── ONGLET 2 — Explorer → Participer ────────────────────────────────────
   const joinSession = async (session: SessionItem) => {
     setLoadingCard(session.id); setError(''); haptic.medium();
     try {
@@ -224,7 +258,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 1 — Sessions → Parties ────────────────────────────────────────
+  // ─── ONGLET 1 — Sessions → Parties ───────────────────────────────────────
   const openSession1 = async (sess: SessionItem) => {
     setLoadingCard(sess.id); setError('');
     try {
@@ -235,9 +269,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── ONGLET 1 — Parties → Questions ───────────────────────────────────────
-  // joinSession avec session_id uniquement (RPC gère l'inscription si besoin)
-  // puis getUnansweredQuestions avec party_id
+  // ─── ONGLET 1 — Parties → Questions ──────────────────────────────────────
   const enterParty1 = async (party: PartyItem) => {
     if (!selSess1) return;
     const myScore = mySessions.find(s => s.id === selSess1.id)?.my_score ?? 0;
@@ -247,48 +279,61 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     }
     setLoadingCard(party.id); setError(''); haptic.medium();
     try {
-      // S'assurer que l'utilisateur est bien inscrit dans la session
-      await api({ function: 'joinSession', session_id: selSess1.id });
-      // Charger les questions non répondues de cette party
+      // [FIX 3] joinSession ne bloque plus si "Déjà inscrit"
+      try {
+        await api({ function: 'joinSession', session_id: selSess1.id });
+      } catch (joinErr: any) {
+        if (!joinErr.message?.includes('Déjà inscrit')) throw joinErr;
+        // Déjà inscrit → on continue normalement
+      }
+
       const data = await api({ function: 'getUnansweredQuestions', party_id: party.id });
       setSelParty1(party);
       setQuestions(data.questions || []);
       setCurrentQIdx(0);
       setSub1('questions');
       haptic.success();
-    } catch (e: any) { setError(e.message || 'Erreur réseau'); }
+    } catch (e: any) { setError(e.message || 'Erreur réseau'); haptic.error(); }
     finally { if (isMounted.current) setLoadingCard(null); }
   };
 
-  // ─── Soumettre une réponse ─────────────────────────────────────────────────
-  // Backend : RPC submit_answer SECURITY DEFINER
-  // correct_answer reste dans PostgreSQL — frontend reçoit uniquement success
+  // ─── Soumettre une réponse ────────────────────────────────────────────────
   const submitAnswer = async (answer: boolean) => {
     const question = questions[currentQIdx];
     if (!question || answerLoading) return;
     setAnswerLoading(true); haptic.medium();
+
+    // [FIX 4] flag pour savoir si on doit revenir aux parties après setState
+    let shouldGoBack = false;
+
     try {
       const data = await api({
         function: 'submitAnswer', run_question_id: question.id, answer,
       });
       if (!isMounted.current) return;
+
       if (data.success) {
         haptic.success();
         Animated.timing(questionFadeAnim, {
-          toValue: 0, duration: 200, useNativeDriver: false,
+          toValue: 0, duration: 200, useNativeDriver: NATIVE,
         }).start(() => {
           if (!isMounted.current) return;
+
           setQuestions(prev => {
             const next = prev.filter((_, i) => i !== currentQIdx);
-            if (next.length === 0) {
-              setSub1('parties');
-              loadMySessions();   // rafraîchir le score de la session
-            } else {
-              setCurrentQIdx(i => Math.min(i, next.length - 1));
-            }
+            // [FIX 5] currentQIdx ne peut pas être -1
+            setCurrentQIdx(i => next.length === 0 ? 0 : Math.min(i, next.length - 1));
+            if (next.length === 0) shouldGoBack = true;
             return next;
           });
+
           questionFadeAnim.setValue(1);
+
+          // [FIX 4] loadMySessions et navigation HORS du setState callback
+          if (shouldGoBack) {
+            setSub1('parties');
+            loadMySessions();
+          }
         });
       } else {
         setError(data.error || 'Erreur envoi'); haptic.error();
@@ -334,10 +379,10 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     try {
       const data = await api({ function: 'getMyResults', party_id: party.id });
       setSelParty4(party);
-      setMyResultRuns(data.runs   || []);
-      setTotalScore(data.total_score ?? 0);
-      setResultPending(data.pending   ?? false);
-      setResultMsg(data.message       || '');
+      setMyResultRuns(data.runs        || []);
+      setTotalScore(data.total_score   ?? 0);
+      setResultPending(data.pending    ?? false);
+      setResultMsg(data.message        || '');
       setSub4('results');
     } catch (e: any) { setError(e.message || 'Erreur réseau'); }
     finally { if (isMounted.current) setLoadingCard(null); }
@@ -408,7 +453,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
           {(isOnSubScreen() || onBack)
             ? <TouchableOpacity onPress={goBack} style={s.iconBtn}>
-                <Ionicons name="arrow-back" size={19} color={C.gold} />
+                <Ionicons
+                  name={isOnSubScreen() ? 'arrow-back' : 'close'}
+                  size={19} color={C.gold} />
               </TouchableOpacity>
             : <View style={s.iconBtn} />}
 
@@ -441,7 +488,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           <TabBtn icon="bookmark-outline"  label="Sessions"  active={tab === 'mine'}
             onPress={() => { setTab('mine');    setSub1('sessions'); }} />
           <TabBtn icon="compass-outline"   label="Explorer"  active={tab === 'explore'}
-            onPress={() => { setTab('explore'); }} badge={exploreSess.length} />
+            onPress={() => setTab('explore')} badge={exploreSess.length} />
           <TabBtn icon="chatbox-outline"   label="Réponses"  active={tab === 'answers'}
             onPress={() => { setTab('answers'); setSub3('sessions'); }} />
           <TabBtn icon="trophy-outline"    label="Résultats" active={tab === 'results'}
@@ -482,7 +529,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           </ScrollView>
         )}
 
-        {/* Groupes de la session sélectionnée */}
+        {/* Groupes */}
         {tab === 'mine' && sub1 === 'parties' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>GROUPES</Text>
@@ -491,7 +538,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
               const locked  = !party.is_initial && party.min_score > 0 && myScore < party.min_score;
               return (
                 <View key={party.id} style={[s.card, locked && s.cardLocked]}>
-                  <View style={[s.cardIcon, { borderColor: locked ? C.muted+'44' : C.info+'44' }]}>
+                  <View style={[s.cardIcon, { borderColor: locked ? C.muted + '44' : C.info + '44' }]}>
                     <Ionicons
                       name={locked ? 'lock-closed-outline' : 'people-outline'}
                       size={17} color={locked ? C.muted : C.info} />
@@ -556,7 +603,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                 <ScrollView contentContainerStyle={[s.scroll, { paddingTop: 8 }]}
                   showsVerticalScrollIndicator={false}>
 
-                  {/* Carte question */}
                   <View style={s.questionCard}>
                     <View style={s.scoreBadge}>
                       <Text style={s.scoreBadgeTxt}>{questions[currentQIdx]?.score} pts</Text>
@@ -564,7 +610,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                     <Text style={s.questionTxt}>{questions[currentQIdx]?.question_text}</Text>
                   </View>
 
-                  {/* Boutons VRAI / FAUX */}
                   <View style={s.answerRow}>
                     <AnsBtn label="VRAI" icon="checkmark-circle-outline" color={C.vrai}
                       loading={answerLoading} disabled={answerLoading}
@@ -574,7 +619,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                       onPress={() => submitAnswer(false)} />
                   </View>
 
-                  {/* Navigation entre questions */}
                   {questions.length > 1 && (
                     <View style={s.qNav}>
                       <TouchableOpacity
@@ -647,7 +691,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
 
         {/* ══════════════════════════════════════════════════
             ONGLET 3 — MES RÉPONSES
-            MA réponse (VRAI/FAUX) uniquement — zéro score, zéro bonne réponse
         ══════════════════════════════════════════════════ */}
 
         {tab === 'answers' && sub3 === 'sessions' && (
@@ -680,7 +723,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
             {parties3.map(party => (
               <TouchableOpacity key={party.id} style={s.card}
                 onPress={() => openParty3(party)} activeOpacity={0.8}>
-                <View style={[s.cardIcon, { borderColor: C.info+'44' }]}>
+                <View style={[s.cardIcon, { borderColor: C.info + '44' }]}>
                   <Ionicons name="people-outline" size={17} color={C.info} />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -699,7 +742,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
             <Text style={s.sLabel}>MES RÉPONSES</Text>
 
-            {/* Bandeau info — scores visibles seulement dans Résultats */}
             <View style={s.infoBar}>
               <Ionicons name="information-circle-outline" size={14} color={C.info} />
               <Text style={s.infoBarTxt}>
@@ -744,9 +786,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
 
         {/* ══════════════════════════════════════════════════
             ONGLET 4 — MES RÉSULTATS
-            correct_answer + score révélés UNIQUEMENT si
-            admin a fermé le run ET activé reveal_answers
-            Score total = somme runs révélés seulement
         ══════════════════════════════════════════════════ */}
 
         {tab === 'results' && sub4 === 'sessions' && (
@@ -782,7 +821,7 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
             {parties4.map(party => (
               <TouchableOpacity key={party.id} style={s.card}
                 onPress={() => openParty4(party)} activeOpacity={0.8}>
-                <View style={[s.cardIcon, { borderColor: C.gold+'44' }]}>
+                <View style={[s.cardIcon, { borderColor: C.gold + '44' }]}>
                   <Ionicons name="people-outline" size={17} color={C.gold} />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -799,8 +838,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
 
         {tab === 'results' && sub4 === 'results' && (
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-            {/* En attente de révélation admin */}
             {resultPending ? (
               <View style={s.pendingBox}>
                 <Ionicons name="hourglass-outline" size={44} color={C.muted} />
@@ -811,7 +848,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
               </View>
             ) : (
               <>
-                {/* Score total des runs révélés */}
                 <View style={s.totalBand}>
                   <Ionicons name="trophy-outline" size={16} color={C.gold} />
                   <Text style={s.totalBandTxt}>
@@ -820,7 +856,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                   </Text>
                 </View>
 
-                {/* Questions + résultats */}
                 {myResultRuns.map(run => (
                   <View key={run.run_id} style={s.runCard}>
                     <Text style={s.runTitle}>{run.run_title}</Text>
@@ -845,7 +880,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                               flexDirection: 'row', gap: 6, marginTop: 4,
                               flexWrap: 'wrap', alignItems: 'center',
                             }}>
-                              {/* Bonne réponse */}
                               {q.correct_answer !== null && (
                                 <View style={[s.chip, {
                                   backgroundColor: (q.correct_answer ? C.vrai : C.faux) + '18',
@@ -859,7 +893,6 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                                   </Text>
                                 </View>
                               )}
-                              {/* Ma mauvaise réponse */}
                               {incorrect && (
                                 <View style={[s.chip, {
                                   backgroundColor: C.danger + '18',
@@ -870,11 +903,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
                                   </Text>
                                 </View>
                               )}
-                              {/* Non joué */}
                               {!q.answered && (
                                 <Text style={{ fontSize: 9, color: C.muted }}>Non joué</Text>
                               )}
-                              {/* Points */}
                               {q.answered && (
                                 <Text style={{
                                   fontSize: 10, fontWeight: '700',
@@ -1012,7 +1043,7 @@ const s = StyleSheet.create({
   tabBadge:     { backgroundColor: C.gold, borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1, position: 'absolute', top: 4, right: 8 },
   tabBadgeTxt:  { fontSize: 9, color: '#000', fontWeight: '800' },
 
-  infoBar:    {
+  infoBar: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     backgroundColor: C.info + '15', paddingHorizontal: 14, paddingVertical: 10,
     borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: C.info + '33',
@@ -1041,10 +1072,10 @@ const s = StyleSheet.create({
   actionBtn:    { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.gold + '22', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 11, marginTop: 8, borderWidth: 1, borderColor: C.gold + '55' },
   actionBtnTxt: { color: C.gold, fontWeight: '700', fontSize: 13 },
 
-  qCounter:     { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
-  qCounterTxt:  { fontSize: 11, color: C.muted, fontWeight: '600', marginBottom: 6 },
-  qProgressBar: { height: 3, backgroundColor: C.border, borderRadius: 2 },
-  qProgressFill:{ height: 3, backgroundColor: C.gold,   borderRadius: 2 },
+  qCounter:      { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
+  qCounterTxt:   { fontSize: 11, color: C.muted, fontWeight: '600', marginBottom: 6 },
+  qProgressBar:  { height: 3, backgroundColor: C.border, borderRadius: 2 },
+  qProgressFill: { height: 3, backgroundColor: C.gold,   borderRadius: 2 },
 
   questionCard:  { backgroundColor: C.surface, borderRadius: 16, padding: 22, borderWidth: 1, borderColor: C.border, marginBottom: 20, alignItems: 'center', gap: 14 },
   scoreBadge:    { backgroundColor: C.gold + '22', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.gold + '55' },
