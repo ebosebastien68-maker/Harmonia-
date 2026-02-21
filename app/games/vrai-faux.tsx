@@ -24,6 +24,7 @@
  *   [FIX 5] currentQIdx protégé contre -1 quand next.length === 0
  *   [FIX 6] useNativeDriver: Platform.OS !== 'web' (évite le warning web)
  *   [FIX 7] userIdProp réactif via useEffect
+ *   [FIX 8] Accepte onBack ET onClose (compatibilité games.tsx qui passe onClose)
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -85,9 +86,15 @@ interface MyResultRun {
   }[];
 }
 
-interface VraiFauxProps { userId?: string; onBack?: () => void; }
+interface VraiFauxProps {
+  userId?: string;
+  onBack?: () => void;
+  onClose?: () => void; // [FIX 8] alias — games.tsx passe onClose
+}
 
-export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) {
+export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFauxProps) {
+  // [FIX 8] onClose (games.tsx) et onBack sont identiques — on unifie
+  const handleBack = onBack ?? onClose;
 
   // ─── Navigation ───────────────────────────────────────────────────────────
   const [tab,  setTab]  = useState<Tab>('mine');
@@ -394,17 +401,17 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     if (tab === 'mine') {
       if      (sub1 === 'questions') { setSub1('parties'); }
       else if (sub1 === 'parties')   { setSub1('sessions'); setSelSess1(null); setParties1([]); }
-      else { onBack?.(); }
+      else { handleBack?.(); }
     } else if (tab === 'explore') {
-      onBack?.();
+      handleBack?.();
     } else if (tab === 'answers') {
       if      (sub3 === 'questions') { setSub3('parties'); setMyAnswerRuns([]); }
       else if (sub3 === 'parties')   { setSub3('sessions'); setSelSess3(null); setParties3([]); }
-      else { onBack?.(); }
+      else { handleBack?.(); }
     } else if (tab === 'results') {
       if      (sub4 === 'results')  { setSub4('parties'); setMyResultRuns([]); }
       else if (sub4 === 'parties')  { setSub4('sessions'); setSelSess4(null); setParties4([]); }
-      else { onBack?.(); }
+      else { handleBack?.(); }
     }
   };
 
@@ -414,6 +421,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
     if (tab === 'results' && sub4 !== 'sessions') return true;
     return false;
   };
+
+  // Bouton retour visible si sous-écran actif OU si un handler de fermeture existe
+  const showBackBtn = isOnSubScreen() || !!handleBack;
 
   const headerSub = () => {
     if (tab === 'mine') {
@@ -451,8 +461,9 @@ export default function VraiFaux({ userId: userIdProp, onBack }: VraiFauxProps) 
 
         {/* ── HEADER ── */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
-          {(isOnSubScreen() || onBack)
+          {showBackBtn
             ? <TouchableOpacity onPress={goBack} style={s.iconBtn}>
+                {/* arrow-back dans les sous-écrans, close pour fermer le jeu */}
                 <Ionicons
                   name={isOnSubScreen() ? 'arrow-back' : 'close'}
                   size={19} color={C.gold} />
