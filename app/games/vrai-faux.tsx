@@ -1,23 +1,3 @@
-/**
- * vrai-faux.tsx — 4 onglets — Compatible Web & Mobile
- *
- * ONGLET 1 "Sessions"  → mes sessions rejointes → groupes → Répondre
- * ONGLET 2 "Explorer"  → sessions disponibles → Participer (RPC join_session_smart)
- * ONGLET 3 "Réponses"  → sessions → groupes → MA réponse VRAI/FAUX (zéro score)
- * ONGLET 4 "Résultats" → sessions → groupes → bonne réponse + score (SI admin révèle)
- *
- * CORRECTIONS :
- *   [FIX 1]  access_token lu depuis p.access_token (racine)
- *   [FIX 2]  userIdProp transmis correctement même sans AsyncStorage
- *   [FIX 3]  joinSession ne bloque plus sur "Déjà inscrit"
- *   [FIX 4]  loadMySessions() sorti du setState callback
- *   [FIX 5]  currentQIdx protégé contre -1
- *   [FIX 6]  useNativeDriver compatible web
- *   [FIX 7]  userIdProp réactif via useEffect
- *   [FIX 8]  Accepte onBack ET onClose (games.tsx passe onClose)
- *   [FIX 9]  AsyncStorage lazy → plus de crash SSR Vercel/Expo
- *   [FIX 10] Bouton retour blanc légèrement sombre, visible sur fond sombre
- */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
