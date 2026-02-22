@@ -169,8 +169,8 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
         const raw = await Storage.getItem('harmonia_session');
         if (raw) {
           const p = JSON.parse(raw);
-          uid   = uid   || p?.user?.id     || ''; // [FIX 1]
-          token = token || p?.access_token || '';
+          uid   = uid   || p?.user?.id     || ''; // [FIX 2]
+          token = token || p?.access_token || '';  // [FIX 1] racine, pas p.session.access_token
         }
       } catch (e) {
         console.warn('[VraiFaux] Storage read error:', e);
@@ -266,7 +266,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
     }
     setLoadingCard(party.id); setError(''); haptic.medium();
     try {
-      try { // [FIX 3]
+      try { // [FIX 3] — "Déjà inscrit" n'est pas une erreur bloquante
         await api({ function: 'joinSession', session_id: selSess1.id });
       } catch (joinErr: any) {
         if (!joinErr.message?.includes('Déjà inscrit')) throw joinErr;
@@ -411,7 +411,7 @@ export default function VraiFaux({ userId: userIdProp, onBack, onClose }: VraiFa
         {/* ── HEADER ── */}
         <LinearGradient colors={['#10100A', C.bg]} style={s.header}>
 
-          {/* [FIX 10] Bouton retour blanc légèrement sombre */}
+          {/* [FIX 10] Bouton retour : cercle blanc translucide légèrement sombre */}
           {showBackBtn ? (
             <TouchableOpacity onPress={goBack} style={s.backBtn} activeOpacity={0.7}>
               <Ionicons
@@ -926,7 +926,6 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: C.border,
   },
 
-  // [FIX 10] Bouton retour : cercle blanc translucide légèrement sombre
   backBtn: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: 'rgba(255, 255, 255, 0.13)',
