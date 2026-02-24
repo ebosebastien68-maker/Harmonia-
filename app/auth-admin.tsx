@@ -12,7 +12,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import AwaleAdmin from './components/AwaleAdmin';
+
+// --- IMPORT DES COMPOSANTS ---
+import AwaleAdmin from './components/AwaleAdmin'; // Composant gérant "Vrai ou Faux"
+import AdminAwale from './components/AdminAwale'; // NOUVEAU composant gérant "Awalé"
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -41,7 +44,7 @@ export default function AuthAdmin() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          function: 'login', // Appel de la nouvelle fonction dédiée
+          function: 'login', 
           email: email.trim(),
           password: password,
         })
@@ -50,7 +53,6 @@ export default function AuthAdmin() {
       const data = await res.json();
 
       if (res.ok && data.success) {
-        // On stocke TOUTES les infos renvoyées + le password pour les futurs appels
         setAdminData({ 
           ...data.user, 
           email: email.trim(), 
@@ -62,7 +64,6 @@ export default function AuthAdmin() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
       } else {
-        // Gestion des erreurs spécifiques renvoyées par le backend
         const errorMsg = data.error || 'Identifiants invalides';
         Alert.alert('❌ Échec', errorMsg);
       }
@@ -167,9 +168,11 @@ export default function AuthAdmin() {
           <Text style={styles.sectionTitle}>🎮 Gestionnaires Disponibles</Text>
           
           <View style={styles.gamesGrid}>
+            
+            {/* BOUTON 1 : VRAI OU FAUX */}
             <TouchableOpacity 
               style={styles.gameCard} 
-              onPress={() => setSelectedGame('awale')}
+              onPress={() => setSelectedGame('vraioufaux')}
             >
               <LinearGradient colors={['#F59E0B', '#D97706']} style={styles.gameIconContainer}>
                 <Ionicons name="help-circle" size={40} color="#FFF" />
@@ -178,6 +181,19 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Séquences & Questions</Text>
             </TouchableOpacity>
 
+            {/* BOUTON 2 : AWALÉ (NOUVEAU) */}
+            <TouchableOpacity 
+              style={styles.gameCard} 
+              onPress={() => setSelectedGame('awale')}
+            >
+              <LinearGradient colors={['#10B981', '#059669']} style={styles.gameIconContainer}>
+                <Ionicons name="grid" size={40} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.gameName}>Awalé</Text>
+              <Text style={styles.gameDescription}>Gestion du jeu</Text>
+            </TouchableOpacity>
+
+            {/* BOUTON 3 : CLASSEMENTS (DÉSACTIVÉ) */}
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
               <View style={styles.gameIconContainer}>
                 <Ionicons name="trophy-outline" size={40} color="#CCC" />
@@ -185,6 +201,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameNameDisabled}>Classements</Text>
               <Text style={styles.comingSoon}>Bientôt disponible</Text>
             </View>
+            
           </View>
         </View>
       </View>
@@ -192,9 +209,22 @@ export default function AuthAdmin() {
   }
 
   // --- VUE 3 : GESTIONNAIRE DE JEU ---
-  if (selectedGame === 'awale') {
+  
+  // Rendu de l'interface "Vrai ou Faux"
+  if (selectedGame === 'vraioufaux') {
     return (
       <AwaleAdmin 
+        adminEmail={adminData.email} 
+        adminPassword={adminData.password} 
+        onBack={() => setSelectedGame(null)} 
+      />
+    );
+  }
+
+  // Rendu de la nouvelle interface "Awalé"
+  if (selectedGame === 'awale') {
+    return (
+      <AdminAwale 
         adminEmail={adminData.email} 
         adminPassword={adminData.password} 
         onBack={() => setSelectedGame(null)} 
