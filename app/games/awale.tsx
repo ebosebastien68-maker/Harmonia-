@@ -20,6 +20,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import TabAwale from './TabAwale';
+import TabAwale from './TabAwale';
 
 // ─── AsyncStorage lazy (SSR safe) ────────────────────────────────────────────
 const Storage = {
@@ -147,6 +149,8 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
   const [classement,    setClassement]   = useState<ClassementSession[]>([]);
   const [selSession,    setSelSession]   = useState<SessionItem | null>(null);
   const [runData,       setRunData]      = useState<{ run: RunInfo; my_match: MatchInfo | null } | null>(null);
+  const [showGame,      setShowGame]     = useState<{ matchId: string } | null>(null);
+  const [activeMatch,   setActiveMatch]  = useState<{ matchId: string } | null>(null);
 
   // ─── UI ─────────────────────────────────────────────────────────────────
   const [initLoading,  setInitLoading]  = useState(true);
@@ -314,6 +318,35 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
     );
   }
 
+  // ── Vue TabAwale plein écran ──────────────────────────────────────────────
+  if (showGame) {
+    return (
+      <TabAwale
+        matchId={showGame.matchId}
+        userId={userId}
+        accessToken={accessTokenRef.current}
+        onBack={() => setShowGame(null)}
+      />
+    );
+  }
+
+  // ── Vue jeu en cours — TabAwale plein écran ──
+  if (activeMatch) {
+    return (
+      <TabAwale
+        matchId={activeMatch.matchId}
+        userId={userId}
+        accessToken={accessTokenRef.current}
+        onBack={() => {
+          setActiveMatch(null);
+          haptic.light();
+          // Rafraîchir les sessions après la partie
+          loadMySessions();
+        }}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.root}>
       <Animated.View style={[styles.flex, { opacity: fadeAnim }]}>
@@ -391,6 +424,7 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
                   myMatch={runData.my_match}
                   userId={userId}
                   session={selSession}
+                  onPlayMatch={(matchId) => setShowGame({ matchId })}
                 />
               ) : (
                 <View style={styles.emptyBox}>
@@ -553,12 +587,13 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
 
 // ─── Composant RunCard ────────────────────────────────────────────────────────
 function RunCard({
-  run, myMatch, userId, session
+  run, myMatch, userId, session, onPlayMatch
 }: {
   run: RunInfo;
   myMatch: MatchInfo | null;
   userId: string;
   session: SessionItem;
+  onPlayMatch: (matchId: string) => void;
 }) {
 
   // ── Run terminé → signal "Match Terminé"
@@ -615,14 +650,16 @@ function RunCard({
             </View>
           )}
 
-          {/* Placeholder pour TabAwale — à brancher quand le composant sera créé */}
+          {/* Bouton Jouer — remplace le placeholder */}
           {myMatch && !myMatch.finished && (
-            <View style={styles.tabAwalePlaceholder}>
-              <Ionicons name="construct-outline" size={24} color={C.gold} />
-              <Text style={styles.tabAwalePlaceholderText}>
-                Interface de jeu — TabAwale.tsx{'\n'}(à intégrer ici)
-              </Text>
-            </View>
+            <TouchableOpacity
+              style={styles.playBtn}
+              onPress={() => onPlayMatch(myMatch.id)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="game-controller" size={20} color={C.white} />
+              <Text style={styles.playBtnText}>Jouer maintenant</Text>
+            </TouchableOpacity>
           )}
         </View>
       )}
@@ -809,9 +846,11 @@ const styles = StyleSheet.create({
   noMatchBox:  { alignItems: 'center', padding: 20, gap: 8 },
   noMatchText: { color: C.muted, fontSize: 14 },
 
-  // TabAwale placeholder
-  tabAwalePlaceholder:     { backgroundColor: '#1A1500', borderRadius: 12, padding: 20, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: C.gold, borderStyle: 'dashed' },
-  tabAwalePlaceholderText: { color: C.gold, fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  // Bouton jouer
+  playBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                 gap: 10, backgroundColor: C.green, borderRadius: 12,
+                 paddingVertical: 14, marginTop: 8 },
+  playBtnText: { color: C.white, fontSize: 15, fontWeight: '800' },
 
   // Badge
   badge:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
