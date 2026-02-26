@@ -32,7 +32,69 @@ const Storage = {
       return AS.getItem(key);
     } catch { return null; }
   },
+  setItem: async (key: string, value: string): Promise<void> => {
+    if (typeof window === 'undefined') return;
+    try {
+      const mod = await import('@react-native-async-storage/async-storage');
+      const AS  = (mod as any).default ?? mod;
+      await AS.setItem(key, value);
+    } catch { /* silencieux */ }
+  },
 };
+
+// ─── Rafraîchissement automatique du token ───────────────────────────────────
+// Lit harmonia_session depuis AsyncStorage.
+// Si le access_token expire dans moins de 60s → appelle /refresh-token sur Render.
+// Sauvegarde la nouvelle session dans AsyncStorage.
+async function getValidToken(): Promise<{ uid: string; token: string } | null> {
+  try {
+    const raw = await Storage.getItem('harmonia_session');
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+
+    const uid          = session?.user?.id      || '';
+    const accessToken  = session?.access_token  || '';
+    const refreshToken = session?.refresh_token || '';
+    const expiresAt    = session?.expires_at    || 0;
+
+    if (!uid || !accessToken) return null;
+
+    // Token encore valide (marge 60s)
+    const now = Math.floor(Date.now() / 1000);
+    if (expiresAt - now > 60) return { uid, token: accessToken };
+
+    // Token expiré → appel backend Render
+    if (!refreshToken) return null;
+
+    const res = await fetch(`${BACKEND_URL}/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      console.warn('[Awale] Rafraîchissement token échoué');
+      return null;
+    }
+
+    const data = await res.json();
+
+    // Sauvegarder la nouvelle session dans AsyncStorage
+    const newSession = {
+      ...session,
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at:    data.expires_at,
+    };
+    await Storage.setItem('harmonia_session', JSON.stringify(newSession));
+    console.log('[Awale] Token rafraîchi avec succès');
+    return { uid, token: data.access_token };
+
+  } catch (e) {
+    console.warn('[Awale] getValidToken error:', e);
+    return null;
+  }
+}
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const NATIVE      = Platform.OS !== 'web';
@@ -169,11 +231,10 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
       let uid   = userIdProp || '';
       let token = '';
       try {
-        const raw = await Storage.getItem('harmonia_session');
-        if (raw) {
-          const p = JSON.parse(raw);
-          uid   = uid   || p?.user?.id    || '';
-          token = token || p?.access_token || '';
+        const valid = await getValidToken();
+        if (valid) {
+          uid   = uid || valid.uid;
+          token = valid.token;
         }
       } catch (e) { console.warn('[Awale] Storage read error:', e); }
       if (uid)   { setUserId(uid); userIdRef.current = uid; }
@@ -191,14 +252,16 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
 
   // ─── API centrale ───────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
-    const uid   = userIdRef.current;
-    const token = accessTokenRef.current;
-    if (!uid)   throw new Error('Non connecté');
-    if (!token) throw new Error('Session expirée — reconnectez-vous');
+    // Toujours vérifier/rafraîchir le token avant l'appel
+    const valid = await getValidToken();
+    if (!valid) throw new Error('Session expirée — reconnectez-vous');
+    // Mettre à jour les refs avec le token frais
+    userIdRef.current    = valid.uid;
+    accessTokenRef.current = valid.token;
     const res = await fetch(`${BACKEND_URL}/awale`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: uid, access_token: token, ...body }),
+      body: JSON.stringify({ user_id: valid.uid, access_token: valid.token, ...body }),
     });
     const data = await res.json();
     if (!res.ok) {
