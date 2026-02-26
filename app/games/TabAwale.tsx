@@ -221,13 +221,13 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     )
   }
 
-  // Attente du 2ème joueur
+  // Démarrage (waiting = transitoire, le jeu commence dès connexion)
   if (gameState.status === 'waiting') {
     return (
       <View style={styles.centered}>
-        <Ionicons name="hourglass-outline" size={48} color={C.greenLight} />
-        <Text style={styles.waitingTitle}>En attente de l'adversaire</Text>
-        <Text style={styles.waitingText}>La partie démarrera quand les deux joueurs seront connectés</Text>
+        <ActivityIndicator size="large" color={C.greenLight} />
+        <Text style={styles.waitingTitle}>Démarrage de la partie…</Text>
+        <Text style={styles.waitingText}>L'adversaire peut vous rejoindre à tout moment</Text>
         {onBack && (
           <TouchableOpacity style={styles.backBtn} onPress={onBack}>
             <Text style={styles.backBtnText}>Retour</Text>
