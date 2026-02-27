@@ -296,10 +296,9 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
   const myScore  = myRow === 0 ? scores[0] : scores[1]
   const oppScore = myRow === 0 ? scores[1] : scores[0]
 
-  // CORRECTION SENS PLATEAU : rangée adversaire inversée (⇐⇐⇐⇐⇐⇐)
-  // La rangée du haut se lit de droite à gauche dans le parcours anti-horaire
-  // On inverse donc l'affichage : board[oppRow][5] à gauche, board[oppRow][0] à droite
-  const oppRowDisplay = [...board[oppRow]].reverse()
+  // SENS PLATEAU : rangée adverse col 0 à gauche, col 5 à droite
+  // Le flux arrive par la droite (col 5) et repart par la gauche (col 0) → ⇐⇐⇐⇐⇐⇐
+  const oppRowDisplay = board[oppRow]
 
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
