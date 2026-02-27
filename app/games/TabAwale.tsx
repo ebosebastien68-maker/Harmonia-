@@ -7,6 +7,10 @@
  *   3. status=playing → jeu normal avec turn_time
  *   4. Scores égaux → tiebreaker automatique (premier à 12)
  *   5. status=finished → victoire ou défaite (pas d'égalité)
+ *
+ * SENS DU PLATEAU (anti-horaire) :
+ *   ⇐⇐⇐⇐⇐⇐  rangée adversaire inversée (col 5→0)
+ *   ⇒⇒⇒⇒⇒⇒  rangée joueur (col 0→5)
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
@@ -28,7 +32,6 @@ const haptic = {
   error:   () => { if (NATIVE) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error) },
 }
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
   bg:          '#080C0A',
   surface:     '#0F1A12',
@@ -47,7 +50,6 @@ const C = {
   emptyHole:   '#0A1510',
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface GameState {
   match_id:          string
   board:             number[][]
@@ -71,52 +73,43 @@ interface TabAwaleProps {
   onBack?:     () => void
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────────
 export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAwaleProps) {
 
-  const [gameState,    setGameState]   = useState<GameState | null>(null)
-  const [connected,    setConnected]   = useState(false)
-  const [error,        setError]       = useState('')
-  const [timeLeft,     setTimeLeft]    = useState<number | null>(null)
-  const [prepTimeLeft, setPrepTimeLeft] = useState<number | null>(null)
-  const [lastMove,     setLastMove]    = useState<number | null>(null)
+  const [gameState,     setGameState]     = useState<GameState | null>(null)
+  const [connected,     setConnected]     = useState(false)
+  const [error,         setError]         = useState('')
+  const [timeLeft,      setTimeLeft]      = useState<number | null>(null)
+  const [prepTimeLeft,  setPrepTimeLeft]  = useState<number | null>(null)
+  const [lastMove,      setLastMove]      = useState<number | null>(null)
   const [tiebreakerMsg, setTiebreakerMsg] = useState(false)
-  const [gameOver,     setGameOver]    = useState<{
+  const [gameOver,      setGameOver]      = useState<{
     winner_id:  string | null
     end_reason: string
     scores:     number[]
   } | null>(null)
 
-  const socketRef   = useRef<Socket | null>(null)
-  const timerRef    = useRef<NodeJS.Timeout | null>(null)
+  const socketRef    = useRef<Socket | null>(null)
+  const timerRef     = useRef<NodeJS.Timeout | null>(null)
   const prepTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const fadeAnim    = useRef(new Animated.Value(0)).current
-  const holeAnims   = useRef<Animated.Value[]>(
-    Array.from({ length: 12 }, () => new Animated.Value(1))
+  const fadeAnim     = useRef(new Animated.Value(0)).current
+  const holeAnims    = useRef<Animated.Value[]>(
+    Array.from({ length: 6 }, () => new Animated.Value(1))
   ).current
 
-  // ─── Ma rangée ───────────────────────────────────────────────────────────
   const myRow    = gameState?.row1_player_id === userId ? 1 : 0
   const isMyTurn = gameState?.current_player_id === userId && gameState?.status === 'playing'
 
-  // ─── Connexion socket.io ─────────────────────────────────────────────────
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: NATIVE }).start()
 
-    const socket = socketIO(BACKEND_URL, {
-      transports: ['websocket', 'polling'],
-    })
+    const socket = socketIO(BACKEND_URL, { transports: ['websocket', 'polling'] })
     socketRef.current = socket
 
     socket.on('connect', () => {
       setConnected(true)
       setError('')
       console.log('[TabAwale] Connecté:', socket.id)
-      socket.emit('join_match', {
-        match_id:     matchId,
-        user_id:      userId,
-        access_token: accessToken,
-      })
+      socket.emit('join_match', { match_id: matchId, user_id: userId, access_token: accessToken })
     })
 
     socket.on('disconnect', () => {
@@ -130,8 +123,8 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     })
 
     socket.on('game_state', (state: GameState) => {
+      console.log(`[TabAwale] game_state | status=${state.status} | current=${state.current_player_id} | myId=${userId} | isMyTurn=${state.current_player_id === userId}`)
       setGameState(state)
-      // Démarrer le bon timer selon le statut
       if (state.status === 'prep') {
         startLocalPrepTimer(state.prep_ends_at)
         clearLocalTurnTimer()
@@ -147,33 +140,25 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     socket.on('prep_started', (data: { prep_ends_at: string; prep_seconds: number }) => {
       haptic.light()
       startLocalPrepTimer(data.prep_ends_at)
-      console.log('[TabAwale] Préparation démarrée:', data.prep_seconds + 's')
     })
 
-    socket.on('game_started', (data: any) => {
+    socket.on('game_started', () => {
       haptic.success()
       setTiebreakerMsg(false)
       clearLocalPrepTimer()
-      console.log('[TabAwale] Partie démarrée:', data)
     })
 
     socket.on('tiebreaker_started', () => {
       haptic.medium()
       setTiebreakerMsg(true)
-      // Masquer le message après 4 secondes
       setTimeout(() => setTiebreakerMsg(false), 4000)
-      console.log('[TabAwale] Tiebreaker démarré — premier à 12 gagne')
     })
 
     socket.on('game_over', (data: any) => {
       setGameOver(data)
       clearLocalTurnTimer()
       clearLocalPrepTimer()
-      if (data.winner_id === userId) {
-        haptic.success()
-      } else {
-        haptic.error()
-      }
+      data.winner_id === userId ? haptic.success() : haptic.error()
     })
 
     socket.on('error', (data: { message: string }) => {
@@ -188,7 +173,6 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     }
   }, [matchId, userId, accessToken])
 
-  // ─── Timer de tour local ─────────────────────────────────────────────────
   const startLocalTurnTimer = useCallback((timerEndsAt: string | null) => {
     clearLocalTurnTimer()
     if (!timerEndsAt) return
@@ -205,7 +189,6 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     setTimeLeft(null)
   }, [])
 
-  // ─── Timer de prep local ─────────────────────────────────────────────────
   const startLocalPrepTimer = useCallback((prepEndsAt: string | null) => {
     clearLocalPrepTimer()
     if (!prepEndsAt) return
@@ -222,30 +205,19 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     setPrepTimeLeft(null)
   }, [])
 
-  // ─── Jouer un trou ───────────────────────────────────────────────────────
   const playHole = useCallback((hole: number) => {
     if (!isMyTurn || !gameState) return
     if (gameState.board[myRow][hole] === 0) return
-
     haptic.medium()
     setLastMove(hole)
     setError('')
-
     Animated.sequence([
-      Animated.timing(holeAnims[myRow === 1 ? hole : hole + 6], {
-        toValue: 0.8, duration: 100, useNativeDriver: NATIVE
-      }),
-      Animated.timing(holeAnims[myRow === 1 ? hole : hole + 6], {
-        toValue: 1, duration: 100, useNativeDriver: NATIVE
-      }),
+      Animated.timing(holeAnims[hole], { toValue: 0.8, duration: 100, useNativeDriver: NATIVE }),
+      Animated.timing(holeAnims[hole], { toValue: 1,   duration: 100, useNativeDriver: NATIVE }),
     ]).start()
-
     socketRef.current?.emit('play', { hole })
   }, [isMyTurn, gameState, myRow, holeAnims])
 
-  // ─── Rendu ────────────────────────────────────────────────────────────────
-
-  // Chargement
   if (!connected || !gameState) {
     return (
       <View style={styles.centered}>
@@ -262,44 +234,31 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     )
   }
 
-  // Phase de préparation
   if (gameState.status === 'waiting' || gameState.status === 'prep') {
     return (
       <View style={styles.centered}>
-        {/* Bouton ✕ */}
         {onBack && (
           <TouchableOpacity style={styles.closeBtn} onPress={onBack}>
             <Ionicons name="close" size={20} color={C.cream} />
           </TouchableOpacity>
         )}
-
         <Text style={styles.prepEmoji}>⚔️</Text>
         <Text style={styles.prepTitle}>Préparation</Text>
         <Text style={styles.prepSubtitle}>La partie commence dans</Text>
-
         <View style={styles.prepCountdown}>
-          <Text style={styles.prepCountdownNumber}>
-            {prepTimeLeft !== null ? prepTimeLeft : '…'}
-          </Text>
+          <Text style={styles.prepCountdownNumber}>{prepTimeLeft !== null ? prepTimeLeft : '…'}</Text>
           <Text style={styles.prepCountdownUnit}>secondes</Text>
         </View>
-
-        <Text style={styles.prepHint}>
-          L'adversaire peut vous rejoindre à tout moment
-        </Text>
+        <Text style={styles.prepHint}>L'adversaire peut vous rejoindre à tout moment</Text>
       </View>
     )
   }
 
-  // Fin de partie
   if (gameOver || gameState.status === 'finished') {
-    const result = gameOver ?? {
-      winner_id:  gameState.winner_id,
-      end_reason: gameState.end_reason ?? '',
-      scores:     gameState.scores,
-    }
-    const iWon = result.winner_id === userId
-
+    const result  = gameOver ?? { winner_id: gameState.winner_id, end_reason: gameState.end_reason ?? '', scores: gameState.scores }
+    const iWon    = result.winner_id === userId
+    const myScore = myRow === 0 ? result.scores[0] : result.scores[1]
+    const oppScore= myRow === 0 ? result.scores[1] : result.scores[0]
     return (
       <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
         <View style={styles.gameOverBox}>
@@ -309,8 +268,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
           </Text>
           <Text style={styles.gameOverReason}>
             {result.end_reason === 'timeout' ? 'Temps écoulé'
-              : result.end_reason === 'score' ? 'Score atteint'
-              : 'Plateau vide'}
+              : result.end_reason === 'score' ? 'Score atteint' : 'Plateau vide'}
           </Text>
           {gameState.is_tiebreaker && (
             <View style={styles.tiebreakerBadge}>
@@ -318,17 +276,9 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
             </View>
           )}
           <View style={styles.finalScores}>
-            <ScoreBox
-              score={myRow === 0 ? result.scores[0] : result.scores[1]}
-              label="Vous"
-              highlight={iWon}
-            />
+            <ScoreBox score={myScore}  label="Vous"       highlight={iWon} />
             <Text style={styles.scoreSep}>—</Text>
-            <ScoreBox
-              score={myRow === 0 ? result.scores[1] : result.scores[0]}
-              label="Adversaire"
-              highlight={!iWon}
-            />
+            <ScoreBox score={oppScore} label="Adversaire" highlight={!iWon} />
           </View>
           {onBack && (
             <TouchableOpacity style={styles.doneBtn} onPress={onBack}>
@@ -340,41 +290,37 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     )
   }
 
-  // ── Jeu en cours ────────────────────────────────────────────────────────
-  const board  = gameState.board
-  const scores = gameState.scores
-
+  const board    = gameState.board
+  const scores   = gameState.scores
+  const oppRow   = myRow === 1 ? 0 : 1
   const myScore  = myRow === 0 ? scores[0] : scores[1]
   const oppScore = myRow === 0 ? scores[1] : scores[0]
-  const oppRow   = myRow === 1 ? 0 : 1
+
+  // CORRECTION SENS PLATEAU : rangée adversaire inversée (⇐⇐⇐⇐⇐⇐)
+  // La rangée du haut se lit de droite à gauche dans le parcours anti-horaire
+  // On inverse donc l'affichage : board[oppRow][5] à gauche, board[oppRow][0] à droite
+  const oppRowDisplay = [...board[oppRow]].reverse()
 
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
 
-      {/* ── Bouton ✕ retour ── */}
       {onBack && (
         <TouchableOpacity style={styles.closeBtn} onPress={onBack} activeOpacity={0.7}>
           <Ionicons name="close" size={20} color={C.cream} />
         </TouchableOpacity>
       )}
 
-      {/* ── Bandeau tiebreaker ── */}
       {tiebreakerMsg && (
         <View style={styles.tiebreakerBanner}>
-          <Text style={styles.tiebreakerBannerText}>
-            🔥 Égalité — Premier à 12 gagne !
-          </Text>
+          <Text style={styles.tiebreakerBannerText}>🔥 Égalité — Premier à 12 gagne !</Text>
         </View>
       )}
-
-      {/* ── Badge tiebreaker permanent ── */}
       {gameState.is_tiebreaker && !tiebreakerMsg && (
         <View style={styles.tiebreakerSmall}>
           <Text style={styles.tiebreakerSmallText}>🔥 Manche décisive — Premier à 12</Text>
         </View>
       )}
 
-      {/* ── Erreur ── */}
       {!!error && (
         <View style={styles.errorBanner}>
           <Ionicons name="warning" size={14} color={C.danger} />
@@ -385,7 +331,6 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
         </View>
       )}
 
-      {/* ── Scores ── */}
       <View style={styles.scoreBar}>
         <View style={styles.scoreItem}>
           <Text style={styles.scoreLabel}>Adversaire</Text>
@@ -402,54 +347,41 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
         </View>
       </View>
 
-      {/* ── Timer de tour ── */}
       {timeLeft !== null && (
         <View style={styles.timerBar}>
-          <View style={[
-            styles.timerFill,
-            { backgroundColor: timeLeft <= 5 ? C.danger : C.greenLight }
-          ]} />
-          <Text style={[
-            styles.timerText,
-            { color: timeLeft <= 5 ? C.danger : C.cream }
-          ]}>
+          <View style={[styles.timerFill, { backgroundColor: timeLeft <= 5 ? C.danger : C.greenLight }]} />
+          <Text style={[styles.timerText, { color: timeLeft <= 5 ? C.danger : C.cream }]}>
             {timeLeft}s
           </Text>
         </View>
       )}
 
-      {/* ── Plateau ── */}
       <View style={styles.boardContainer}>
 
-        {/* Rangée adversaire (haut) */}
+        {/* Rangée adversaire — ⇐⇐⇐⇐⇐⇐ (graines vont de droite à gauche dans le parcours) */}
         <View style={styles.rowLabel}>
-          <Text style={styles.rowLabelText}>Adversaire</Text>
+          <Text style={styles.rowLabelText}>← Adversaire (sens ⇐)</Text>
         </View>
         <View style={[styles.row, styles.oppRowBg]}>
-          {[...board[oppRow]].reverse().map((seeds, idx) => {
-            const col = 5 - idx
-            return (
-              <View key={`opp-${col}`} style={[styles.hole, styles.holeOpp]}>
-                <Text style={styles.holeSeeds}>{seeds}</Text>
-                <SeedDots count={seeds} color={C.muted} />
-              </View>
-            )
-          })}
+          {oppRowDisplay.map((seeds, i) => (
+            <View key={`opp-${i}`} style={[styles.hole, styles.holeOpp]}>
+              <Text style={styles.holeSeeds}>{seeds}</Text>
+              <SeedDots count={seeds} color={C.muted} />
+            </View>
+          ))}
         </View>
 
         <View style={styles.divider} />
 
-        {/* Rangée joueur (bas) */}
+        {/* Rangée joueur — ⇒⇒⇒⇒⇒⇒ (graines vont de gauche à droite dans le parcours) */}
         <View style={[styles.row, styles.myRowBg]}>
           {board[myRow].map((seeds, col) => {
             const canPlay = isMyTurn && seeds > 0
-            const anim    = holeAnims[myRow === 1 ? col : col + 6]
             return (
-              <Animated.View key={`my-${col}`} style={{ transform: [{ scale: anim }] }}>
+              <Animated.View key={`my-${col}`} style={{ transform: [{ scale: holeAnims[col] }] }}>
                 <TouchableOpacity
                   style={[
-                    styles.hole,
-                    styles.holeMy,
+                    styles.hole, styles.holeMy,
                     canPlay && styles.holeActive,
                     seeds === 0 && styles.holeEmpty,
                     lastMove === col && styles.holeLastMove,
@@ -458,23 +390,19 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
                   disabled={!canPlay}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.holeSeeds, canPlay && styles.holeSeedsActive]}>
-                    {seeds}
-                  </Text>
+                  <Text style={[styles.holeSeeds, canPlay && styles.holeSeedsActive]}>{seeds}</Text>
                   <SeedDots count={seeds} color={canPlay ? C.greenLight : C.muted} />
                 </TouchableOpacity>
               </Animated.View>
             )
           })}
         </View>
-
         <View style={styles.rowLabel}>
-          <Text style={[styles.rowLabelText, { color: C.greenLight }]}>Vous</Text>
+          <Text style={[styles.rowLabelText, { color: C.greenLight }]}>Vous (sens ⇒) →</Text>
         </View>
 
       </View>
 
-      {/* ── Info coup ── */}
       <View style={styles.moveInfo}>
         <Text style={styles.moveInfoText}>Coup #{gameState.move_count + 1}</Text>
         {!connected && <Text style={styles.reconnecting}>⚠ Reconnexion…</Text>}
@@ -483,8 +411,6 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
     </Animated.View>
   )
 }
-
-// ─── Sous-composants ──────────────────────────────────────────────────────────
 
 function SeedDots({ count, color }: { count: number; color: string }) {
   if (count === 0) return null
@@ -499,128 +425,81 @@ function SeedDots({ count, color }: { count: number; color: string }) {
   )
 }
 
-function ScoreBox({ score, label, highlight }: {
-  score: number; label: string; highlight: boolean
-}) {
+function ScoreBox({ score, label, highlight }: { score: number; label: string; highlight: boolean }) {
   return (
     <View style={[styles.scoreBox, highlight && styles.scoreBoxHighlight]}>
       <Text style={styles.scoreBoxLabel}>{label}</Text>
-      <Text style={[styles.scoreBoxValue, highlight && styles.scoreBoxValueHighlight]}>
-        {score}
-      </Text>
+      <Text style={[styles.scoreBoxValue, highlight && styles.scoreBoxValueHighlight]}>{score}</Text>
     </View>
   )
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root:     { flex: 1, backgroundColor: C.bg },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center',
-              backgroundColor: C.bg, padding: 32, gap: 16 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg, padding: 32, gap: 16 },
 
   loadingText: { color: C.muted, fontSize: 14, marginTop: 12 },
-
-  backBtn:     { marginTop: 20, paddingVertical: 12, paddingHorizontal: 32,
-                 backgroundColor: C.surface, borderRadius: 12,
-                 borderWidth: 1, borderColor: C.border },
+  backBtn:     { marginTop: 20, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border },
   backBtnText: { color: C.cream, fontSize: 14, fontWeight: '600' },
+  closeBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 52 : 16, right: 16, zIndex: 99, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
 
-  // Bouton fermer
-  closeBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 52 : 16, right: 16,
-              zIndex: 99, width: 36, height: 36, borderRadius: 18,
-              backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center',
-              justifyContent: 'center', borderWidth: 1, borderColor: C.border },
+  prepEmoji:           { fontSize: 56 },
+  prepTitle:           { color: C.cream, fontSize: 26, fontWeight: '800' },
+  prepSubtitle:        { color: C.muted, fontSize: 14 },
+  prepCountdown:       { alignItems: 'center', marginVertical: 8 },
+  prepCountdownNumber: { color: C.greenLight, fontSize: 72, fontWeight: '900', lineHeight: 80 },
+  prepCountdownUnit:   { color: C.muted, fontSize: 14 },
+  prepHint:            { color: C.muted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
 
-  // Phase prep
-  prepEmoji:            { fontSize: 56 },
-  prepTitle:            { color: C.cream, fontSize: 26, fontWeight: '800' },
-  prepSubtitle:         { color: C.muted, fontSize: 14 },
-  prepCountdown:        { alignItems: 'center', marginVertical: 8 },
-  prepCountdownNumber:  { color: C.greenLight, fontSize: 72, fontWeight: '900', lineHeight: 80 },
-  prepCountdownUnit:    { color: C.muted, fontSize: 14 },
-  prepHint:             { color: C.muted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
-
-  // Tiebreaker
-  tiebreakerBanner:     { backgroundColor: '#2A1A00', paddingVertical: 12,
-                          paddingHorizontal: 16, alignItems: 'center',
-                          borderBottomWidth: 1, borderBottomColor: C.gold },
+  tiebreakerBanner:     { backgroundColor: '#2A1A00', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.gold },
   tiebreakerBannerText: { color: C.gold, fontSize: 15, fontWeight: '800' },
-  tiebreakerSmall:      { backgroundColor: '#1A1000', paddingVertical: 6,
-                          paddingHorizontal: 16, alignItems: 'center',
-                          borderBottomWidth: 1, borderBottomColor: '#3A2A00' },
+  tiebreakerSmall:      { backgroundColor: '#1A1000', paddingVertical: 6, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#3A2A00' },
   tiebreakerSmallText:  { color: C.gold, fontSize: 12, fontWeight: '600' },
-  tiebreakerBadge:      { backgroundColor: '#1A1000', borderRadius: 8, paddingHorizontal: 12,
-                          paddingVertical: 6, borderWidth: 1, borderColor: C.gold },
+  tiebreakerBadge:      { backgroundColor: '#1A1000', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: C.gold },
   tiebreakerBadgeText:  { color: C.gold, fontSize: 13, fontWeight: '700' },
 
-  // Erreur
-  errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8,
-                 margin: 10, padding: 10, backgroundColor: '#2A0A0A',
-                 borderRadius: 8, borderWidth: 1, borderColor: C.danger },
+  errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, margin: 10, padding: 10, backgroundColor: '#2A0A0A', borderRadius: 8, borderWidth: 1, borderColor: C.danger },
   errorText:   { flex: 1, color: C.danger, fontSize: 12 },
 
-  // Scores
-  scoreBar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                 paddingHorizontal: 16, paddingVertical: 12,
-                 backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
-  scoreItem:   { alignItems: 'center', gap: 2 },
-  scoreLabel:  { color: C.muted, fontSize: 11 },
-  scoreValue:  { color: C.cream, fontSize: 24, fontWeight: '800' },
-  myScore:     { color: C.greenLight },
+  scoreBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  scoreItem:     { alignItems: 'center', gap: 2 },
+  scoreLabel:    { color: C.muted, fontSize: 11 },
+  scoreValue:    { color: C.cream, fontSize: 24, fontWeight: '800' },
+  myScore:       { color: C.greenLight },
   turnIndicator: { alignItems: 'center' },
-  yourTurn:    { color: C.greenLight, fontSize: 13, fontWeight: '700' },
-  oppTurn:     { color: C.muted, fontSize: 13 },
+  yourTurn:      { color: C.greenLight, fontSize: 13, fontWeight: '700' },
+  oppTurn:       { color: C.muted, fontSize: 13 },
 
-  // Timer
-  timerBar:  { height: 28, backgroundColor: C.surfaceHigh, marginHorizontal: 16,
-               marginTop: 8, borderRadius: 8, overflow: 'hidden',
-               borderWidth: 1, borderColor: C.border, justifyContent: 'center',
-               alignItems: 'center' },
+  timerBar:  { height: 28, backgroundColor: C.surfaceHigh, marginHorizontal: 16, marginTop: 8, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
   timerFill: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '100%', opacity: 0.15 },
   timerText: { fontSize: 13, fontWeight: '700' },
 
-  // Plateau
-  boardContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: 12,
-                    paddingVertical: 8, gap: 4 },
+  boardContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, gap: 4 },
   rowLabel:       { paddingHorizontal: 4, paddingVertical: 2 },
   rowLabelText:   { color: C.muted, fontSize: 11, fontWeight: '600' },
-  row:       { flexDirection: 'row', justifyContent: 'space-around',
-               paddingVertical: 10, paddingHorizontal: 6,
-               borderRadius: 14, borderWidth: 1, borderColor: C.border },
+  row:       { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: C.border },
   myRowBg:   { backgroundColor: C.myRow },
   oppRowBg:  { backgroundColor: C.oppRow },
   divider:   { height: 1, backgroundColor: C.border, marginVertical: 4 },
 
-  // Trou
-  hole:            { width: 52, height: 52, borderRadius: 26,
-                     backgroundColor: C.emptyHole, alignItems: 'center',
-                     justifyContent: 'center', borderWidth: 1, borderColor: C.border, gap: 2 },
+  hole:            { width: 52, height: 52, borderRadius: 26, backgroundColor: C.emptyHole, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border, gap: 2 },
   holeOpp:         { opacity: 0.8 },
   holeMy:          { backgroundColor: '#0D1F10' },
-  holeActive:      { backgroundColor: C.activeHole, borderColor: C.greenLight, borderWidth: 2,
-                     shadowColor: C.greenLight, shadowOffset: { width: 0, height: 0 },
-                     shadowOpacity: 0.4, shadowRadius: 6, elevation: 4 },
+  holeActive:      { backgroundColor: C.activeHole, borderColor: C.greenLight, borderWidth: 2, shadowColor: C.greenLight, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.4, shadowRadius: 6, elevation: 4 },
   holeEmpty:       { opacity: 0.3 },
   holeLastMove:    { borderColor: C.gold, borderWidth: 2 },
   holeSeeds:       { color: C.cream, fontSize: 16, fontWeight: '800' },
   holeSeedsActive: { color: C.white },
 
-  // Points graines
-  dotsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
-              width: 36, gap: 1, marginTop: 1 },
+  dotsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: 36, gap: 1, marginTop: 1 },
   dot:      { width: 4, height: 4, borderRadius: 2 },
   dotMore:  { fontSize: 8, fontWeight: '700' },
 
-  // Info coup
-  moveInfo:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                  paddingHorizontal: 16, paddingVertical: 8,
-                  borderTopWidth: 1, borderTopColor: C.border },
+  moveInfo:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.border },
   moveInfoText: { color: C.muted, fontSize: 12 },
   reconnecting: { color: C.danger, fontSize: 12 },
 
-  // Game over
-  gameOverBox:            { flex: 1, justifyContent: 'center', alignItems: 'center',
-                            backgroundColor: C.bg, gap: 16, padding: 32 },
+  gameOverBox:            { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg, gap: 16, padding: 32 },
   gameOverEmoji:          { fontSize: 64 },
   gameOverTitle:          { fontSize: 32, fontWeight: '900' },
   winColor:               { color: C.greenLight },
@@ -628,14 +507,11 @@ const styles = StyleSheet.create({
   gameOverReason:         { color: C.muted, fontSize: 14 },
   finalScores:            { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8 },
   scoreSep:               { color: C.muted, fontSize: 24, fontWeight: '800' },
-  scoreBox:               { alignItems: 'center', backgroundColor: C.surface,
-                            borderRadius: 14, padding: 16, borderWidth: 1,
-                            borderColor: C.border, minWidth: 90 },
+  scoreBox:               { alignItems: 'center', backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border, minWidth: 90 },
   scoreBoxHighlight:      { borderColor: C.greenLight, backgroundColor: '#0D2A14' },
   scoreBoxLabel:          { color: C.muted, fontSize: 12, marginBottom: 6 },
   scoreBoxValue:          { color: C.cream, fontSize: 28, fontWeight: '900' },
   scoreBoxValueHighlight: { color: C.greenLight },
-  doneBtn:     { marginTop: 24, paddingVertical: 14, paddingHorizontal: 48,
-                 backgroundColor: C.green, borderRadius: 14 },
+  doneBtn:     { marginTop: 24, paddingVertical: 14, paddingHorizontal: 48, backgroundColor: C.green, borderRadius: 14 },
   doneBtnText: { color: C.white, fontSize: 16, fontWeight: '700' },
 })
