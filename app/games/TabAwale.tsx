@@ -295,14 +295,13 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
   const myScore  = scores[myRow]
   const oppScore = scores[myRow === 0 ? 1 : 0]
 
-  // ── PLATEAU FIXE pour les deux joueurs ────────────────────────────────
-  // row0 toujours en haut  (⇐⇐⇐⇐⇐⇐)
-  // row1 toujours en bas   (⇒⇒⇒⇒⇒⇒)
-  // L'interactivité suit myRow : le joueur clique sa rangée
-  // Les deux voient exactement le même plateau dans le même sens
-
-  const row0IsMe = myRow === 0
-  const row1IsMe = myRow === 1
+  // ── PLATEAU RELATIF AU JOUEUR ─────────────────────────────────────────
+  // Chaque joueur voit TOUJOURS :
+  //   ⇐⇐⇐⇐⇐⇐  adversaire en HAUT
+  //   ⇒⇒⇒⇒⇒⇒  lui-même en BAS
+  const oppRow    = myRow === 0 ? 1 : 0
+  const topRow    = oppRow   // adversaire toujours en haut
+  const bottomRow = myRow    // moi toujours en bas
 
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
@@ -361,56 +360,37 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
 
       <View style={styles.boardContainer}>
 
-        {/* ── ROW 0 — toujours en haut — ⇐⇐⇐⇐⇐⇐ ── */}
+        {/* ── ADVERSAIRE — toujours en haut — ⇐⇐⇐⇐⇐⇐ ── */}
         <View style={styles.rowLabel}>
-          <Text style={[styles.rowLabelText, row0IsMe && { color: C.greenLight }]}>
-            {row0IsMe ? '← Vous' : '← Adversaire'}
-          </Text>
+          <Text style={styles.rowLabelText}>← Adversaire</Text>
         </View>
-        <View style={[styles.row, row0IsMe ? styles.myRowBg : styles.oppRowBg]}>
-          {board[0].map((seeds, col) => {
-            const canPlay = row0IsMe && isMyTurn && seeds > 0
-            return (
-              <Animated.View key={`r0-${col}`} style={{ transform: [{ scale: row0IsMe ? holeAnims[col] : new Animated.Value(1) }] }}>
-                <TouchableOpacity
-                  style={[
-                    styles.hole,
-                    row0IsMe ? styles.holeMy : styles.holeOpp,
-                    canPlay && styles.holeActive,
-                    seeds === 0 && styles.holeEmpty,
-                    row0IsMe && lastMove === col && styles.holeLastMove,
-                  ]}
-                  onPress={() => row0IsMe && playHole(col)}
-                  disabled={!canPlay}
-                  activeOpacity={row0IsMe ? 0.7 : 1}
-                >
-                  <Text style={[styles.holeSeeds, canPlay && styles.holeSeedsActive]}>{seeds}</Text>
-                  <SeedDots count={seeds} color={canPlay ? C.greenLight : C.muted} />
-                </TouchableOpacity>
-              </Animated.View>
-            )
-          })}
+        <View style={[styles.row, styles.oppRowBg]}>
+          {board[topRow].map((seeds, col) => (
+            <View key={`top-${col}`} style={[styles.hole, styles.holeOpp]}>
+              <Text style={styles.holeSeeds}>{seeds}</Text>
+              <SeedDots count={seeds} color={C.muted} />
+            </View>
+          ))}
         </View>
 
         <View style={styles.divider} />
 
-        {/* ── ROW 1 — toujours en bas — ⇒⇒⇒⇒⇒⇒ ── */}
-        <View style={[styles.row, row1IsMe ? styles.myRowBg : styles.oppRowBg]}>
-          {board[1].map((seeds, col) => {
-            const canPlay = row1IsMe && isMyTurn && seeds > 0
+        {/* ── MOI — toujours en bas — ⇒⇒⇒⇒⇒⇒ ── */}
+        <View style={[styles.row, styles.myRowBg]}>
+          {board[bottomRow].map((seeds, col) => {
+            const canPlay = isMyTurn && seeds > 0
             return (
-              <Animated.View key={`r1-${col}`} style={{ transform: [{ scale: row1IsMe ? holeAnims[col] : new Animated.Value(1) }] }}>
+              <Animated.View key={`bot-${col}`} style={{ transform: [{ scale: holeAnims[col] }] }}>
                 <TouchableOpacity
                   style={[
-                    styles.hole,
-                    row1IsMe ? styles.holeMy : styles.holeOpp,
+                    styles.hole, styles.holeMy,
                     canPlay && styles.holeActive,
                     seeds === 0 && styles.holeEmpty,
-                    row1IsMe && lastMove === col && styles.holeLastMove,
+                    lastMove === col && styles.holeLastMove,
                   ]}
-                  onPress={() => row1IsMe && playHole(col)}
+                  onPress={() => playHole(col)}
                   disabled={!canPlay}
-                  activeOpacity={row1IsMe ? 0.7 : 1}
+                  activeOpacity={0.7}
                 >
                   <Text style={[styles.holeSeeds, canPlay && styles.holeSeedsActive]}>{seeds}</Text>
                   <SeedDots count={seeds} color={canPlay ? C.greenLight : C.muted} />
@@ -420,9 +400,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
           })}
         </View>
         <View style={styles.rowLabel}>
-          <Text style={[styles.rowLabelText, row1IsMe && { color: C.greenLight }]}>
-            {row1IsMe ? 'Vous →' : 'Adversaire →'}
-          </Text>
+          <Text style={[styles.rowLabelText, { color: C.greenLight }]}>Vous →</Text>
         </View>
 
       </View>
