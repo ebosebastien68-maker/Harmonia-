@@ -174,7 +174,7 @@ interface ClassementRun {
   status: 'launched' | 'finished';
   launched_at?: string;
   finished_at?: string;
-  winners: { id: string; username?: string; avatar_url?: string }[];
+  winners: { id: string; displayName: string; avatar_url?: string }[];
 }
 
 interface ClassementSession {
@@ -623,11 +623,11 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
                                   <Text style={styles.winnerRank}>#{i + 1}</Text>
                                   <View style={styles.winnerAvatar}>
                                     <Text style={styles.winnerAvatarText}>
-                                      {(w.username || '?')[0].toUpperCase()}
+                                      {(w.displayName || '?')[0].toUpperCase()}
                                     </Text>
                                   </View>
                                   <Text style={styles.winnerName}>
-                                    {w.displayName || w.username || 'Joueur'}
+                                    {w.displayName || 'Joueur'}
                                   </Text>
                                   <Ionicons name="checkmark-circle" size={16} color={C.finished} />
                                 </View>
