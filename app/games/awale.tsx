@@ -142,6 +142,8 @@ interface MatchInfo {
   id: string;
   player1_id: string;
   player2_id: string;
+  player1_name?: string;
+  player2_name?: string;
   winner_id: string | null;
   loser_id: string | null;
   finished: boolean;
@@ -625,7 +627,7 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
                                     </Text>
                                   </View>
                                   <Text style={styles.winnerName}>
-                                    {w.username || 'Joueur'}
+                                    {w.displayName || w.username || 'Joueur'}
                                   </Text>
                                   <Ionicons name="checkmark-circle" size={16} color={C.finished} />
                                 </View>
@@ -757,9 +759,15 @@ function InfoCell({ icon, label, value }: { icon: any; label: string; value: str
 // ─── Carte de match ───────────────────────────────────────────────────────────
 function MatchCard({ match, userId }: { match: MatchInfo; userId: string }) {
   const isPlayer1   = match.player1_id === userId;
-  const opponentId  = isPlayer1 ? match.player2_id : match.player1_id;
   const isWinner    = match.winner_id === userId;
   const isLoser     = match.loser_id  === userId;
+
+  const myName  = isPlayer1
+    ? (match.player1_name || 'Vous')
+    : (match.player2_name || 'Vous');
+  const oppName = isPlayer1
+    ? (match.player2_name || 'Adversaire')
+    : (match.player1_name || 'Adversaire');
 
   return (
     <View style={styles.matchCard}>
@@ -767,12 +775,12 @@ function MatchCard({ match, userId }: { match: MatchInfo; userId: string }) {
       <View style={styles.matchVS}>
         <View style={[styles.matchPlayer, styles.matchPlayerSelf]}>
           <Ionicons name="person" size={20} color={C.cream} />
-          <Text style={styles.matchPlayerName}>Vous</Text>
+          <Text style={styles.matchPlayerName}>{myName}</Text>
         </View>
         <Text style={styles.matchVSText}>VS</Text>
         <View style={styles.matchPlayer}>
           <Ionicons name="person-outline" size={20} color={C.muted} />
-          <Text style={styles.matchPlayerName} numberOfLines={1}>Adversaire</Text>
+          <Text style={styles.matchPlayerName} numberOfLines={1}>{oppName}</Text>
         </View>
       </View>
       {match.finished && (
