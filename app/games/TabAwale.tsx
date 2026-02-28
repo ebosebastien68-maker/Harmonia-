@@ -299,9 +299,11 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
   // Chaque joueur voit TOUJOURS :
   //   ⇐⇐⇐⇐⇐⇐  adversaire en HAUT
   //   ⇒⇒⇒⇒⇒⇒  lui-même en BAS
-  const oppRow    = myRow === 0 ? 1 : 0
-  const topRow    = oppRow   // adversaire toujours en haut
-  const bottomRow = myRow    // moi toujours en bas
+  const oppRow     = myRow === 0 ? 1 : 0
+  const needsFlip  = myRow === 0
+  const topDisplay = needsFlip ? [...board[oppRow]].reverse() : board[oppRow]
+  const botDisplay = needsFlip ? [...board[myRow]].reverse()  : board[myRow]
+  const actualHole = (displayCol: number) => needsFlip ? 5 - displayCol : displayCol
 
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
@@ -365,7 +367,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
           <Text style={styles.rowLabelText}>← Adversaire</Text>
         </View>
         <View style={[styles.row, styles.oppRowBg]}>
-          {board[topRow].map((seeds, col) => (
+          {topDisplay.map((seeds, col) => (
             <View key={`top-${col}`} style={[styles.hole, styles.holeOpp]}>
               <Text style={styles.holeSeeds}>{seeds}</Text>
               <SeedDots count={seeds} color={C.muted} />
@@ -377,7 +379,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
 
         {/* ── MOI — toujours en bas — ⇒⇒⇒⇒⇒⇒ ── */}
         <View style={[styles.row, styles.myRowBg]}>
-          {board[bottomRow].map((seeds, col) => {
+          {botDisplay.map((seeds, col) => {
             const canPlay = isMyTurn && seeds > 0
             return (
               <Animated.View key={`bot-${col}`} style={{ transform: [{ scale: holeAnims[col] }] }}>
@@ -386,9 +388,9 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
                     styles.hole, styles.holeMy,
                     canPlay && styles.holeActive,
                     seeds === 0 && styles.holeEmpty,
-                    lastMove === col && styles.holeLastMove,
+                    lastMove === actualHole(col) && styles.holeLastMove,
                   ]}
-                  onPress={() => playHole(col)}
+                  onPress={() => playHole(actualHole(col))}
                   disabled={!canPlay}
                   activeOpacity={0.7}
                 >
