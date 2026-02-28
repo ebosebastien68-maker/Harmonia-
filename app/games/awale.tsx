@@ -607,66 +607,96 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
               {/* ── Vue détail session ── */}
               {selClassSession ? (
                 <>
-                  <TouchableOpacity style={styles.backRow} onPress={() => setSelClassSession(null)}>
-                    <Ionicons name="arrow-back" size={20} color={C.greenLight} />
+                  {/* Header retour */}
+                  <TouchableOpacity style={styles.backRow} onPress={() => setSelClassSession(null)} activeOpacity={0.7}>
+                    <View style={styles.backBtn}>
+                      <Ionicons name="arrow-back" size={16} color={C.greenLight} />
+                    </View>
                     <Text style={styles.backText}>Retour</Text>
                   </TouchableOpacity>
-                  <Text style={styles.sectionTitle}>{selClassSession.title}</Text>
+
+                  {/* Titre session */}
+                  <View style={styles.classDetailHeader}>
+                    <Ionicons name="trophy" size={20} color={C.gold} />
+                    <Text style={styles.classDetailTitle}>{selClassSession.title}</Text>
+                  </View>
 
                   {selClassSession.runs.length === 0 ? (
                     <View style={styles.emptyBox}>
+                      <Ionicons name="layers-outline" size={36} color={C.muted} />
                       <Text style={styles.emptyText}>Aucun run disponible.</Text>
                     </View>
                   ) : (
                     selClassSession.runs.map(run => (
                       <View key={run.id} style={styles.classRunBlock}>
+
+                        {/* En-tête run */}
                         <View style={styles.classRunHeader}>
+                          <View style={styles.classRunNumBadge}>
+                            <Text style={styles.classRunNumText}>R{run.run_number}</Text>
+                          </View>
+                          <Text style={styles.classRunTitle} numberOfLines={1}>{run.title}</Text>
                           <StatusBadge status={run.status} />
-                          <Text style={styles.classRunTitle}>Run {run.run_number} — {run.title}</Text>
                         </View>
 
                         {run.matches.length === 0 ? (
                           <Text style={styles.classEmpty}>Aucun match dans ce run</Text>
                         ) : (
-                          run.matches.map((m, i) => (
-                            <View key={m.id} style={styles.classMatchCard}>
-                              <Text style={styles.classMatchNum}>Match {i + 1}</Text>
-                              <View style={styles.classMatchVS}>
-                                <View style={[styles.classMatchPlayer,
-                                  m.finished && m.winner_name === m.player1_name && styles.classMatchWinner]}>
-                                  <Text style={styles.classMatchPlayerName} numberOfLines={1}>
-                                    {m.player1_name}
-                                  </Text>
-                                  {m.finished && m.winner_name === m.player1_name && (
-                                    <Ionicons name="trophy" size={12} color={C.gold} />
+                          <View style={styles.classMatchList}>
+                            {run.matches.map((m, i) => {
+                              const p1Wins = m.finished && m.winner_name === m.player1_name;
+                              const p2Wins = m.finished && m.winner_name === m.player2_name;
+                              return (
+                                <View key={m.id} style={styles.classMatchCard}>
+                                  {/* Numéro match */}
+                                  <View style={styles.classMatchHeader}>
+                                    <Text style={styles.classMatchNum}>Match {i + 1}</Text>
+                                    {m.finished
+                                      ? <View style={styles.classMatchDoneBadge}>
+                                          <Text style={styles.classMatchDoneText}>✅ Terminé</Text>
+                                        </View>
+                                      : <View style={styles.classMatchLiveBadge}>
+                                          <Text style={styles.classMatchLiveText}>🔵 En cours</Text>
+                                        </View>
+                                    }
+                                  </View>
+
+                                  {/* VS */}
+                                  <View style={styles.classMatchVS}>
+                                    <View style={[styles.classMatchPlayer, p1Wins && styles.classMatchWinner]}>
+                                      {p1Wins && <Ionicons name="trophy" size={13} color={C.gold} />}
+                                      <Text style={[styles.classMatchPlayerName, p1Wins && styles.classMatchWinnerName]}
+                                        numberOfLines={2} textBreakStrategy="simple">
+                                        {m.player1_name}
+                                      </Text>
+                                    </View>
+
+                                    <View style={styles.classMatchVSBadge}>
+                                      <Text style={styles.classMatchVSText}>VS</Text>
+                                    </View>
+
+                                    <View style={[styles.classMatchPlayer, p2Wins && styles.classMatchWinner]}>
+                                      {p2Wins && <Ionicons name="trophy" size={13} color={C.gold} />}
+                                      <Text style={[styles.classMatchPlayerName, p2Wins && styles.classMatchWinnerName]}
+                                        numberOfLines={2} textBreakStrategy="simple">
+                                        {m.player2_name}
+                                      </Text>
+                                    </View>
+                                  </View>
+
+                                  {/* Résultat */}
+                                  {m.finished && m.winner_name && (
+                                    <View style={styles.classMatchResultRow}>
+                                      <Ionicons name="ribbon" size={14} color={C.gold} />
+                                      <Text style={styles.classMatchResultText}>
+                                        Gagnant · {m.winner_name}
+                                      </Text>
+                                    </View>
                                   )}
                                 </View>
-                                <Text style={styles.classMatchVSText}>VS</Text>
-                                <View style={[styles.classMatchPlayer,
-                                  m.finished && m.winner_name === m.player2_name && styles.classMatchWinner]}>
-                                  <Text style={styles.classMatchPlayerName} numberOfLines={1}>
-                                    {m.player2_name}
-                                  </Text>
-                                  {m.finished && m.winner_name === m.player2_name && (
-                                    <Ionicons name="trophy" size={12} color={C.gold} />
-                                  )}
-                                </View>
-                              </View>
-                              {m.finished && m.winner_name ? (
-                                <View style={styles.classMatchResult}>
-                                  <Ionicons name="checkmark-circle" size={14} color={C.finished} />
-                                  <Text style={styles.classMatchResultText}>
-                                    Gagnant : {m.winner_name}
-                                  </Text>
-                                </View>
-                              ) : (
-                                <View style={styles.classMatchPending}>
-                                  <Ionicons name="time-outline" size={14} color={C.muted} />
-                                  <Text style={styles.classMatchPendingText}>En cours</Text>
-                                </View>
-                              )}
-                            </View>
-                          ))
+                              );
+                            })}
+                          </View>
                         )}
                       </View>
                     ))
@@ -675,32 +705,52 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
               ) : (
                 /* ── Liste des sessions ── */
                 <>
-                  <Text style={styles.sectionTitle}>Classement</Text>
+                  <View style={styles.classTrophyHeader}>
+                    <Ionicons name="trophy" size={28} color={C.gold} />
+                    <Text style={styles.sectionTitle}>Classement</Text>
+                  </View>
+
                   {classement.length === 0 ? (
                     <View style={styles.emptyBox}>
                       <Ionicons name="trophy-outline" size={40} color={C.muted} />
                       <Text style={styles.emptyText}>Vous n'êtes inscrit à aucune session.</Text>
                     </View>
                   ) : (
-                    classement.map(sess => (
-                      <TouchableOpacity
-                        key={sess.id}
-                        style={styles.classSessionCard}
-                        onPress={() => setSelClassSession(sess)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={styles.classSessionCardLeft}>
-                          <Ionicons name="trophy-outline" size={22} color={C.gold} />
-                          <View>
-                            <Text style={styles.classSessionCardTitle}>{sess.title}</Text>
-                            <Text style={styles.classSessionCardSub}>
-                              {sess.runs.length} run{sess.runs.length > 1 ? 's' : ''}
-                            </Text>
+                    classement.map(sess => {
+                      const totalMatches = sess.runs.reduce((acc, r) => acc + r.matches.length, 0);
+                      const finishedMatches = sess.runs.reduce((acc, r) => acc + r.matches.filter(m => m.finished).length, 0);
+                      const activeRun = sess.runs.find(r => r.status === 'launched');
+                      return (
+                        <TouchableOpacity
+                          key={sess.id}
+                          style={styles.classSessionCard}
+                          onPress={() => setSelClassSession(sess)}
+                          activeOpacity={0.8}
+                        >
+                          {/* Bande dorée gauche */}
+                          <View style={styles.classSessionAccent} />
+
+                          <View style={styles.classSessionCardBody}>
+                            <View style={styles.classSessionCardTop}>
+                              <Text style={styles.classSessionCardTitle} numberOfLines={1}>{sess.title}</Text>
+                              {activeRun && <StatusBadge status="launched" />}
+                            </View>
+                            <View style={styles.classSessionCardStats}>
+                              <View style={styles.classSessionStat}>
+                                <Ionicons name="layers-outline" size={13} color={C.muted} />
+                                <Text style={styles.classSessionStatText}>{sess.runs.length} run{sess.runs.length > 1 ? 's' : ''}</Text>
+                              </View>
+                              <View style={styles.classSessionStat}>
+                                <Ionicons name="game-controller-outline" size={13} color={C.muted} />
+                                <Text style={styles.classSessionStatText}>{finishedMatches}/{totalMatches} matchs</Text>
+                              </View>
+                            </View>
                           </View>
-                        </View>
-                        <Ionicons name="chevron-forward" size={20} color={C.muted} />
-                      </TouchableOpacity>
-                    ))
+
+                          <Ionicons name="chevron-forward" size={20} color={C.greenLight} />
+                        </TouchableOpacity>
+                      );
+                    })
                   )}
                 </>
               )}
@@ -990,17 +1040,75 @@ const styles = StyleSheet.create({
   badge:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
   badgeText: { fontSize: 11, fontWeight: '700' },
 
-  // Classement
-  classSessionBlock: { backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: C.border },
-  classSessionTitle: { color: C.cream, fontSize: 16, fontWeight: '700', marginBottom: 12 },
-  classRunBlock:     { backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: C.border },
-  classRunHeader:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  classRunTitle:     { color: C.cream, fontSize: 14, fontWeight: '600', flex: 1 },
-  classEmpty:        { color: C.muted, fontSize: 13, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 },
-  winnersList:       { gap: 8 },
-  winnerRow:         { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.border },
-  winnerRank:        { color: C.gold, fontSize: 14, fontWeight: '800', width: 24 },
-  winnerAvatar:      { width: 32, height: 32, borderRadius: 16, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center' },
-  winnerAvatarText:  { color: C.white, fontSize: 14, fontWeight: '700' },
-  winnerName:        { color: C.cream, fontSize: 14, fontWeight: '600', flex: 1 },
+  // ── Classement ───────────────────────────────────────────────────────────
+  classTrophyHeader:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+
+  // Carte session (liste)
+  classSessionCard:       { flexDirection: 'row', alignItems: 'center',
+                            backgroundColor: C.surface, borderRadius: 16, marginBottom: 12,
+                            borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
+  classSessionAccent:     { width: 4, alignSelf: 'stretch', backgroundColor: C.gold },
+  classSessionCardBody:   { flex: 1, padding: 14, gap: 6 },
+  classSessionCardTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  classSessionCardTitle:  { color: C.cream, fontSize: 15, fontWeight: '800', flex: 1 },
+  classSessionCardStats:  { flexDirection: 'row', gap: 14 },
+  classSessionStat:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  classSessionStatText:   { color: C.muted, fontSize: 12 },
+
+  // Détail session
+  backRow:            { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  backBtn:            { width: 32, height: 32, borderRadius: 10, backgroundColor: C.surfaceHigh,
+                        alignItems: 'center', justifyContent: 'center',
+                        borderWidth: 1, borderColor: C.border },
+  backText:           { color: C.greenLight, fontSize: 14, fontWeight: '700' },
+  classDetailHeader:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  classDetailTitle:   { color: C.cream, fontSize: 18, fontWeight: '800', flex: 1 },
+
+  // Bloc run
+  classRunBlock:      { backgroundColor: C.surfaceHigh, borderRadius: 14, padding: 14,
+                        marginBottom: 14, borderWidth: 1, borderColor: C.border },
+  classRunHeader:     { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  classRunNumBadge:   { width: 28, height: 28, borderRadius: 8, backgroundColor: C.green,
+                        alignItems: 'center', justifyContent: 'center' },
+  classRunNumText:    { color: C.white, fontSize: 11, fontWeight: '800' },
+  classRunTitle:      { color: C.cream, fontSize: 14, fontWeight: '700', flex: 1 },
+  classEmpty:         { color: C.muted, fontSize: 13, fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
+
+  // Liste matchs
+  classMatchList:     { gap: 10 },
+  classMatchCard:     { backgroundColor: C.bg, borderRadius: 12, padding: 12,
+                        borderWidth: 1, borderColor: C.border },
+  classMatchHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  classMatchNum:      { color: C.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
+  classMatchDoneBadge:{ backgroundColor: '#1A3A22', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  classMatchDoneText: { color: C.finished, fontSize: 11, fontWeight: '700' },
+  classMatchLiveBadge:{ backgroundColor: '#1A2A3A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  classMatchLiveText: { color: C.launched, fontSize: 11, fontWeight: '700' },
+
+  // VS
+  classMatchVS:         { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  classMatchPlayer:     { flex: 1, backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 10,
+                          alignItems: 'center', gap: 4, minHeight: 52, justifyContent: 'center' },
+  classMatchWinner:     { backgroundColor: '#1E3A18', borderWidth: 1.5, borderColor: C.gold },
+  classMatchPlayerName: { color: C.cream, fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  classMatchWinnerName: { color: C.gold, fontWeight: '800' },
+  classMatchVSBadge:    { width: 28, height: 28, borderRadius: 8, backgroundColor: C.surface,
+                          alignItems: 'center', justifyContent: 'center',
+                          borderWidth: 1, borderColor: C.border },
+  classMatchVSText:     { color: C.muted, fontSize: 11, fontWeight: '800' },
+
+  // Résultat
+  classMatchResultRow:  { flexDirection: 'row', alignItems: 'center', gap: 6,
+                          backgroundColor: '#1E3A18', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  classMatchResultText: { color: C.gold, fontSize: 12, fontWeight: '700' },
+
+  // Anciens (garder pour compatibilité)
+  classSessionBlock:  { marginBottom: 20 },
+  classSessionTitle:  { color: C.cream, fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  winnersList:        { gap: 8 },
+  winnerRow:          { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  winnerRank:         { color: C.gold, fontSize: 14, fontWeight: '800', width: 24 },
+  winnerAvatar:       { width: 32, height: 32, borderRadius: 16, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center' },
+  winnerAvatarText:   { color: C.white, fontSize: 14, fontWeight: '700' },
+  winnerName:         { color: C.cream, fontSize: 14, fontWeight: '600', flex: 1 },
 });
