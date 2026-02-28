@@ -97,6 +97,11 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
   const [runPrep,      setRunPrep]      = useState('10');
   const [runTurn,      setRunTurn]      = useState('30');
 
+  // ─── Modifier un run ────────────────────────────────────────────────────
+  const [editingRun,   setEditingRun]   = useState<Run | null>(null);
+  const [editRunPrep,  setEditRunPrep]  = useState('');
+  const [editRunTurn,  setEditRunTurn]  = useState('');
+
   // ─── API ─────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
     const res = await fetch(`${BACKEND_URL}/admin-awale`, {
@@ -146,6 +151,26 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, [api]);
+
+  const submitMatchResult = async (matchId: string, winnerId: string, winnerName: string) => {
+    const msg = `Désigner "${winnerName}" comme gagnant ? Cette action est irréversible.`;
+    const doSubmit = async () => {
+      setActionLoading(`win-${matchId}-${winnerId}`); setError('');
+      try {
+        await api({ function: 'submitMatchResult', match_id: matchId, winner_id: winnerId });
+        if (selRun) await loadMatches(selRun.id);
+      } catch (e: any) { setError(e.message); }
+      finally { setActionLoading(null); }
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(msg)) doSubmit();
+    } else {
+      Alert.alert('Confirmer ?', msg, [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Confirmer', onPress: doSubmit },
+      ]);
+    }
+  };
 
   useEffect(() => { loadSessions(); }, []);
 
@@ -253,6 +278,50 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
     setActionLoading(`launch-${runId}`); setError('');
     try {
       await api({ function: 'launchRun', run_id: runId });
+      if (selSession) await loadRuns(selSession.id);
+    } catch (e: any) { setError(e.message); }
+    finally { setActionLoading(null); }
+  };
+
+  const openEditRun = (run: Run) => {
+    setEditingRun(run);
+    setEditRunPrep(String(run.prep_time_seconds));
+    setEditRunTurn(String(run.turn_time_seconds));
+  };
+
+  const submitEditRun = async () => {
+    if (!editingRun) return;
+    setActionLoading(`edit-${editingRun.id}`); setError('');
+    try {
+      await api({
+        function:          'updateRun',
+        run_id:            editingRun.id,
+        prep_time_seconds: Number(editRunPrep) || 10,
+        turn_time_seconds: Number(editRunTurn) || 30,
+      });
+      setEditingRun(null);
+      if (selSession) await loadRuns(selSession.id);
+    } catch (e: any) { setError(e.message); }
+    finally { setActionLoading(null); }
+  };
+
+  const finishRun = async (run: Run) => {
+    const msg = `Terminer "${run.title}" ? Les résultats seront proclamés en frontend.`;
+    if (Platform.OS !== 'web') {
+      Alert.alert('Terminer le run ?', msg, [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Terminer', style: 'destructive', onPress: () => doFinishRun(run.id) },
+      ]);
+    } else {
+      if (!window.confirm(msg)) return;
+      doFinishRun(run.id);
+    }
+  };
+
+  const doFinishRun = async (runId: string) => {
+    setActionLoading(`finish-${runId}`); setError('');
+    try {
+      await api({ function: 'finishRun', run_id: runId });
       if (selSession) await loadRuns(selSession.id);
     } catch (e: any) { setError(e.message); }
     finally { setActionLoading(null); }
@@ -519,23 +588,82 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
                       </Text>
                     )}
 
+                    {/* ── Formulaire modification run ── */}
+                    {editingRun?.id === run.id && (
+                      <View style={styles.editRunForm}>
+                        <View style={styles.twoCol}>
+                          <View style={styles.halfField}>
+                            <Text style={styles.label}>Prép. (sec)</Text>
+                            <TextInput style={styles.input} value={editRunPrep}
+                              onChangeText={setEditRunPrep} keyboardType="numeric" />
+                          </View>
+                          <View style={styles.halfField}>
+                            <Text style={styles.label}>Tour (sec)</Text>
+                            <TextInput style={styles.input} value={editRunTurn}
+                              onChangeText={setEditRunTurn} keyboardType="numeric" />
+                          </View>
+                        </View>
+                        <View style={styles.formActions}>
+                          <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditingRun(null)}>
+                            <Text style={styles.cancelBtnText}>Annuler</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.saveBtn}
+                            onPress={submitEditRun}
+                            disabled={actionLoading === `edit-${run.id}`}>
+                            {actionLoading === `edit-${run.id}`
+                              ? <ActivityIndicator size="small" color={C.white} />
+                              : <Text style={styles.saveBtnText}>Enregistrer</Text>}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
                     <View style={styles.runActions}>
                       {/* Bouton Lancer — uniquement si created */}
                       {run.status === 'created' && (
-                        <TouchableOpacity
-                          style={styles.launchBtn}
-                          onPress={() => launchRun(run)}
-                          disabled={!!actionLoading}>
-                          {actionLoading === `launch-${run.id}`
-                            ? <ActivityIndicator size="small" color={C.white} />
-                            : <>
-                                <Ionicons name="play-circle" size={18} color={C.white} />
-                                <Text style={styles.launchBtnText}>Lancer</Text>
-                              </>}
-                        </TouchableOpacity>
+                        <>
+                          <TouchableOpacity
+                            style={styles.editBtn}
+                            onPress={() => editingRun?.id === run.id ? setEditingRun(null) : openEditRun(run)}
+                            disabled={!!actionLoading}>
+                            <Ionicons name="create-outline" size={18} color={C.gold} />
+                            <Text style={styles.editBtnText}>Modifier</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.launchBtn}
+                            onPress={() => launchRun(run)}
+                            disabled={!!actionLoading}>
+                            {actionLoading === `launch-${run.id}`
+                              ? <ActivityIndicator size="small" color={C.white} />
+                              : <>
+                                  <Ionicons name="play-circle" size={18} color={C.white} />
+                                  <Text style={styles.launchBtnText}>Lancer</Text>
+                                </>}
+                          </TouchableOpacity>
+                        </>
                       )}
-                      {/* Bouton Voir matchs — si launched ou finished */}
-                      {run.status !== 'created' && (
+                      {/* Boutons Voir matchs + Terminer — si launched */}
+                      {run.status === 'launched' && (
+                        <>
+                          <TouchableOpacity style={styles.viewBtn} onPress={() => openRun(run)}>
+                            <Ionicons name="eye-outline" size={18} color={C.green} />
+                            <Text style={styles.viewBtnText}>Matchs</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.finishBtn}
+                            onPress={() => finishRun(run)}
+                            disabled={!!actionLoading}>
+                            {actionLoading === `finish-${run.id}`
+                              ? <ActivityIndicator size="small" color={C.white} />
+                              : <>
+                                  <Ionicons name="flag" size={18} color={C.white} />
+                                  <Text style={styles.finishBtnText}>Terminer</Text>
+                                </>}
+                          </TouchableOpacity>
+                        </>
+                      )}
+                      {/* Bouton Voir matchs — si finished */}
+                      {run.status === 'finished' && (
                         <TouchableOpacity style={styles.viewBtn} onPress={() => openRun(run)}>
                           <Ionicons name="eye-outline" size={18} color={C.green} />
                           <Text style={styles.viewBtnText}>Voir les matchs</Text>
@@ -773,6 +901,21 @@ const styles = StyleSheet.create({
   // Badge
   badge:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 11, fontWeight: '700' },
+
+  // Edit run form
+  editRunForm: { backgroundColor: '#FFFBEB', borderRadius: 10, padding: 12,
+                 marginBottom: 10, borderWidth: 1, borderColor: '#FCD34D' },
+
+  // Bouton modifier
+  editBtn:     { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                 gap: 8, backgroundColor: '#FEF3C7', borderRadius: 10, paddingVertical: 12,
+                 borderWidth: 1, borderColor: '#FCD34D' },
+  editBtnText: { color: C.gold, fontWeight: '700', fontSize: 14 },
+
+  // Bouton terminer
+  finishBtn:     { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                   gap: 8, backgroundColor: C.danger, borderRadius: 10, paddingVertical: 12 },
+  finishBtnText: { color: C.white, fontWeight: '700', fontSize: 14 },
 
   // Empty
   empty:     { alignItems: 'center', padding: 40, gap: 10 },
