@@ -167,14 +167,21 @@ interface ExploreSession {
   price_cfa: number;
 }
 
+interface ClassementMatch {
+  id: string;
+  player1_name: string;
+  player2_name: string;
+  winner_name: string | null;
+  finished: boolean;
+}
+
 interface ClassementRun {
   id: string;
   run_number: number;
   title: string;
   status: 'launched' | 'finished';
-  launched_at?: string;
   finished_at?: string;
-  winners: { id: string; displayName: string; avatar_url?: string }[];
+  matches: ClassementMatch[];
 }
 
 interface ClassementSession {
@@ -213,7 +220,8 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
   const [selSession,    setSelSession]   = useState<SessionItem | null>(null);
   const [runData,       setRunData]      = useState<{ run: RunInfo; my_match: MatchInfo | null } | null>(null);
   const [showGame,      setShowGame]     = useState<{ matchId: string } | null>(null);
-  const [activeMatch,   setActiveMatch]  = useState<{ matchId: string } | null>(null);
+  const [activeMatch,     setActiveMatch]    = useState<{ matchId: string } | null>(null);
+  const [selClassSession, setSelClassSession] = useState<ClassementSession | null>(null);
 
   // ─── UI ─────────────────────────────────────────────────────────────────
   const [initLoading,  setInitLoading]  = useState(true);
@@ -595,50 +603,106 @@ export default function Awale({ userId: userIdProp, onBack, onClose }: AwaleProp
           {/* ────── ONGLET 3 — CLASSEMENT ────── */}
           {!selSession && tab === 'classement' && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Classement</Text>
-              {classement.length === 0 ? (
-                <View style={styles.emptyBox}>
-                  <Ionicons name="trophy-outline" size={40} color={C.muted} />
-                  <Text style={styles.emptyText}>Aucun run terminé pour l'instant.</Text>
-                </View>
-              ) : (
-                classement.map(sess => (
-                  <View key={sess.id} style={styles.classSessionBlock}>
-                    <Text style={styles.classSessionTitle}>{sess.title}</Text>
-                    {sess.runs.length === 0 ? (
-                      <Text style={styles.classEmpty}>Aucun run visible</Text>
-                    ) : (
-                      sess.runs.map(run => (
-                        <View key={run.id} style={styles.classRunBlock}>
-                          <View style={styles.classRunHeader}>
-                            <StatusBadge status={run.status} />
-                            <Text style={styles.classRunTitle}>Run {run.run_number} — {run.title}</Text>
-                          </View>
-                          {run.winners.length === 0 ? (
-                            <Text style={styles.classEmpty}>Gagnants non encore désignés</Text>
-                          ) : (
-                            <View style={styles.winnersList}>
-                              {run.winners.map((w, i) => (
-                                <View key={w.id} style={styles.winnerRow}>
-                                  <Text style={styles.winnerRank}>#{i + 1}</Text>
-                                  <View style={styles.winnerAvatar}>
-                                    <Text style={styles.winnerAvatarText}>
-                                      {(w.displayName || '?')[0].toUpperCase()}
-                                    </Text>
-                                  </View>
-                                  <Text style={styles.winnerName}>
-                                    {w.displayName || 'Joueur'}
-                                  </Text>
-                                  <Ionicons name="checkmark-circle" size={16} color={C.finished} />
-                                </View>
-                              ))}
-                            </View>
-                          )}
+
+              {/* ── Vue détail session ── */}
+              {selClassSession ? (
+                <>
+                  <TouchableOpacity style={styles.backRow} onPress={() => setSelClassSession(null)}>
+                    <Ionicons name="arrow-back" size={20} color={C.greenLight} />
+                    <Text style={styles.backText}>Retour</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sectionTitle}>{selClassSession.title}</Text>
+
+                  {selClassSession.runs.length === 0 ? (
+                    <View style={styles.emptyBox}>
+                      <Text style={styles.emptyText}>Aucun run disponible.</Text>
+                    </View>
+                  ) : (
+                    selClassSession.runs.map(run => (
+                      <View key={run.id} style={styles.classRunBlock}>
+                        <View style={styles.classRunHeader}>
+                          <StatusBadge status={run.status} />
+                          <Text style={styles.classRunTitle}>Run {run.run_number} — {run.title}</Text>
                         </View>
-                      ))
-                    )}
-                  </View>
-                ))
+
+                        {run.matches.length === 0 ? (
+                          <Text style={styles.classEmpty}>Aucun match dans ce run</Text>
+                        ) : (
+                          run.matches.map((m, i) => (
+                            <View key={m.id} style={styles.classMatchCard}>
+                              <Text style={styles.classMatchNum}>Match {i + 1}</Text>
+                              <View style={styles.classMatchVS}>
+                                <View style={[styles.classMatchPlayer,
+                                  m.finished && m.winner_name === m.player1_name && styles.classMatchWinner]}>
+                                  <Text style={styles.classMatchPlayerName} numberOfLines={1}>
+                                    {m.player1_name}
+                                  </Text>
+                                  {m.finished && m.winner_name === m.player1_name && (
+                                    <Ionicons name="trophy" size={12} color={C.gold} />
+                                  )}
+                                </View>
+                                <Text style={styles.classMatchVSText}>VS</Text>
+                                <View style={[styles.classMatchPlayer,
+                                  m.finished && m.winner_name === m.player2_name && styles.classMatchWinner]}>
+                                  <Text style={styles.classMatchPlayerName} numberOfLines={1}>
+                                    {m.player2_name}
+                                  </Text>
+                                  {m.finished && m.winner_name === m.player2_name && (
+                                    <Ionicons name="trophy" size={12} color={C.gold} />
+                                  )}
+                                </View>
+                              </View>
+                              {m.finished && m.winner_name ? (
+                                <View style={styles.classMatchResult}>
+                                  <Ionicons name="checkmark-circle" size={14} color={C.finished} />
+                                  <Text style={styles.classMatchResultText}>
+                                    Gagnant : {m.winner_name}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View style={styles.classMatchPending}>
+                                  <Ionicons name="time-outline" size={14} color={C.muted} />
+                                  <Text style={styles.classMatchPendingText}>En cours</Text>
+                                </View>
+                              )}
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    ))
+                  )}
+                </>
+              ) : (
+                /* ── Liste des sessions ── */
+                <>
+                  <Text style={styles.sectionTitle}>Classement</Text>
+                  {classement.length === 0 ? (
+                    <View style={styles.emptyBox}>
+                      <Ionicons name="trophy-outline" size={40} color={C.muted} />
+                      <Text style={styles.emptyText}>Vous n'êtes inscrit à aucune session.</Text>
+                    </View>
+                  ) : (
+                    classement.map(sess => (
+                      <TouchableOpacity
+                        key={sess.id}
+                        style={styles.classSessionCard}
+                        onPress={() => setSelClassSession(sess)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.classSessionCardLeft}>
+                          <Ionicons name="trophy-outline" size={22} color={C.gold} />
+                          <View>
+                            <Text style={styles.classSessionCardTitle}>{sess.title}</Text>
+                            <Text style={styles.classSessionCardSub}>
+                              {sess.runs.length} run{sess.runs.length > 1 ? 's' : ''}
+                            </Text>
+                          </View>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color={C.muted} />
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </>
               )}
             </View>
           )}
