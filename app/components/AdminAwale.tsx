@@ -54,9 +54,9 @@ interface Run {
 }
 interface Match {
   id: string; finished: boolean;
-  player1: { id: string; username: string };
-  player2: { id: string; username: string };
-  winner: { id: string; username: string } | null;
+  player1: { id: string; name: string };
+  player2: { id: string; name: string };
+  winner: { id: string; name: string } | null;
 }
 
 interface AdminAwaleProps {
@@ -705,13 +705,13 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
                     </View>
                     <View style={styles.matchVS}>
                       <PlayerChip
-                        username={m.player1.username}
+                        username={m.player1.name}
                         isWinner={m.winner?.id === m.player1.id}
                         finished={m.finished}
                       />
                       <Text style={styles.vsText}>VS</Text>
                       <PlayerChip
-                        username={m.player2.username}
+                        username={m.player2.name}
                         isWinner={m.winner?.id === m.player2.id}
                         finished={m.finished}
                       />
@@ -719,7 +719,7 @@ export default function AdminAwale({ adminEmail, adminPassword, onBack }: AdminA
                     {m.finished && m.winner && (
                       <View style={styles.winnerRow}>
                         <Ionicons name="trophy" size={14} color={C.gold} />
-                        <Text style={styles.winnerText}>Gagnant : {m.winner.username}</Text>
+                        <Text style={styles.winnerText}>Gagnant : {m.winner.name}</Text>
                       </View>
                     )}
                   </View>
