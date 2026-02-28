@@ -64,6 +64,10 @@ interface GameState {
   is_tiebreaker:     boolean
   row0_player_id:    string | null
   row1_player_id:    string | null
+  player1_id:        string | null
+  player2_id:        string | null
+  player1_name:      string | null
+  player2_name:      string | null
 }
 
 interface TabAwaleProps {
@@ -305,6 +309,15 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
   const botDisplay = needsFlip ? [...board[myRow]].reverse()  : board[myRow]
   const actualHole = (displayCol: number) => needsFlip ? 5 - displayCol : displayCol
 
+  // Noms des joueurs
+  const isPlayer1 = gameState.player1_id === userId
+  const myName    = isPlayer1
+    ? (gameState.player1_name || 'Vous')
+    : (gameState.player2_name || 'Vous')
+  const oppName   = isPlayer1
+    ? (gameState.player2_name || 'Adversaire')
+    : (gameState.player1_name || 'Adversaire')
+
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
 
@@ -364,7 +377,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
 
         {/* ── ADVERSAIRE — toujours en haut — ⇐⇐⇐⇐⇐⇐ ── */}
         <View style={styles.rowLabel}>
-          <Text style={styles.rowLabelText}>← Adversaire</Text>
+          <Text style={styles.rowLabelText}>← {oppName}</Text>
         </View>
         <View style={[styles.row, styles.oppRowBg]}>
           {topDisplay.map((seeds, col) => (
@@ -402,7 +415,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
           })}
         </View>
         <View style={styles.rowLabel}>
-          <Text style={[styles.rowLabelText, { color: C.greenLight }]}>Vous →</Text>
+          <Text style={[styles.rowLabelText, { color: C.greenLight }]}>{myName} →</Text>
         </View>
 
       </View>
