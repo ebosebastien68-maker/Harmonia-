@@ -282,7 +282,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
           <View style={styles.finalScores}>
             <ScoreBox score={myScore}  label="Vous"       highlight={iWon} />
             <Text style={styles.scoreSep}>—</Text>
-            <ScoreBox score={oppScore} label="Adversaire" highlight={!iWon} />
+            <ScoreBox score={oppScore} label={gameState?.player1_id === userId ? (gameState?.player2_name || "Adversaire") : (gameState?.player1_name || "Adversaire")} highlight={!iWon} />
           </View>
           {onBack && (
             <TouchableOpacity style={styles.doneBtn} onPress={onBack}>
@@ -350,7 +350,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
 
       <View style={styles.scoreBar}>
         <View style={styles.scoreItem}>
-          <Text style={styles.scoreLabel}>Adversaire</Text>
+          <Text style={styles.scoreLabel} numberOfLines={1}>{oppName}</Text>
           <Text style={styles.scoreValue}>{oppScore}</Text>
         </View>
         <View style={styles.turnIndicator}>
@@ -359,7 +359,7 @@ export default function TabAwale({ matchId, userId, accessToken, onBack }: TabAw
             : <Text style={styles.oppTurn}>⏳ Tour adverse</Text>}
         </View>
         <View style={styles.scoreItem}>
-          <Text style={styles.scoreLabel}>Vous</Text>
+          <Text style={styles.scoreLabel} numberOfLines={1}>{myName}</Text>
           <Text style={[styles.scoreValue, styles.myScore]}>{myScore}</Text>
         </View>
       </View>
