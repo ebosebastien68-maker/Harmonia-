@@ -15,7 +15,8 @@ import * as Haptics from 'expo-haptics';
 
 // --- IMPORT DES COMPOSANTS ---
 import AwaleAdmin from './components/AwaleAdmin'; // Composant gérant "Vrai ou Faux"
-import AdminAwale from './components/AdminAwale'; // NOUVEAU composant gérant "Awalé"
+import AdminAwale from './components/AdminAwale'; // Composant gérant "Awalé"
+import AdminDames from './components/AdminDames'; // NOUVEAU composant gérant "Dames"
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -25,7 +26,6 @@ export default function AuthAdmin() {
   const [loading, setLoading] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   
-  // Contiendra : { id, nom, prenom, role, email, password }
   const [adminData, setAdminData] = useState<any>(null);
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
 
@@ -181,7 +181,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Séquences & Questions</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 2 : AWALÉ (NOUVEAU) */}
+            {/* BOUTON 2 : AWALÉ */}
             <TouchableOpacity 
               style={styles.gameCard} 
               onPress={() => setSelectedGame('awale')}
@@ -193,7 +193,19 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Gestion du jeu</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 3 : CLASSEMENTS (DÉSACTIVÉ) */}
+            {/* BOUTON 3 : DAMES (NOUVEAU) */}
+            <TouchableOpacity 
+              style={styles.gameCard} 
+              onPress={() => setSelectedGame('dames')}
+            >
+              <LinearGradient colors={['#3B82F6', '#2563EB']} style={styles.gameIconContainer}>
+                <Ionicons name="apps" size={40} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.gameName}>Dames</Text>
+              <Text style={styles.gameDescription}>Gestion des pions</Text>
+            </TouchableOpacity>
+
+            {/* BOUTON 4 : CLASSEMENTS (DÉSACTIVÉ) */}
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
               <View style={styles.gameIconContainer}>
                 <Ionicons name="trophy-outline" size={40} color="#CCC" />
@@ -210,7 +222,6 @@ export default function AuthAdmin() {
 
   // --- VUE 3 : GESTIONNAIRE DE JEU ---
   
-  // Rendu de l'interface "Vrai ou Faux"
   if (selectedGame === 'vraioufaux') {
     return (
       <AwaleAdmin 
@@ -221,10 +232,20 @@ export default function AuthAdmin() {
     );
   }
 
-  // Rendu de la nouvelle interface "Awalé"
   if (selectedGame === 'awale') {
     return (
       <AdminAwale 
+        adminEmail={adminData.email} 
+        adminPassword={adminData.password} 
+        onBack={() => setSelectedGame(null)} 
+      />
+    );
+  }
+
+  // Rendu de la nouvelle interface "Dames"
+  if (selectedGame === 'dames') {
+    return (
+      <AdminDames 
         adminEmail={adminData.email} 
         adminPassword={adminData.password} 
         onBack={() => setSelectedGame(null)} 
