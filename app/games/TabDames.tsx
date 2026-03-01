@@ -166,7 +166,7 @@ export default function TabDames({ matchId, userId, accessToken, onBack }: TabDa
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: NATIVE }).start()
 
-    const socket = socketIO(BACKEND_URL, { transports: ['websocket', 'polling'] })
+    const socket = socketIO(`${BACKEND_URL}/dames`, { transports: ['websocket', 'polling'] })
     socketRef.current = socket
 
     socket.on('connect', () => {
