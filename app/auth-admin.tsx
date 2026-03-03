@@ -14,9 +14,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
 // --- IMPORT DES COMPOSANTS ---
-import AwaleAdmin from './components/AwaleAdmin'; // Composant gérant "Vrai ou Faux"
-import AdminAwale from './components/AdminAwale'; // Composant gérant "Awalé"
-import AdminDames from './components/AdminDames'; // NOUVEAU composant gérant "Dames"
+import AwaleAdmin from './components/AwaleAdmin'; 
+import AdminAwale from './components/AdminAwale'; 
+import AdminDames from './components/AdminDames'; 
+import AdminArts from './components/AdminArts'; // NOUVEAU composant Arts
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -193,7 +194,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Gestion du jeu</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 3 : DAMES (NOUVEAU) */}
+            {/* BOUTON 3 : DAMES */}
             <TouchableOpacity 
               style={styles.gameCard} 
               onPress={() => setSelectedGame('dames')}
@@ -205,7 +206,19 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Gestion des pions</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 4 : CLASSEMENTS (DÉSACTIVÉ) */}
+            {/* BOUTON 4 : ARTS (NOUVEAU) */}
+            <TouchableOpacity 
+              style={styles.gameCard} 
+              onPress={() => setSelectedGame('arts')}
+            >
+              <LinearGradient colors={['#EC4899', '#BE185D']} style={styles.gameIconContainer}>
+                <Ionicons name="color-palette" size={40} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.gameName}>Arts</Text>
+              <Text style={styles.gameDescription}>Galerie & Médias</Text>
+            </TouchableOpacity>
+
+            {/* BOUTON 5 : CLASSEMENTS (DÉSACTIVÉ) */}
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
               <View style={styles.gameIconContainer}>
                 <Ionicons name="trophy-outline" size={40} color="#CCC" />
@@ -242,7 +255,6 @@ export default function AuthAdmin() {
     );
   }
 
-  // Rendu de la nouvelle interface "Dames"
   if (selectedGame === 'dames') {
     return (
       <AdminDames 
@@ -253,9 +265,21 @@ export default function AuthAdmin() {
     );
   }
 
+  // Rendu de la nouvelle interface "Arts"
+  if (selectedGame === 'arts') {
+    return (
+      <AdminArts 
+        adminEmail={adminData.email} 
+        adminPassword={adminData.password} 
+        onBack={() => setSelectedGame(null)} 
+      />
+    );
+  }
+
   return null;
 }
 
+// Les styles restent identiques à la version précédente
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   header: { 
