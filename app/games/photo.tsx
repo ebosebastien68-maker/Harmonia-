@@ -22,12 +22,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { createClient } from '@supabase/supabase-js';
 
-const BACKEND_URL   = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-const SUPABASE_URL  = process.env.EXPO_PUBLIC_SUPABASE_URL  || '';
-const SUPABASE_ANON = process.env.EXPO_PUBLIC_SUPABASE_ANON || '';
-const NATIVE        = Platform.OS !== 'web';
+const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+const NATIVE      = Platform.OS !== 'web';
 
 const haptic = {
   light:   () => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);   },
@@ -268,28 +265,25 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     if (!pickedImage || !submitRun) return;
     setUploading(true); setError('');
     try {
-      // Upload vers Supabase Storage
-      const supabase  = createClient(SUPABASE_URL, SUPABASE_ANON);
-      const ext       = pickedImage.split('.').pop() || 'jpg';
-      const filename  = `${uid}_${Date.now()}.${ext}`;
-      const response  = await fetch(pickedImage);
-      const blob      = await response.blob();
+      // Convertir l'image en base64
+      const response = await fetch(pickedImage);
+      const blob     = await response.blob();
+      const base64   = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = () => reject(new Error('Lecture image échouée'));
+        reader.readAsDataURL(blob);
+      });
 
-      const { data: uploadData, error: uploadErr } = await supabase.storage
-        .from('arts_images')
-        .upload(`submissions/${filename}`, blob, { contentType: `image/${ext}` });
+      // Détecter l'extension
+      const ext = pickedImage.split('.').pop()?.toLowerCase() || 'jpg';
 
-      if (uploadErr) throw new Error(`Upload échoué: ${uploadErr.message}`);
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('arts_images')
-        .getPublicUrl(`submissions/${filename}`);
-
-      // Soumettre via backend
+      // Envoyer au backend
       await api({
         function:    'submitImage',
         run_id:      submitRun.id,
-        image_url:   publicUrl,
+        base64_image: base64,
+        extension:   ext,
         description: description.trim() || null,
       });
 
@@ -298,13 +292,12 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
       setDescription('');
       Alert.alert('✅ Soumis !', 'Votre œuvre a été soumise avec succès.');
 
-      // Rafraîchir les données
       if (selSession) await loadRunForSession(selSession);
     } catch (e: any) {
       setError(e.message);
       haptic.error();
     } finally { setUploading(false); }
-  }, [pickedImage, submitRun, uid, description, api, selSession, loadRunForSession]);
+  }, [pickedImage, submitRun, description, api, selSession, loadRunForSession]);
 
   // ─── Navigation tabs ──────────────────────────────────────────────────────
   const handleTabChange = (t: Tab) => {
