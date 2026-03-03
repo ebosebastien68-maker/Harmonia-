@@ -1,15 +1,12 @@
 /**
  * arts.tsx — Concours Arts — 4 onglets
  *
- * ONGLET 1 "Mes Sessions"  → sessions rejointes → run actif → soumettre image
- * ONGLET 2 "Explorer"      → sessions disponibles → Participer
- * ONGLET 3 "Soumettre"     → upload image depuis galerie → soumettre au run actif
- * ONGLET 4 "Classement"    → sessions → runs voting_open/finished → rang + votes
- *
- * ARCHITECTURE :
- *   • BACKEND_URL/arts
- *   • AsyncStorage lazy → SSR safe
- *   • Upload image : galerie → Supabase Storage bucket arts_images → image_url
+ * UPLOAD SÉCURISÉ :
+ *   1. Frontend demande une Signed Upload URL au backend (getUploadUrl)
+ *   2. Backend vérifie token + quota + génère URL signée (expire 5min)
+ *   3. Frontend PUT l'image directement vers Supabase Storage via signed URL
+ *   4. Frontend confirme la soumission au backend (submitImage avec path)
+ *   → Les clés Supabase ne quittent jamais le backend
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -28,28 +25,8 @@ const NATIVE      = Platform.OS !== 'web';
 
 const haptic = {
   light:   () => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);   },
-  medium:  () => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);  },
   success: () => { if (NATIVE) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); },
   error:   () => { if (NATIVE) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);   },
-};
-
-// ─── Palette ─────────────────────────────────────────────────────────────────
-const C = {
-  bg:          '#080C0A',
-  surface:     '#0F1A12',
-  surfaceHigh: '#162019',
-  border:      '#1E3022',
-  gold:        '#C9A84C',
-  purple:      '#8E44AD',
-  purpleLight: '#A569BD',
-  cream:       '#E8F0E0',
-  muted:       '#4A6B52',
-  launched:    '#2980B9',
-  finished:    '#27AE60',
-  danger:      '#E74C3C',
-  white:       '#FFFFFF',
-  voting:      '#E67E22',
-  submissions: '#16A085',
 };
 
 // ─── AsyncStorage lazy ───────────────────────────────────────────────────────
@@ -76,6 +53,24 @@ async function getValidToken(): Promise<{ uid: string; token: string } | null> {
   } catch { return null; }
 }
 
+// ─── Palette ─────────────────────────────────────────────────────────────────
+const C = {
+  bg:          '#080C0A',
+  surface:     '#0F1A12',
+  surfaceHigh: '#162019',
+  border:      '#1E3022',
+  gold:        '#C9A84C',
+  purple:      '#8E44AD',
+  purpleLight: '#A569BD',
+  cream:       '#E8F0E0',
+  muted:       '#4A6B52',
+  finished:    '#27AE60',
+  danger:      '#E74C3C',
+  white:       '#FFFFFF',
+  voting:      '#E67E22',
+  submissions: '#16A085',
+};
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Tab = 'mine' | 'explore' | 'submit' | 'classement';
 
@@ -85,8 +80,6 @@ interface RunInfo {
   title: string;
   status: 'draft' | 'submissions_open' | 'voting_open' | 'finished';
   max_submissions: number;
-  min_votes_qualify?: number | null;
-  min_rank_qualify?: number | null;
 }
 
 interface Submission {
@@ -141,22 +134,23 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
 
   const [tab, setTab] = useState<Tab>('mine');
 
-  const [mySessions,    setMySessions]    = useState<SessionItem[]>([]);
-  const [exploreSess,   setExploreSess]   = useState<SessionItem[]>([]);
-  const [classement,    setClassement]    = useState<ClassementSession[]>([]);
+  const [mySessions,  setMySessions]  = useState<SessionItem[]>([]);
+  const [exploreSess, setExploreSess] = useState<SessionItem[]>([]);
+  const [classement,  setClassement]  = useState<ClassementSession[]>([]);
 
-  const [selSession,    setSelSession]    = useState<SessionItem | null>(null);
-  const [runData,       setRunData]       = useState<{
+  const [selSession,  setSelSession]  = useState<SessionItem | null>(null);
+  const [runData,     setRunData]     = useState<{
     run: RunInfo | null;
     my_submissions: Submission[];
     is_enrolled: boolean;
   } | null>(null);
 
   // Submit
-  const [submitRun,     setSubmitRun]     = useState<RunInfo | null>(null);
-  const [pickedImage,   setPickedImage]   = useState<string | null>(null);
-  const [description,   setDescription]  = useState('');
-  const [uploading,     setUploading]     = useState(false);
+  const [submitRun,    setSubmitRun]    = useState<RunInfo | null>(null);
+  const [pickedImage,  setPickedImage]  = useState<{ uri: string; ext: string } | null>(null);
+  const [description,  setDescription] = useState('');
+  const [uploading,    setUploading]   = useState(false);
+  const [uploadStep,   setUploadStep]  = useState('');
 
   const [loading,       setLoading]       = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -170,12 +164,10 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
   }, []);
 
   useEffect(() => {
-    if (uid && token) {
-      loadMySessions();
-    }
+    if (uid && token) loadMySessions();
   }, [uid, token]);
 
-  // ─── API ──────────────────────────────────────────────────────────────────
+  // ─── API ─────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
     const res = await fetch(`${BACKEND_URL}/arts`, {
       method:  'POST',
@@ -187,7 +179,7 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     return data;
   }, [uid, token]);
 
-  // ─── Chargements ──────────────────────────────────────────────────────────
+  // ─── Chargements ─────────────────────────────────────────────────────────
   const loadMySessions = useCallback(async () => {
     setLoading(true); setError('');
     try {
@@ -247,55 +239,75 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
   const pickImage = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission requise', 'Autorisez l\'accès à votre galerie.');
+      Alert.alert('Permission requise', "Autorisez l'accès à votre galerie.");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality:    0.8,
+      quality:    0.85,
       allowsEditing: true,
     });
     if (!result.canceled && result.assets[0]) {
-      setPickedImage(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
+      setPickedImage({ uri, ext: ['jpg','jpeg','png','webp'].includes(ext) ? ext : 'jpg' });
     }
   }, []);
 
-  // ─── Upload & soumettre ───────────────────────────────────────────────────
-  const submitImage = useCallback(async () => {
+  // ─── Upload sécurisé ─────────────────────────────────────────────────────
+  // Étape 1 : backend génère Signed Upload URL
+  // Étape 2 : frontend PUT l'image directement sur Supabase Storage
+  // Étape 3 : frontend confirme au backend avec le path
+  const handleSubmit = useCallback(async () => {
     if (!pickedImage || !submitRun) return;
     setUploading(true); setError('');
+
     try {
-      // Convertir l'image en base64
-      const response = await fetch(pickedImage);
-      const blob     = await response.blob();
-      const base64   = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload  = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = () => reject(new Error('Lecture image échouée'));
-        reader.readAsDataURL(blob);
+      // ── Étape 1 : Demander la signed URL ─────────────────────────────────
+      setUploadStep('Préparation de l\'upload…');
+      const urlData = await api({
+        function: 'getUploadUrl',
+        run_id:   submitRun.id,
+        file_ext: pickedImage.ext,
       });
 
-      // Détecter l'extension
-      const ext = pickedImage.split('.').pop()?.toLowerCase() || 'jpg';
+      const { signed_url, path } = urlData;
 
-      // Envoyer au backend
+      // ── Étape 2 : Uploader l'image via signed URL ─────────────────────────
+      setUploadStep('Envoi de l\'image…');
+      const response  = await fetch(pickedImage.uri);
+      const blob      = await response.blob();
+
+      const uploadRes = await fetch(signed_url, {
+        method:  'PUT',
+        headers: { 'Content-Type': `image/${pickedImage.ext}` },
+        body:    blob,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error(`Upload échoué (${uploadRes.status})`);
+      }
+
+      // ── Étape 3 : Confirmer la soumission au backend ──────────────────────
+      setUploadStep('Enregistrement…');
       await api({
         function:    'submitImage',
         run_id:      submitRun.id,
-        base64_image: base64,
-        extension:   ext,
+        path,
         description: description.trim() || null,
       });
 
       haptic.success();
       setPickedImage(null);
       setDescription('');
+      setUploadStep('');
       Alert.alert('✅ Soumis !', 'Votre œuvre a été soumise avec succès.');
 
       if (selSession) await loadRunForSession(selSession);
     } catch (e: any) {
       setError(e.message);
       haptic.error();
+      setUploadStep('');
     } finally { setUploading(false); }
   }, [pickedImage, submitRun, description, api, selSession, loadRunForSession]);
 
@@ -305,22 +317,23 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     setSelSession(null);
     setRunData(null);
     setError('');
-    if (t === 'explore')     loadExplore();
-    if (t === 'classement')  loadClassement();
-    if (t === 'mine')        loadMySessions();
+    if (t === 'explore')    loadExplore();
+    if (t === 'classement') loadClassement();
+    if (t === 'mine')       loadMySessions();
   };
 
   const tabs: { key: Tab; label: string; icon: string }[] = [
-    { key: 'mine',       label: 'Mes Sessions', icon: 'person'         },
-    { key: 'explore',    label: 'Explorer',     icon: 'compass'        },
-    { key: 'submit',     label: 'Soumettre',    icon: 'cloud-upload'   },
-    { key: 'classement', label: 'Classement',   icon: 'trophy'         },
+    { key: 'mine',       label: 'Sessions',   icon: 'person'        },
+    { key: 'explore',    label: 'Explorer',   icon: 'compass'       },
+    { key: 'submit',     label: 'Soumettre',  icon: 'cloud-upload'  },
+    { key: 'classement', label: 'Classement', icon: 'trophy'        },
   ];
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.root}>
-      <LinearGradient colors={['#0F0A1A', '#080C0A']} style={styles.header}>
+
+      <LinearGradient colors={['#1A0A2E', '#080C0A']} style={styles.header}>
         {(onBack || onClose) && (
           <TouchableOpacity onPress={onBack ?? onClose} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color={C.cream} />
@@ -343,19 +356,12 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
             style={[styles.tabItem, tab === t.key && styles.tabItemActive]}
             onPress={() => handleTabChange(t.key)}
           >
-            <Ionicons
-              name={t.icon as any}
-              size={20}
-              color={tab === t.key ? C.purpleLight : C.muted}
-            />
-            <Text style={[styles.tabLabel, tab === t.key && styles.tabLabelActive]}>
-              {t.label}
-            </Text>
+            <Ionicons name={t.icon as any} size={20} color={tab === t.key ? C.purpleLight : C.muted} />
+            <Text style={[styles.tabLabel, tab === t.key && styles.tabLabelActive]}>{t.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Erreur */}
       {!!error && (
         <View style={styles.errorBanner}>
           <Ionicons name="warning" size={14} color={C.danger} />
@@ -373,40 +379,25 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
       ) : (
         <ScrollView style={styles.flex} contentContainerStyle={styles.scroll}>
 
-          {/* ─── ONGLET MES SESSIONS ─── */}
+          {/* ─── MES SESSIONS ─── */}
           {tab === 'mine' && !selSession && (
-            <>
-              {mySessions.length === 0 ? (
-                <Empty icon="easel-outline" text="Aucune session rejointe" hint="Explorez les concours disponibles" />
-              ) : (
-                mySessions.map(s => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={styles.card}
-                    onPress={() => loadRunForSession(s)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.cardTop}>
+            mySessions.length === 0
+              ? <Empty icon="easel-outline" text="Aucune session rejointe" hint="Explorez les concours disponibles" />
+              : mySessions.map(s => (
+                  <TouchableOpacity key={s.id} style={styles.card} onPress={() => loadRunForSession(s)} activeOpacity={0.8}>
+                    <View style={styles.cardBody}>
                       <Text style={styles.cardTitle}>{s.title}</Text>
                       {s.description ? <Text style={styles.cardDesc} numberOfLines={2}>{s.description}</Text> : null}
-                      {s.current_run ? (
-                        <RunStatusBadge status={s.current_run.status} />
-                      ) : (
-                        <View style={styles.noRunBadge}>
-                          <Text style={styles.noRunText}>Aucun run actif</Text>
-                        </View>
-                      )}
+                      {s.current_run
+                        ? <RunStatusBadge status={s.current_run.status} />
+                        : <View style={styles.noRunBadge}><Text style={styles.noRunText}>Aucun run actif</Text></View>}
                     </View>
-                    <View style={styles.cardArrow}>
-                      <Ionicons name="chevron-forward" size={18} color={C.muted} />
-                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={C.muted} style={{ margin: 16 }} />
                   </TouchableOpacity>
                 ))
-              )}
-            </>
           )}
 
-          {/* Détail session → run → soumissions */}
+          {/* Détail session */}
           {tab === 'mine' && selSession && runData && (
             <>
               <TouchableOpacity style={styles.backRow} onPress={() => { setSelSession(null); setRunData(null); }}>
@@ -416,69 +407,64 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
 
               <Text style={styles.sectionTitle}>{selSession.title}</Text>
 
-              {!runData.run ? (
-                <Empty icon="time-outline" text="Aucun run actif pour cette session" />
-              ) : (
-                <View style={styles.runBox}>
-                  <View style={styles.runBoxTop}>
-                    <RunStatusBadge status={runData.run.status} />
-                    <Text style={styles.runTitle}>Run #{runData.run.run_number} — {runData.run.title}</Text>
-                  </View>
-                  <InfoRow icon="images-outline" label="Max soumissions" value={String(runData.run.max_submissions)} />
-
-                  {!runData.is_enrolled && runData.run.status !== 'draft' && (
-                    <View style={styles.notEnrolledBanner}>
-                      <Ionicons name="information-circle" size={16} color={C.gold} />
-                      <Text style={styles.notEnrolledText}>Vous n'êtes pas encore inscrit à ce run</Text>
+              {!runData.run
+                ? <Empty icon="time-outline" text="Aucun run actif pour cette session" />
+                : (
+                  <View style={styles.runBox}>
+                    <View style={styles.runBoxTop}>
+                      <RunStatusBadge status={runData.run.status} />
+                      <Text style={styles.runTitle}>Run #{runData.run.run_number} — {runData.run.title}</Text>
                     </View>
-                  )}
+                    <InfoRow icon="images-outline" label="Max soumissions" value={String(runData.run.max_submissions)} />
 
-                  {runData.run.status === 'submissions_open' && runData.is_enrolled && (
-                    <TouchableOpacity
-                      style={styles.submitBtn}
-                      onPress={() => { setSubmitRun(runData.run); setTab('submit'); }}
-                    >
-                      <Ionicons name="cloud-upload" size={18} color={C.white} />
-                      <Text style={styles.submitBtnText}>Soumettre une œuvre</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Mes soumissions */}
-                  {runData.my_submissions.length > 0 && (
-                    <>
-                      <Text style={styles.subSectionTitle}>Mes soumissions ({runData.my_submissions.length}/{runData.run.max_submissions})</Text>
-                      <View style={styles.submissionsGrid}>
-                        {runData.my_submissions.map(sub => (
-                          <View key={sub.id} style={styles.submissionThumb}>
-                            <Image source={{ uri: sub.image_url }} style={styles.thumbImage} />
-                            {sub.description ? (
-                              <Text style={styles.thumbDesc} numberOfLines={2}>{sub.description}</Text>
-                            ) : null}
-                          </View>
-                        ))}
+                    {!runData.is_enrolled && runData.run.status !== 'draft' && (
+                      <View style={styles.alertBanner}>
+                        <Ionicons name="information-circle" size={16} color={C.gold} />
+                        <Text style={styles.alertText}>Vous n'êtes pas encore inscrit à ce run</Text>
                       </View>
-                    </>
-                  )}
-                </View>
-              )}
+                    )}
+
+                    {runData.run.status === 'submissions_open' && runData.is_enrolled && (
+                      <TouchableOpacity
+                        style={styles.actionBtn}
+                        onPress={() => { setSubmitRun(runData.run); setTab('submit'); }}
+                      >
+                        <Ionicons name="cloud-upload" size={18} color={C.white} />
+                        <Text style={styles.actionBtnText}>Soumettre une œuvre</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {runData.my_submissions.length > 0 && (
+                      <>
+                        <Text style={styles.subTitle}>Mes soumissions ({runData.my_submissions.length}/{runData.run.max_submissions})</Text>
+                        <View style={styles.thumbGrid}>
+                          {runData.my_submissions.map(sub => (
+                            <View key={sub.id} style={styles.thumbItem}>
+                              <Image source={{ uri: sub.image_url }} style={styles.thumbImg} />
+                              {sub.description
+                                ? <Text style={styles.thumbDesc} numberOfLines={2}>{sub.description}</Text>
+                                : null}
+                            </View>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                  </View>
+                )}
             </>
           )}
 
-          {/* ─── ONGLET EXPLORER ─── */}
+          {/* ─── EXPLORER ─── */}
           {tab === 'explore' && (
-            <>
-              {exploreSess.length === 0 ? (
-                <Empty icon="search-outline" text="Aucun concours disponible" hint="Revenez plus tard" />
-              ) : (
-                exploreSess.map(s => (
+            exploreSess.length === 0
+              ? <Empty icon="search-outline" text="Aucun concours disponible" hint="Revenez plus tard" />
+              : exploreSess.map(s => (
                   <View key={s.id} style={styles.card}>
-                    <View style={styles.cardTop}>
+                    <View style={styles.cardBody}>
                       <Text style={styles.cardTitle}>{s.title}</Text>
                       {s.description ? <Text style={styles.cardDesc} numberOfLines={2}>{s.description}</Text> : null}
                       {s.is_paid && (
-                        <View style={styles.paidBadge}>
-                          <Text style={styles.paidText}>{s.price_cfa} CFA</Text>
-                        </View>
+                        <View style={styles.paidBadge}><Text style={styles.paidText}>{s.price_cfa} CFA</Text></View>
                       )}
                     </View>
                     <TouchableOpacity
@@ -494,132 +480,120 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
                     </TouchableOpacity>
                   </View>
                 ))
-              )}
-            </>
           )}
 
-          {/* ─── ONGLET SOUMETTRE ─── */}
+          {/* ─── SOUMETTRE ─── */}
           {tab === 'submit' && (
-            <>
-              {!submitRun ? (
-                <>
-                  <Text style={styles.sectionTitle}>Choisir un run</Text>
-                  {mySessions.filter(s => s.current_run?.status === 'submissions_open').length === 0 ? (
-                    <Empty icon="cloud-upload-outline" text="Aucun run ouvert aux soumissions" hint="Attendez que l'administrateur ouvre les soumissions" />
-                  ) : (
-                    mySessions
+            !submitRun ? (
+              <>
+                <Text style={styles.sectionTitle}>Choisir un run</Text>
+                {mySessions.filter(s => s.current_run?.status === 'submissions_open').length === 0
+                  ? <Empty icon="cloud-upload-outline" text="Aucun run ouvert aux soumissions" hint="Attendez que l'administrateur ouvre les soumissions" />
+                  : mySessions
                       .filter(s => s.current_run?.status === 'submissions_open')
                       .map(s => (
-                        <TouchableOpacity
-                          key={s.id}
-                          style={styles.card}
-                          onPress={() => setSubmitRun(s.current_run!)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.cardTitle}>{s.title}</Text>
-                          <Text style={styles.cardDesc}>Run #{s.current_run!.run_number} — {s.current_run!.title}</Text>
-                          <RunStatusBadge status="submissions_open" />
+                        <TouchableOpacity key={s.id} style={styles.card} onPress={() => setSubmitRun(s.current_run!)} activeOpacity={0.8}>
+                          <View style={styles.cardBody}>
+                            <Text style={styles.cardTitle}>{s.title}</Text>
+                            <Text style={styles.cardDesc}>Run #{s.current_run!.run_number} — {s.current_run!.title}</Text>
+                            <RunStatusBadge status="submissions_open" />
+                          </View>
+                          <Ionicons name="chevron-forward" size={18} color={C.muted} style={{ margin: 16 }} />
                         </TouchableOpacity>
-                      ))
+                      ))}
+              </>
+            ) : (
+              <View style={styles.submitForm}>
+                <TouchableOpacity style={styles.backRow} onPress={() => { setSubmitRun(null); setPickedImage(null); setDescription(''); }}>
+                  <Ionicons name="arrow-back" size={18} color={C.purpleLight} />
+                  <Text style={styles.backRowText}>Choisir un autre run</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.sectionTitle}>Run #{submitRun.run_number} — {submitRun.title}</Text>
+
+                {/* Zone image */}
+                <TouchableOpacity style={styles.imagePicker} onPress={pickImage} activeOpacity={0.8} disabled={uploading}>
+                  {pickedImage ? (
+                    <Image source={{ uri: pickedImage.uri }} style={styles.pickedImage} />
+                  ) : (
+                    <View style={styles.imagePickerEmpty}>
+                      <Ionicons name="image-outline" size={48} color={C.muted} />
+                      <Text style={styles.imagePickerText}>Appuyer pour choisir une image</Text>
+                      <Text style={styles.imagePickerHint}>JPG, PNG, WEBP autorisés</Text>
+                    </View>
                   )}
-                </>
-              ) : (
-                <View style={styles.submitForm}>
-                  <TouchableOpacity style={styles.backRow} onPress={() => { setSubmitRun(null); setPickedImage(null); }}>
-                    <Ionicons name="arrow-back" size={18} color={C.purpleLight} />
-                    <Text style={styles.backRowText}>Choisir un autre run</Text>
-                  </TouchableOpacity>
+                </TouchableOpacity>
 
-                  <Text style={styles.sectionTitle}>Run #{submitRun.run_number} — {submitRun.title}</Text>
+                {/* Description */}
+                <Text style={styles.inputLabel}>Description (optionnel)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={description}
+                  onChangeText={setDescription}
+                  placeholder="Décrivez votre œuvre…"
+                  placeholderTextColor={C.muted}
+                  multiline
+                  numberOfLines={3}
+                  editable={!uploading}
+                />
 
-                  {/* Zone image */}
-                  <TouchableOpacity style={styles.imagePicker} onPress={pickImage} activeOpacity={0.8}>
-                    {pickedImage ? (
-                      <Image source={{ uri: pickedImage }} style={styles.pickedImage} />
-                    ) : (
-                      <View style={styles.imagePickerEmpty}>
-                        <Ionicons name="image-outline" size={48} color={C.muted} />
-                        <Text style={styles.imagePickerText}>Appuyer pour choisir une image</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
+                {/* Étape upload en cours */}
+                {!!uploadStep && (
+                  <View style={styles.uploadStepRow}>
+                    <ActivityIndicator size="small" color={C.purpleLight} />
+                    <Text style={styles.uploadStepText}>{uploadStep}</Text>
+                  </View>
+                )}
 
-                  {/* Description */}
-                  <Text style={styles.inputLabel}>Description (optionnel)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={description}
-                    onChangeText={setDescription}
-                    placeholder="Décrivez votre œuvre…"
-                    placeholderTextColor={C.muted}
-                    multiline
-                    numberOfLines={3}
-                  />
-
-                  <TouchableOpacity
-                    style={[styles.submitBtn, !pickedImage && styles.submitBtnDisabled]}
-                    onPress={submitImage}
-                    disabled={!pickedImage || uploading}
-                  >
-                    {uploading
-                      ? <ActivityIndicator size="small" color={C.white} />
-                      : <>
-                          <Ionicons name="cloud-upload" size={18} color={C.white} />
-                          <Text style={styles.submitBtnText}>Soumettre mon œuvre</Text>
-                        </>}
-                  </TouchableOpacity>
-                </View>
-              )}
-            </>
+                <TouchableOpacity
+                  style={[styles.actionBtn, !pickedImage && styles.actionBtnDisabled]}
+                  onPress={handleSubmit}
+                  disabled={!pickedImage || uploading}
+                >
+                  {uploading
+                    ? <ActivityIndicator size="small" color={C.white} />
+                    : <>
+                        <Ionicons name="cloud-upload" size={18} color={C.white} />
+                        <Text style={styles.actionBtnText}>Soumettre mon œuvre</Text>
+                      </>}
+                </TouchableOpacity>
+              </View>
+            )
           )}
 
-          {/* ─── ONGLET CLASSEMENT ─── */}
+          {/* ─── CLASSEMENT ─── */}
           {tab === 'classement' && (
-            <>
-              {classement.length === 0 ? (
-                <Empty icon="trophy-outline" text="Aucun résultat disponible" hint="Le classement apparaît quand les votes sont ouverts" />
-              ) : (
-                classement.map(session => (
+            classement.length === 0
+              ? <Empty icon="trophy-outline" text="Aucun résultat disponible" hint="Le classement apparaît quand les votes sont ouverts" />
+              : classement.map(session => (
                   <View key={session.id} style={styles.classSessionBox}>
                     <Text style={styles.classSessionTitle}>🎨 {session.title}</Text>
-                    {session.runs.length === 0 ? (
-                      <Text style={styles.classMuted}>Aucun run disponible</Text>
-                    ) : (
-                      session.runs.map(run => (
-                        <View key={run.id} style={styles.classRunBox}>
-                          <View style={styles.classRunHeader}>
-                            <RunStatusBadge status={run.status as any} />
-                            <Text style={styles.classRunTitle}>Run #{run.run_number} — {run.title}</Text>
+                    {session.runs.length === 0
+                      ? <Text style={styles.classMuted}>Aucun run disponible</Text>
+                      : session.runs.map(run => (
+                          <View key={run.id} style={styles.classRunBox}>
+                            <View style={styles.classRunHeader}>
+                              <RunStatusBadge status={run.status} />
+                              <Text style={styles.classRunTitle}>Run #{run.run_number} — {run.title}</Text>
+                            </View>
+                            {run.classement.length === 0
+                              ? <Text style={styles.classMuted}>Aucune soumission</Text>
+                              : run.classement.map((entry, i) => (
+                                  <View key={entry.user_id} style={[styles.classRow, i === 0 && styles.classRow1]}>
+                                    <Text style={styles.classRankText}>
+                                      {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${entry.rank}`}
+                                    </Text>
+                                    <Text style={styles.classNameText}>{entry.prenom} {entry.nom}</Text>
+                                    <View style={styles.classVotes}>
+                                      <Ionicons name="heart" size={13} color={C.danger} />
+                                      <Text style={styles.classVotesText}>{entry.total_votes}</Text>
+                                    </View>
+                                  </View>
+                                ))}
                           </View>
-                          {run.classement.length === 0 ? (
-                            <Text style={styles.classMuted}>Aucune soumission</Text>
-                          ) : (
-                            run.classement.map((entry, i) => (
-                              <View key={entry.user_id} style={[styles.classRow, i === 0 && styles.classRow1]}>
-                                <View style={styles.classRank}>
-                                  <Text style={[styles.classRankText, i === 0 && styles.classRank1Text]}>
-                                    {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${entry.rank}`}
-                                  </Text>
-                                </View>
-                                <View style={styles.classInfo}>
-                                  <Text style={styles.classNameText}>
-                                    {entry.prenom} {entry.nom}
-                                  </Text>
-                                </View>
-                                <View style={styles.classVotes}>
-                                  <Ionicons name="heart" size={14} color={C.danger} />
-                                  <Text style={styles.classVotesText}>{entry.total_votes}</Text>
-                                </View>
-                              </View>
-                            ))
-                          )}
-                        </View>
-                      ))
-                    )}
+                        ))}
                   </View>
                 ))
-              )}
-            </>
           )}
 
         </ScrollView>
@@ -631,15 +605,15 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
 // ─── Sous-composants ──────────────────────────────────────────────────────────
 function RunStatusBadge({ status }: { status: string }) {
   const cfg: Record<string, { bg: string; text: string; label: string }> = {
-    draft:            { bg: '#1A0A2E', text: C.purpleLight, label: '📝 Brouillon'        },
+    draft:            { bg: '#1A0A2E', text: C.purpleLight, label: '📝 Brouillon'           },
     submissions_open: { bg: '#0A2A22', text: C.submissions, label: '🖼️ Soumissions ouvertes' },
-    voting_open:      { bg: '#2A1500', text: C.voting,      label: '🗳️ Votes ouverts'    },
-    finished:         { bg: '#0A2A10', text: C.finished,    label: '🏆 Terminé'          },
+    voting_open:      { bg: '#2A1500', text: C.voting,      label: '🗳️ Votes ouverts'       },
+    finished:         { bg: '#0A2A10', text: C.finished,    label: '🏆 Terminé'             },
   };
   const c = cfg[status] ?? { bg: '#1A1A1A', text: C.muted, label: status };
   return (
-    <View style={[styles.statusBadge, { backgroundColor: c.bg }]}>
-      <Text style={[styles.statusBadgeText, { color: c.text }]}>{c.label}</Text>
+    <View style={[styles.badge, { backgroundColor: c.bg }]}>
+      <Text style={[styles.badgeText, { color: c.text }]}>{c.label}</Text>
     </View>
   );
 }
@@ -648,8 +622,8 @@ function InfoRow({ icon, label, value }: { icon: string; label: string; value: s
   return (
     <View style={styles.infoRow}>
       <Ionicons name={icon as any} size={14} color={C.muted} />
-      <Text style={styles.infoRowLabel}>{label}</Text>
-      <Text style={styles.infoRowValue}>{value}</Text>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
     </View>
   );
 }
@@ -690,26 +664,24 @@ const styles = StyleSheet.create({
                  borderWidth: 1, borderColor: C.danger },
   errorText:   { flex: 1, color: C.danger, fontSize: 12 },
 
-  card:     { backgroundColor: C.surface, borderRadius: 14, marginBottom: 12,
-              borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
-  cardTop:  { padding: 16, gap: 8 },
+  card:     { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface,
+              borderRadius: 14, marginBottom: 12, borderWidth: 1, borderColor: C.border },
+  cardBody: { flex: 1, padding: 16, gap: 8 },
   cardTitle:{ color: C.cream, fontSize: 16, fontWeight: '700' },
   cardDesc: { color: C.muted, fontSize: 13 },
-  cardArrow:{ padding: 16, alignItems: 'flex-end' },
 
-  statusBadge:    { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4,
-                    borderRadius: 8, marginTop: 4 },
-  statusBadgeText:{ fontSize: 12, fontWeight: '700' },
+  badge:    { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  badgeText:{ fontSize: 12, fontWeight: '700' },
 
   noRunBadge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4,
-                borderRadius: 8, backgroundColor: '#1A1A1A', marginTop: 4 },
+                borderRadius: 8, backgroundColor: '#1A1A1A' },
   noRunText:  { color: C.muted, fontSize: 12 },
 
   paidBadge: { alignSelf: 'flex-start', backgroundColor: '#2A1A00', borderRadius: 6,
                paddingHorizontal: 8, paddingVertical: 3 },
   paidText:  { color: C.gold, fontSize: 11, fontWeight: '700' },
 
-  joinBtn:     { margin: 16, marginTop: 0, padding: 14, borderRadius: 12,
+  joinBtn:     { margin: 16, padding: 14, borderRadius: 12,
                  backgroundColor: C.purple, alignItems: 'center' },
   joinBtnText: { color: C.white, fontWeight: '700', fontSize: 14 },
 
@@ -723,54 +695,55 @@ const styles = StyleSheet.create({
   runBoxTop: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   runTitle:  { color: C.cream, fontSize: 15, fontWeight: '700', flex: 1 },
 
-  infoRow:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  infoRowLabel:  { color: C.muted, fontSize: 12, flex: 1 },
-  infoRowValue:  { color: C.cream, fontSize: 12, fontWeight: '700' },
+  infoRow:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  infoLabel: { color: C.muted, fontSize: 12, flex: 1 },
+  infoValue: { color: C.cream, fontSize: 12, fontWeight: '700' },
 
-  notEnrolledBanner: { flexDirection: 'row', alignItems: 'center', gap: 8,
-                       backgroundColor: '#2A1A00', borderRadius: 8, padding: 10 },
-  notEnrolledText:   { color: C.gold, fontSize: 12, flex: 1 },
+  alertBanner: { flexDirection: 'row', alignItems: 'center', gap: 8,
+                 backgroundColor: '#2A1A00', borderRadius: 8, padding: 10 },
+  alertText:   { color: C.gold, fontSize: 12, flex: 1 },
 
-  submitBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+  actionBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
                        gap: 8, backgroundColor: C.purple, borderRadius: 12, padding: 14 },
-  submitBtnDisabled: { opacity: 0.4 },
-  submitBtnText:     { color: C.white, fontWeight: '700', fontSize: 15 },
+  actionBtnDisabled: { opacity: 0.4 },
+  actionBtnText:     { color: C.white, fontWeight: '700', fontSize: 15 },
 
-  subSectionTitle: { color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 12, marginBottom: 8 },
-  submissionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  submissionThumb: { width: 100, gap: 4 },
-  thumbImage:      { width: 100, height: 100, borderRadius: 10, backgroundColor: C.surfaceHigh },
-  thumbDesc:       { color: C.muted, fontSize: 11 },
+  subTitle:  { color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 12, marginBottom: 8 },
+  thumbGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  thumbItem: { width: 100, gap: 4 },
+  thumbImg:  { width: 100, height: 100, borderRadius: 10, backgroundColor: C.surfaceHigh },
+  thumbDesc: { color: C.muted, fontSize: 11 },
 
-  submitForm:   { gap: 16 },
-  imagePicker:  { height: 220, backgroundColor: C.surface, borderRadius: 14,
-                  borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
+  submitForm:       { gap: 16 },
+  imagePicker:      { height: 220, backgroundColor: C.surface, borderRadius: 14,
+                      borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
   imagePickerEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   imagePickerText:  { color: C.muted, fontSize: 13 },
-  pickedImage:  { width: '100%', height: '100%', resizeMode: 'cover' },
-  inputLabel:   { color: C.muted, fontSize: 13, fontWeight: '600' },
-  textInput:    { backgroundColor: C.surface, borderRadius: 10, padding: 12,
-                  color: C.cream, fontSize: 14, borderWidth: 1, borderColor: C.border,
-                  textAlignVertical: 'top', minHeight: 80 },
+  imagePickerHint:  { color: C.muted, fontSize: 11, opacity: 0.6 },
+  pickedImage:      { width: '100%', height: '100%', resizeMode: 'cover' },
+  inputLabel:       { color: C.muted, fontSize: 13, fontWeight: '600' },
+  textInput:        { backgroundColor: C.surface, borderRadius: 10, padding: 12,
+                      color: C.cream, fontSize: 14, borderWidth: 1, borderColor: C.border,
+                      textAlignVertical: 'top', minHeight: 80 },
+  uploadStepRow:    { flexDirection: 'row', alignItems: 'center', gap: 10,
+                      backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12 },
+  uploadStepText:   { color: C.purpleLight, fontSize: 13 },
 
   classSessionBox:   { marginBottom: 20 },
   classSessionTitle: { color: C.cream, fontSize: 17, fontWeight: '800', marginBottom: 10 },
   classRunBox:       { backgroundColor: C.surface, borderRadius: 14, padding: 14,
                        borderWidth: 1, borderColor: C.border, marginBottom: 10 },
-  classRunHeader:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
+  classRunHeader:    { flexDirection: 'row', alignItems: 'center', gap: 8,
+                       marginBottom: 10, flexWrap: 'wrap' },
   classRunTitle:     { color: C.cream, fontSize: 14, fontWeight: '700', flex: 1 },
   classMuted:        { color: C.muted, fontSize: 12, paddingVertical: 8 },
-
-  classRow:      { flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
-                   borderTopWidth: 1, borderTopColor: C.border, gap: 10 },
-  classRow1:     { borderTopWidth: 0 },
-  classRank:     { width: 36, alignItems: 'center' },
-  classRankText: { color: C.muted, fontSize: 13, fontWeight: '700' },
-  classRank1Text:{ fontSize: 20 },
-  classInfo:     { flex: 1 },
-  classNameText: { color: C.cream, fontSize: 14, fontWeight: '600' },
-  classVotes:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  classVotesText:{ color: C.cream, fontSize: 14, fontWeight: '700' },
+  classRow:          { flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
+                       borderTopWidth: 1, borderTopColor: C.border, gap: 10 },
+  classRow1:         { borderTopWidth: 0 },
+  classRankText:     { width: 32, textAlign: 'center', color: C.muted, fontSize: 14, fontWeight: '700' },
+  classNameText:     { flex: 1, color: C.cream, fontSize: 14, fontWeight: '600' },
+  classVotes:        { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  classVotesText:    { color: C.cream, fontSize: 14, fontWeight: '700' },
 
   empty:     { alignItems: 'center', paddingVertical: 48, gap: 10 },
   emptyText: { color: C.muted, fontSize: 15, textAlign: 'center' },
