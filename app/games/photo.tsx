@@ -46,11 +46,48 @@ async function getValidToken(): Promise<{ uid: string; token: string } | null> {
     const raw = await Storage.getItem('harmonia_session');
     if (!raw) return null;
     const session = JSON.parse(raw);
-    const uid   = session.user?.id;
-    const token = session.access_token;
-    if (!uid || !token) return null;
-    return { uid, token };
-  } catch { return null; }
+
+    const uid          = session?.user?.id      || '';
+    const accessToken  = session?.access_token  || '';
+    const refreshToken = session?.refresh_token || '';
+    const expiresAt    = session?.expires_at    || 0;
+
+    if (!uid || !accessToken) return null;
+
+    // Token encore valide (marge 60s)
+    const now = Math.floor(Date.now() / 1000);
+    if (expiresAt - now > 60) return { uid, token: accessToken };
+
+    // Token expiré → rafraîchir via backend
+    if (!refreshToken) return null;
+
+    const res = await fetch(`${BACKEND_URL}/refresh-token`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      console.warn('[Arts] Rafraîchissement token échoué');
+      return null;
+    }
+
+    const data = await res.json();
+
+    const newSession = {
+      ...session,
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at:    data.expires_at,
+    };
+    await Storage.setItem('harmonia_session', JSON.stringify(newSession));
+    console.log('[Arts] Token rafraîchi avec succès');
+    return { uid, token: data.access_token };
+
+  } catch (e) {
+    console.warn('[Arts] getValidToken error:', e);
+    return null;
+  }
 }
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
