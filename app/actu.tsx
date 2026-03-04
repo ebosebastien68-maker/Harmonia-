@@ -18,12 +18,14 @@ import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
 
-const { width } = Dimensions.get('window');
+const { width }    = Dimensions.get('window');
 const BACKEND_URL  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-const HEADER_HEIGHT = 75;
+const API_BASE_HOME  = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
+const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
+const HEADER_HEIGHT  = 75;
 const NATIVE = Platform.OS !== 'web';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 type FilterMode = 'all' | 'posts' | 'images';
 
 interface Post {
@@ -62,39 +64,41 @@ interface Submission {
 }
 
 type FeedItem = Post | Submission;
-
 interface UserProfile { solde_cfa: number; trophies_count: number }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function ActuScreen() {
   const router = useRouter();
-  const [refreshing,   setRefreshing]   = useState(false);
-  const [items,        setItems]        = useState<FeedItem[]>([]);
-  const [userProfile,  setUserProfile]  = useState<UserProfile | null>(null);
-  const [userId,       setUserId]       = useState('');
-  const [accessToken,  setAccessToken]  = useState('');
+
+  const [userId,      setUserId]      = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  const [posts,        setPosts]        = useState<Post[]>([]);
+  const [submissions,  setSubmissions]  = useState<Submission[]>([]);
   const [filterMode,   setFilterMode]   = useState<FilterMode>('all');
   const [showFilter,   setShowFilter]   = useState(false);
+  const [refreshing,   setRefreshing]   = useState(false);
   const [loading,      setLoading]      = useState(false);
 
-  // Modals existants
-  const [selectedPost,             setSelectedPost]             = useState<Post | null>(null);
-  const [showCreateModal,          setShowCreateModal]          = useState(false);
-  const [showCommentsModal,        setShowCommentsModal]        = useState(false);
-  const [selectedPostForComments,  setSelectedPostForComments]  = useState<string | null>(null);
-  const [showLikersModal,          setShowLikersModal]          = useState(false);
-  const [selectedPostForLikers,    setSelectedPostForLikers]    = useState<string | null>(null);
-  const [showEditModal,            setShowEditModal]            = useState(false);
-  const [selectedPostForEdit,      setSelectedPostForEdit]      = useState<{id: string; content: string} | null>(null);
-  const [showSavedPostsModal,      setShowSavedPostsModal]      = useState(false);
-  const [showSearchModal,          setShowSearchModal]          = useState(false);
-  const [showLogoutModal,          setShowLogoutModal]          = useState(false);
+  // Modals
+  const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
+  const [showCreateModal,         setShowCreateModal]         = useState(false);
+  const [showCommentsModal,       setShowCommentsModal]       = useState(false);
+  const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
+  const [showLikersModal,         setShowLikersModal]         = useState(false);
+  const [selectedPostForLikers,   setSelectedPostForLikers]   = useState<string | null>(null);
+  const [showEditModal,           setShowEditModal]           = useState(false);
+  const [selectedPostForEdit,     setSelectedPostForEdit]     = useState<{id: string; content: string} | null>(null);
+  const [showSavedPostsModal,     setShowSavedPostsModal]     = useState(false);
+  const [showSearchModal,         setShowSearchModal]         = useState(false);
+  const [showLogoutModal,         setShowLogoutModal]         = useState(false);
 
-  const [lastTap,      setLastTap]      = useState<number | null>(null);
-  const [headerVisible,setHeaderVisible]= useState(true);
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const [lastTap,       setLastTap]       = useState<number | null>(null);
   const headerAnim = useRef(new Animated.Value(0)).current;
 
-  // ─── Init session ───────────────────────────────────────────────────────────
+  // ─── Init session ─────────────────────────────────────────────────────────
   useEffect(() => {
     AsyncStorage.getItem('harmonia_session').then(raw => {
       if (!raw) return;
@@ -105,54 +109,74 @@ export default function ActuScreen() {
   }, []);
 
   useEffect(() => {
-    if (userId && accessToken) loadFeed('all');
+    if (userId && accessToken) {
+      loadPosts();
+      loadSubmissions();
+    }
   }, [userId, accessToken]);
 
-  // ─── API Feed ───────────────────────────────────────────────────────────────
-  const loadFeed = useCallback(async (mode: FilterMode) => {
-    setLoading(true);
+  // ─── Chargement posts (Edge Function — comme avant) ───────────────────────
+  const loadPosts = useCallback(async () => {
     try {
-      const fnMap: Record<FilterMode, string> = {
-        all:    'getFeed',
-        posts:  'getPostsOnly',
-        images: 'getImagesOnly',
-      };
+      const response = await fetch(API_BASE_HOME, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body:    JSON.stringify({ action: 'get-feed', user_id: userId }),
+      });
+      const data = await response.json();
+      if (data.posts)   setPosts(data.posts.map((p: any) => ({ ...p, item_type: 'post' })));
+      if (data.profile) setUserProfile(data.profile);
+    } catch (err) { console.error('Error loading posts:', err); }
+  }, [userId]);
 
+  // ─── Chargement soumissions (Render) ─────────────────────────────────────
+  const loadSubmissions = useCallback(async () => {
+    try {
       const res = await fetch(`${BACKEND_URL}/feed`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          function:     fnMap[mode],
+          function:     'getSubmissions',
           user_id:      userId,
           access_token: accessToken,
         }),
       });
       const data = await res.json();
-      if (data.items) setItems(data.items);
-
-      // Profil depuis le feed classique (mode all ou posts)
-      if (mode !== 'images' && data.profile) setUserProfile(data.profile);
-    } catch (err) {
-      console.error('Error loading feed:', err);
-    } finally { setLoading(false); }
+      if (data.submissions) {
+        setSubmissions(data.submissions.map((s: any) => ({ ...s, item_type: 'submission' })));
+      }
+    } catch (err) { console.error('Error loading submissions:', err); }
   }, [userId, accessToken]);
 
+  // ─── Refresh ──────────────────────────────────────────────────────────────
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await loadFeed(filterMode);
+    await Promise.all([
+      filterMode !== 'images' ? loadPosts()       : Promise.resolve(),
+      filterMode !== 'posts'  ? loadSubmissions() : Promise.resolve(),
+    ]);
     setRefreshing(false);
   };
 
-  // ─── Filtre ─────────────────────────────────────────────────────────────────
+  // ─── Items affichés selon le filtre ──────────────────────────────────────
+  const displayedItems: FeedItem[] = (() => {
+    if (filterMode === 'posts')  return posts;
+    if (filterMode === 'images') return submissions;
+    // all : mélange trié par date
+    return [...posts, ...submissions].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  })();
+
+  // ─── Filtre ───────────────────────────────────────────────────────────────
   const applyFilter = (mode: FilterMode) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setFilterMode(mode);
     setShowFilter(false);
-    loadFeed(mode);
   };
 
-  // ─── Header toggle ──────────────────────────────────────────────────────────
+  // ─── Header toggle ────────────────────────────────────────────────────────
   const handleDoubleTap = () => {
     const now = Date.now();
     if (lastTap && now - lastTap < 300) toggleHeader();
@@ -168,65 +192,56 @@ export default function ActuScreen() {
     setHeaderVisible(!headerVisible);
   };
 
-  // ─── Post actions ───────────────────────────────────────────────────────────
+  // ─── Post actions (Edge Function — comme avant) ───────────────────────────
   const handleLike = async (postId: string, liked: boolean) => {
-    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+    const res = await fetch(API_BASE_POSTS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
       body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: userId, post_id: postId }),
     });
     const data = await res.json();
     if (data.success) {
-      setItems(prev => prev.map(item =>
-        item.item_type === 'post' && item.id === postId
-          ? { ...item, reactions: { ...item.reactions, likes: data.likes }, user_liked: liked }
-          : item
+      setPosts(prev => prev.map(p =>
+        p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p
       ));
     }
   };
 
   const handleShare = async (postId: string, shared: boolean) => {
-    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+    const res = await fetch(API_BASE_POSTS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
       body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: userId, post_id: postId }),
     });
     const data = await res.json();
     if (data.success) {
-      setItems(prev => prev.map(item =>
-        item.item_type === 'post' && item.id === postId
-          ? { ...item, reactions: { ...item.reactions, shares: data.shares }, user_shared: shared }
-          : item
+      setPosts(prev => prev.map(p =>
+        p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p
       ));
     }
   };
 
   const handleSave = async (postId: string, saved: boolean) => {
-    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+    const res = await fetch(API_BASE_POSTS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
       body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: userId, post_id: postId }),
     });
     const data = await res.json();
     if (data.success) {
-      setItems(prev => prev.map(item =>
-        item.item_type === 'post' && item.id === postId
-          ? { ...item, user_saved: saved }
-          : item
-      ));
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, user_saved: saved } : p));
     }
   };
 
-  // ─── Vote soumission ────────────────────────────────────────────────────────
+  // ─── Vote soumission (Render) ─────────────────────────────────────────────
   const handleVote = async (submissionKey: string, imageId: string, currentlyVoted: boolean) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const fn = currentlyVoted ? 'unvoteSubmission' : 'voteSubmission';
     try {
       const res = await fetch(`${BACKEND_URL}/feed`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          function:      fn,
+          function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
           user_id:       userId,
           access_token:  accessToken,
           submission_id: imageId,
@@ -234,21 +249,20 @@ export default function ActuScreen() {
       });
       const data = await res.json();
       if (data.success) {
-        setItems(prev => prev.map(item => {
-          if (item.item_type !== 'submission' || item.id !== submissionKey) return item;
-          const newImages = item.images.map(img =>
+        setSubmissions(prev => prev.map(sub => {
+          if (sub.id !== submissionKey) return sub;
+          const newImages = sub.images.map(img =>
             img.id === imageId
               ? { ...img, votes: data.votes, user_voted: data.user_voted }
               : img
           );
-          const newTotal = newImages.reduce((sum, img) => sum + img.votes, 0);
-          return { ...item, images: newImages, total_votes: newTotal };
+          return { ...sub, images: newImages, total_votes: newImages.reduce((s, i) => s + i.votes, 0) };
         }));
       }
     } catch (err) { console.error('Error voting:', err); }
   };
 
-  // ─── Formatage ──────────────────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTimeAgo = (dateString: string) => {
     const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
     if (diff < 60)    return "À l'instant";
@@ -260,7 +274,7 @@ export default function ActuScreen() {
   const getInitials = (nom: string, prenom: string) =>
     `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
-  // ─── PostCard ────────────────────────────────────────────────────────────────
+  // ─── PostCard ─────────────────────────────────────────────────────────────
   const PostCard = ({ post }: { post: Post }) => {
     const [liked,       setLiked]       = useState(post.user_liked  || false);
     const [shared,      setShared]      = useState(post.user_shared || false);
@@ -304,11 +318,7 @@ export default function ActuScreen() {
     };
 
     return (
-      <TouchableOpacity
-        style={styles.postCard}
-        activeOpacity={0.98}
-        onLongPress={() => setSelectedPost(post)}
-      >
+      <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => setSelectedPost(post)}>
         <View style={styles.postHeader}>
           <View style={styles.postAuthor}>
             {post.author.avatar_url
@@ -371,34 +381,31 @@ export default function ActuScreen() {
     );
   };
 
-  // ─── SubmissionCard ──────────────────────────────────────────────────────────
+  // ─── SubmissionCard ───────────────────────────────────────────────────────
   const SubmissionCard = ({ sub }: { sub: Submission }) => {
-    const [images, setImages] = useState(sub.images);
+    const [images,     setImages]     = useState(sub.images);
     const [totalVotes, setTotalVotes] = useState(sub.total_votes);
 
-    useEffect(() => {
-      setImages(sub.images);
-      setTotalVotes(sub.total_votes);
-    }, [sub]);
+    useEffect(() => { setImages(sub.images); setTotalVotes(sub.total_votes); }, [sub]);
 
     const onVote = async (imageId: string, currentlyVoted: boolean) => {
       // Optimistic update
-      const newImages = images.map(img =>
+      const updated = images.map(img =>
         img.id === imageId
           ? { ...img, votes: currentlyVoted ? img.votes - 1 : img.votes + 1, user_voted: !currentlyVoted }
           : img
       );
-      setImages(newImages);
-      setTotalVotes(newImages.reduce((s, i) => s + i.votes, 0));
+      setImages(updated);
+      setTotalVotes(updated.reduce((s, i) => s + i.votes, 0));
       await handleVote(sub.id, imageId, currentlyVoted);
     };
 
     return (
       <View style={styles.subCard}>
-        {/* Header soumission */}
+        {/* Header */}
         <View style={styles.subHeader}>
-          <View style={styles.subArtsBadge}>
-            <Text style={styles.subArtsBadgeText}>🎨 Arts</Text>
+          <View style={styles.artsBadge}>
+            <Text style={styles.artsBadgeText}>🎨 Arts</Text>
           </View>
           <View style={styles.postAuthor}>
             {sub.author.avatar_url
@@ -433,28 +440,19 @@ export default function ActuScreen() {
                   <Text style={styles.imageCounterText}>{index + 1}/{images.length}</Text>
                 </View>
               )}
-              {img.description ? (
-                <Text style={styles.imgDesc} numberOfLines={2}>{img.description}</Text>
-              ) : null}
+              {img.description
+                ? <Text style={styles.imgDesc} numberOfLines={2}>{img.description}</Text>
+                : null}
 
-              {/* Bouton vote par image */}
+              {/* Bouton vote */}
               <TouchableOpacity
                 style={[styles.voteBtn, img.user_voted && styles.voteBtnVoted]}
                 onPress={() => onVote(img.id, img.user_voted)}
                 activeOpacity={0.8}
               >
-                {img.user_voted ? (
-                  <>
-                    <Text style={styles.voteBtnText}>Voté 💪</Text>
-                    <Text style={styles.voteBtnCount}>{img.votes}</Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons name="heart-outline" size={16} color="#FFF" />
-                    <Text style={styles.voteBtnText}>Voter</Text>
-                    <Text style={styles.voteBtnCount}>{img.votes}</Text>
-                  </>
-                )}
+                {img.user_voted
+                  ? <><Text style={styles.voteBtnText}>Voté 💪</Text><Text style={styles.voteBtnCount}>{img.votes}</Text></>
+                  : <><Ionicons name="heart-outline" size={16} color="#FFF" /><Text style={styles.voteBtnText}>Voter</Text><Text style={styles.voteBtnCount}>{img.votes}</Text></>}
               </TouchableOpacity>
             </View>
           )}
@@ -463,45 +461,26 @@ export default function ActuScreen() {
         {/* Indicateurs pagination */}
         {images.length > 1 && (
           <View style={styles.dots}>
-            {images.map((_, i) => (
-              <View key={i} style={styles.dot} />
-            ))}
+            {images.map((_, i) => <View key={i} style={styles.dot} />)}
           </View>
         )}
       </View>
     );
   };
 
-  // ─── Render item ─────────────────────────────────────────────────────────────
-  const renderItem = (item: FeedItem) => {
-    if (item.item_type === 'post')       return <PostCard key={item.id} post={item} />;
-    if (item.item_type === 'submission') return <SubmissionCard key={item.id} sub={item} />;
-    return null;
-  };
+  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images' };
 
-  // ─── Label filtre actif ───────────────────────────────────────────────────────
-  const filterLabel: Record<FilterMode, string> = {
-    all:    'Tout',
-    posts:  'Publications',
-    images: 'Images',
-  };
-
-  // ─── Render principal ─────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
 
-      {/* Header */}
       <Animated.View style={[styles.headerContainer, { transform: [{ translateY: headerAnim }] }]}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
           <View style={styles.headerContent}>
             <HarmoniaLogo size={26} showText={true} />
             <View style={styles.buttonsRow}>
 
-              {/* Filtre */}
-              <TouchableOpacity
-                style={styles.filterBtn}
-                onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowFilter(true); }}
-              >
+              <TouchableOpacity style={styles.filterBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowFilter(true); }}>
                 <Ionicons name="filter" size={18} color="#FFD700" />
                 <Text style={styles.filterBtnText}>{filterLabel[filterMode]}</Text>
               </TouchableOpacity>
@@ -537,7 +516,6 @@ export default function ActuScreen() {
         </LinearGradient>
       </Animated.View>
 
-      {/* Hint double-tap */}
       {!headerVisible && (
         <View style={styles.doubleTapHint}>
           <Ionicons name="chevron-down-outline" size={16} color="#8A2BE2" />
@@ -545,7 +523,6 @@ export default function ActuScreen() {
         </View>
       )}
 
-      {/* Feed */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -553,19 +530,19 @@ export default function ActuScreen() {
         showsVerticalScrollIndicator={false}
         onTouchEnd={handleDoubleTap}
       >
-        {loading ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#8A2BE2" />
-          </View>
-        ) : items.length === 0 ? (
+        {displayedItems.length === 0 ? (
           <View style={styles.emptyBox}>
             <Ionicons name="newspaper-outline" size={60} color="#CCC" />
-            <Text style={styles.emptyText}>Aucun contenu</Text>
-            <Text style={styles.emptySub}>Tirez pour actualiser</Text>
+            <Text style={styles.emptyText}>Connexion en cours ...</Text>
+            <Text style={styles.emptySub}>Veuillez patienter</Text>
           </View>
         ) : (
           <View style={styles.feedList}>
-            {items.map(item => renderItem(item))}
+            {displayedItems.map(item =>
+              item.item_type === 'post'
+                ? <PostCard       key={item.id} post={item} />
+                : <SubmissionCard key={item.id} sub={item}  />
+            )}
           </View>
         )}
       </ScrollView>
@@ -576,19 +553,13 @@ export default function ActuScreen() {
           <View style={styles.filterMenu}>
             <Text style={styles.filterMenuTitle}>Afficher</Text>
             {([
-              { key: 'all',    label: 'Tout',          icon: 'apps-outline'        },
-              { key: 'posts',  label: 'Publications',  icon: 'document-text-outline'},
-              { key: 'images', label: 'Images',        icon: 'images-outline'      },
+              { key: 'all',    label: 'Tout',         icon: 'apps-outline'         },
+              { key: 'posts',  label: 'Publications', icon: 'document-text-outline' },
+              { key: 'images', label: 'Images',       icon: 'images-outline'        },
             ] as { key: FilterMode; label: string; icon: string }[]).map(opt => (
-              <TouchableOpacity
-                key={opt.key}
-                style={[styles.filterOption, filterMode === opt.key && styles.filterOptionActive]}
-                onPress={() => applyFilter(opt.key)}
-              >
+              <TouchableOpacity key={opt.key} style={[styles.filterOption, filterMode === opt.key && styles.filterOptionActive]} onPress={() => applyFilter(opt.key)}>
                 <Ionicons name={opt.icon as any} size={20} color={filterMode === opt.key ? '#8A2BE2' : '#666'} />
-                <Text style={[styles.filterOptionText, filterMode === opt.key && styles.filterOptionTextActive]}>
-                  {opt.label}
-                </Text>
+                <Text style={[styles.filterOptionText, filterMode === opt.key && styles.filterOptionTextActive]}>{opt.label}</Text>
                 {filterMode === opt.key && <Ionicons name="checkmark" size={18} color="#8A2BE2" />}
               </TouchableOpacity>
             ))}
@@ -613,11 +584,10 @@ export default function ActuScreen() {
         </Modal>
       )}
 
-      {/* Modals existants */}
-      <CreatePostModal visible={showCreateModal} onClose={() => setShowCreateModal(false)} onPostCreated={async () => { await loadFeed(filterMode); }} />
-      <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => { loadFeed(filterMode); }} />
+      <CreatePostModal visible={showCreateModal} onClose={() => setShowCreateModal(false)} onPostCreated={async () => { await loadPosts(); }} />
+      <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => { loadPosts(); }} />
       <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
-      <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadFeed(filterMode); }} />
+      <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(); }} />
       <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
@@ -625,7 +595,6 @@ export default function ActuScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:      { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer:{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
@@ -643,12 +612,10 @@ const styles = StyleSheet.create({
   scrollView:     { flex: 1 },
   scrollContent:  { paddingTop: HEADER_HEIGHT },
   feedList:       { paddingVertical: 8, paddingBottom: 100 },
-  loadingBox:     { paddingVertical: 60, alignItems: 'center' },
   emptyBox:       { alignItems: 'center', paddingVertical: 60 },
   emptyText:      { fontSize: 16, color: '#999', marginTop: 12 },
   emptySub:       { fontSize: 12, color: '#CCC', marginTop: 5 },
 
-  // Post card
   postCard:     { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
   postHeader:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
   postAuthor:   { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
@@ -670,38 +637,33 @@ const styles = StyleSheet.create({
   actionTextActive: { color: '#FFF' },
   saveBtn:      { padding: 8 },
 
-  // Submission card
-  subCard:       { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, overflow: 'hidden' },
-  subHeader:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
-  subArtsBadge:  { backgroundColor: '#F0E6FF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  subArtsBadgeText: { color: '#8E44AD', fontSize: 11, fontWeight: '700' },
+  subCard:         { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, overflow: 'hidden' },
+  subHeader:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
+  artsBadge:       { backgroundColor: '#F0E6FF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  artsBadgeText:   { color: '#8E44AD', fontSize: 11, fontWeight: '700' },
   totalVotesBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' },
   totalVotesText:  { color: '#E74C3C', fontSize: 13, fontWeight: '700' },
-  imagesList:    { flexGrow: 0 },
-  imageSlide:    { paddingHorizontal: 12 },
-  subImage:      { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  imageCounter:  { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  imageCounterText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
-  imgDesc:       { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
-  voteBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                   backgroundColor: '#8A2BE2', borderRadius: 25, paddingVertical: 10,
-                   paddingHorizontal: 20, marginTop: 12, marginBottom: 4, alignSelf: 'center' },
-  voteBtnVoted:  { backgroundColor: '#E74C3C' },
-  voteBtnText:   { color: '#FFF', fontWeight: '700', fontSize: 14 },
-  voteBtnCount:  { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
-  dots:          { flexDirection: 'row', justifyContent: 'center', gap: 5, paddingVertical: 10 },
-  dot:           { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
+  imagesList:      { flexGrow: 0 },
+  imageSlide:      { paddingHorizontal: 12 },
+  subImage:        { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  imageCounter:    { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  imageCounterText:{ color: '#FFF', fontSize: 11, fontWeight: '700' },
+  imgDesc:         { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
+  voteBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#8A2BE2', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 20, marginTop: 12, marginBottom: 4, alignSelf: 'center' },
+  voteBtnVoted:    { backgroundColor: '#E74C3C' },
+  voteBtnText:     { color: '#FFF', fontWeight: '700', fontSize: 14 },
+  voteBtnCount:    { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
+  dots:            { flexDirection: 'row', justifyContent: 'center', gap: 5, paddingVertical: 10 },
+  dot:             { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
 
-  // Filtre modal
-  filterOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: Platform.OS === 'ios' ? 100 : 80, paddingRight: 12 },
-  filterMenu:        { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
-  filterMenuTitle:   { color: '#999', fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingVertical: 8, textTransform: 'uppercase' },
-  filterOption:      { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10 },
-  filterOptionActive:{ backgroundColor: '#F0E6FF' },
-  filterOptionText:  { flex: 1, fontSize: 14, color: '#333', fontWeight: '600' },
+  filterOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: Platform.OS === 'ios' ? 100 : 80, paddingRight: 12 },
+  filterMenu:         { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
+  filterMenuTitle:    { color: '#999', fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingVertical: 8, textTransform: 'uppercase' },
+  filterOption:       { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10 },
+  filterOptionActive: { backgroundColor: '#F0E6FF' },
+  filterOptionText:   { flex: 1, fontSize: 14, color: '#333', fontWeight: '600' },
   filterOptionTextActive: { color: '#8A2BE2' },
 
-  // Modal détail post
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
   modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 25, width: width * 0.85, maxWidth: 400 },
   modalTitle:   { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
