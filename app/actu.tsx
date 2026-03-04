@@ -24,7 +24,7 @@ const API_BASE_HOME  = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/ho
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
 const HEADER_HEIGHT  = 75;
 const NATIVE         = Platform.OS !== 'web';
-const REFRESH_INTERVAL_MS = 60_000; // 60 secondes
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type FilterMode = 'all' | 'posts' | 'images';
@@ -97,7 +97,7 @@ export default function ActuScreen() {
   const [headerVisible, setHeaderVisible] = useState(true);
   const [lastTap,       setLastTap]       = useState<number | null>(null);
   const headerAnim    = useRef(new Animated.Value(0)).current;
-  const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const userIdRef     = useRef('');
   const tokenRef      = useRef('');
   const filterRef     = useRef<FilterMode>('all');
@@ -119,12 +119,7 @@ export default function ActuScreen() {
     // Chargement initial
     loadPosts();
     loadSubmissions();
-    // Rechargement automatique toutes les 60s
-    intervalRef.current = setInterval(() => {
-      if (filterRef.current !== 'images') loadPostsSilent();
-      if (filterRef.current !== 'posts')  loadSubmissionsSilent();
-    }, REFRESH_INTERVAL_MS);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+
   }, [userId, accessToken]);
 
   // ─── Chargement posts ─────────────────────────────────────────────────────
@@ -142,9 +137,7 @@ export default function ActuScreen() {
   }, []);
 
   // Version silencieuse (pas de loader visible)
-  const loadPostsSilent = loadPosts;
 
-  // ─── Chargement soumissions ───────────────────────────────────────────────
   const loadSubmissions = useCallback(async () => {
     try {
       const res  = await fetch(`${BACKEND_URL}/feed`, {
@@ -163,15 +156,25 @@ export default function ActuScreen() {
     } catch (err) { console.error('Error loading submissions:', err); }
   }, []);
 
-  const loadSubmissionsSilent = loadSubmissions;
 
-  // ─── Refresh manuel ───────────────────────────────────────────────────────
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (filterMode !== 'images') await loadPosts();
     if (filterMode !== 'posts')  await loadSubmissions();
     setRefreshing(false);
+  };
+
+  // ─── Refresh manuel ───────────────────────────────────────────────────────
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsRefreshing(true);
+    if (filterRef.current !== 'images') await loadPosts();
+    if (filterRef.current !== 'posts')  await loadSubmissions();
+    setIsRefreshing(false);
   };
 
   // ─── Filtre — requête complète à chaque changement ────────────────────────
@@ -507,6 +510,14 @@ export default function ActuScreen() {
             </TouchableOpacity>
 
             <View style={styles.actionsBtns}>
+              <TouchableOpacity onPress={handleManualRefresh} disabled={isRefreshing}>
+                <Ionicons
+                  name="refresh-outline"
+                  size={22}
+                  color={isRefreshing ? 'rgba(255,255,255,0.4)' : '#fff'}
+                />
+              </TouchableOpacity>
+
               <TouchableOpacity onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSearchModal(true); }}>
                 <Ionicons name="search-outline" size={22} color="#fff" />
               </TouchableOpacity>
