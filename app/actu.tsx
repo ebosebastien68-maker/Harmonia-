@@ -1,16 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  RefreshControl,
-  Modal,
-  Dimensions,
-  Platform,
-  Animated,
+  StyleSheet, Text, View, ScrollView, TouchableOpacity,
+  Image, RefreshControl, Modal, Dimensions, Platform,
+  Animated, FlatList, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,280 +19,256 @@ import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
 
 const { width } = Dimensions.get('window');
-const API_BASE_HOME = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
-const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
+const BACKEND_URL  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HEADER_HEIGHT = 75;
+const NATIVE = Platform.OS !== 'web';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+type FilterMode = 'all' | 'posts' | 'images';
 
 interface Post {
+  item_type: 'post';
   id: string;
   author_id: string;
-  author: {
-    nom: string;
-    prenom: string;
-    avatar_url: string | null;
-  };
+  author: { nom: string; prenom: string; avatar_url: string | null };
   content: string;
   created_at: string;
-  reactions: {
-    likes: number;
-    comments: number;
-    shares: number;
-  };
+  reactions: { likes: number; comments: number; shares: number };
   user_liked?: boolean;
   user_shared?: boolean;
   user_saved?: boolean;
 }
 
-interface UserProfile {
-  solde_cfa: number;
-  trophies_count: number;
+interface SubmissionImage {
+  id: string;
+  image_url: string;
+  description?: string | null;
+  votes: number;
+  user_voted: boolean;
 }
 
+interface Submission {
+  item_type: 'submission';
+  id: string;
+  run_id: string;
+  session_id: string;
+  user_id: string;
+  run_number: number;
+  run_title: string;
+  author: { nom: string; prenom: string; avatar_url: string | null };
+  images: SubmissionImage[];
+  total_votes: number;
+  created_at: string;
+}
+
+type FeedItem = Post | Submission;
+
+interface UserProfile { solde_cfa: number; trophies_count: number }
+
+// ─── Composant principal ──────────────────────────────────────────────────────
 export default function ActuScreen() {
   const router = useRouter();
-  const [refreshing, setRefreshing] = useState(false);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showCommentsModal, setShowCommentsModal] = useState(false);
-  const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
-  const [showLikersModal, setShowLikersModal] = useState(false);
-  const [selectedPostForLikers, setSelectedPostForLikers] = useState<string | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedPostForEdit, setSelectedPostForEdit] = useState<{id: string, content: string} | null>(null);
-  const [showSavedPostsModal, setShowSavedPostsModal] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [userId, setUserId] = useState<string>('');
-  
-  const [headerVisible, setHeaderVisible] = useState(true);
-  const [lastTap, setLastTap] = useState<number | null>(null);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [items,        setItems]        = useState<FeedItem[]>([]);
+  const [userProfile,  setUserProfile]  = useState<UserProfile | null>(null);
+  const [userId,       setUserId]       = useState('');
+  const [accessToken,  setAccessToken]  = useState('');
+  const [filterMode,   setFilterMode]   = useState<FilterMode>('all');
+  const [showFilter,   setShowFilter]   = useState(false);
+  const [loading,      setLoading]      = useState(false);
+
+  // Modals existants
+  const [selectedPost,             setSelectedPost]             = useState<Post | null>(null);
+  const [showCreateModal,          setShowCreateModal]          = useState(false);
+  const [showCommentsModal,        setShowCommentsModal]        = useState(false);
+  const [selectedPostForComments,  setSelectedPostForComments]  = useState<string | null>(null);
+  const [showLikersModal,          setShowLikersModal]          = useState(false);
+  const [selectedPostForLikers,    setSelectedPostForLikers]    = useState<string | null>(null);
+  const [showEditModal,            setShowEditModal]            = useState(false);
+  const [selectedPostForEdit,      setSelectedPostForEdit]      = useState<{id: string; content: string} | null>(null);
+  const [showSavedPostsModal,      setShowSavedPostsModal]      = useState(false);
+  const [showSearchModal,          setShowSearchModal]          = useState(false);
+  const [showLogoutModal,          setShowLogoutModal]          = useState(false);
+
+  const [lastTap,      setLastTap]      = useState<number | null>(null);
+  const [headerVisible,setHeaderVisible]= useState(true);
   const headerAnim = useRef(new Animated.Value(0)).current;
 
+  // ─── Init session ───────────────────────────────────────────────────────────
   useEffect(() => {
-    loadUserSession();
+    AsyncStorage.getItem('harmonia_session').then(raw => {
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      setUserId(s.user.id);
+      setAccessToken(s.access_token);
+    });
   }, []);
 
   useEffect(() => {
-    if (userId) {
-      loadFeedData();
-    }
-  }, [userId]);
+    if (userId && accessToken) loadFeed('all');
+  }, [userId, accessToken]);
 
-  const loadUserSession = async () => {
+  // ─── API Feed ───────────────────────────────────────────────────────────────
+  const loadFeed = useCallback(async (mode: FilterMode) => {
+    setLoading(true);
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (session) {
-        const parsed = JSON.parse(session);
-        setUserId(parsed.user.id);
-      }
-    } catch (error) {
-      console.error('Error loading session:', error);
-    }
-  };
+      const fnMap: Record<FilterMode, string> = {
+        all:    'getFeed',
+        posts:  'getPostsOnly',
+        images: 'getImagesOnly',
+      };
 
-  const handleLogoutSuccess = async () => {
-    try {
-      // Supprimer la session locale
-      await AsyncStorage.removeItem('harmonia_session');
-      
-      // Rediriger vers la page de connexion
-      router.replace('/login');
-    } catch (error) {
-      console.error('Error clearing session:', error);
-    }
-  };
-
-  const loadFeedData = async () => {
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      const response = await fetch(API_BASE_HOME, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
-        body: JSON.stringify({
-          action: 'get-feed',
-          user_id: parsed.user.id,
+      const res = await fetch(`${BACKEND_URL}/feed`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          function:     fnMap[mode],
+          user_id:      userId,
+          access_token: accessToken,
         }),
       });
+      const data = await res.json();
+      if (data.items) setItems(data.items);
 
-      const data = await response.json();
-
-      if (data.posts) setPosts(data.posts);
-      if (data.profile) setUserProfile(data.profile);
-    } catch (error) {
-      console.error('Error loading feed:', error);
-    }
-  };
+      // Profil depuis le feed classique (mode all ou posts)
+      if (mode !== 'images' && data.profile) setUserProfile(data.profile);
+    } catch (err) {
+      console.error('Error loading feed:', err);
+    } finally { setLoading(false); }
+  }, [userId, accessToken]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    await loadFeedData();
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await loadFeed(filterMode);
     setRefreshing(false);
   };
 
+  // ─── Filtre ─────────────────────────────────────────────────────────────────
+  const applyFilter = (mode: FilterMode) => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setFilterMode(mode);
+    setShowFilter(false);
+    loadFeed(mode);
+  };
+
+  // ─── Header toggle ──────────────────────────────────────────────────────────
   const handleDoubleTap = () => {
     const now = Date.now();
-    const DOUBLE_TAP_DELAY = 300;
-
-    if (lastTap && (now - lastTap) < DOUBLE_TAP_DELAY) {
-      toggleHeader();
-    } else {
-      setLastTap(now);
-    }
+    if (lastTap && now - lastTap < 300) toggleHeader();
+    else setLastTap(now);
   };
 
   const toggleHeader = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-
-    const toValue = headerVisible ? -HEADER_HEIGHT : 0;
-    
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Animated.spring(headerAnim, {
-      toValue,
-      useNativeDriver: true,
-      tension: 80,
-      friction: 10,
+      toValue: headerVisible ? -HEADER_HEIGHT : 0,
+      useNativeDriver: true, tension: 80, friction: 10,
     }).start();
-    
     setHeaderVisible(!headerVisible);
   };
 
+  // ─── Post actions ───────────────────────────────────────────────────────────
   const handleLike = async (postId: string, liked: boolean) => {
-    try {
-      const response = await fetch(API_BASE_POSTS, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
-        body: JSON.stringify({
-          action: liked ? 'like-post' : 'unlike-post',
-          user_id: userId,
-          post_id: postId,
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        setPosts(prev => prev.map(post => 
-          post.id === postId 
-            ? { ...post, reactions: { ...post.reactions, likes: data.likes }, user_liked: liked }
-            : post
-        ));
-      }
-    } catch (error) {
-      console.error('Error liking post:', error);
-      throw error;
+    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: userId, post_id: postId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setItems(prev => prev.map(item =>
+        item.item_type === 'post' && item.id === postId
+          ? { ...item, reactions: { ...item.reactions, likes: data.likes }, user_liked: liked }
+          : item
+      ));
     }
   };
 
   const handleShare = async (postId: string, shared: boolean) => {
-    try {
-      const response = await fetch(API_BASE_POSTS, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
-        body: JSON.stringify({
-          action: shared ? 'share-post' : 'unshare-post',
-          user_id: userId,
-          post_id: postId,
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        setPosts(prev => prev.map(post => 
-          post.id === postId 
-            ? { ...post, reactions: { ...post.reactions, shares: data.shares }, user_shared: shared }
-            : post
-        ));
-      }
-    } catch (error) {
-      console.error('Error sharing post:', error);
-      throw error;
+    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: userId, post_id: postId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setItems(prev => prev.map(item =>
+        item.item_type === 'post' && item.id === postId
+          ? { ...item, reactions: { ...item.reactions, shares: data.shares }, user_shared: shared }
+          : item
+      ));
     }
   };
 
   const handleSave = async (postId: string, saved: boolean) => {
+    const res = await fetch('https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: userId, post_id: postId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setItems(prev => prev.map(item =>
+        item.item_type === 'post' && item.id === postId
+          ? { ...item, user_saved: saved }
+          : item
+      ));
+    }
+  };
+
+  // ─── Vote soumission ────────────────────────────────────────────────────────
+  const handleVote = async (submissionKey: string, imageId: string, currentlyVoted: boolean) => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const fn = currentlyVoted ? 'unvoteSubmission' : 'voteSubmission';
     try {
-      const response = await fetch(API_BASE_POSTS, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
-        body: JSON.stringify({
-          action: saved ? 'save-post' : 'unsave-post',
-          user_id: userId,
-          post_id: postId,
+      const res = await fetch(`${BACKEND_URL}/feed`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          function:      fn,
+          user_id:       userId,
+          access_token:  accessToken,
+          submission_id: imageId,
         }),
       });
-
-      const data = await response.json();
-      
+      const data = await res.json();
       if (data.success) {
-        setPosts(prev => prev.map(post => 
-          post.id === postId 
-            ? { ...post, user_saved: saved }
-            : post
-        ));
+        setItems(prev => prev.map(item => {
+          if (item.item_type !== 'submission' || item.id !== submissionKey) return item;
+          const newImages = item.images.map(img =>
+            img.id === imageId
+              ? { ...img, votes: data.votes, user_voted: data.user_voted }
+              : img
+          );
+          const newTotal = newImages.reduce((sum, img) => sum + img.votes, 0);
+          return { ...item, images: newImages, total_votes: newTotal };
+        }));
       }
-    } catch (error) {
-      console.error('Error saving post:', error);
-      throw error;
-    }
+    } catch (err) { console.error('Error voting:', err); }
   };
 
-  const handleComment = (postId: string) => {
-    setSelectedPostForComments(postId);
-    setShowCommentsModal(true);
-  };
-
-  const handleLongPress = (post: Post) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    setSelectedPost(post);
-  };
-
+  // ─── Formatage ──────────────────────────────────────────────────────────────
   const formatTimeAgo = (dateString: string) => {
-    const now = new Date();
-    const past = new Date(dateString);
-    const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
-
-    if (diffInSeconds < 60) return "À l'instant";
-    if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
-    if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
-    return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
+    const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
+    if (diff < 60)    return "À l'instant";
+    if (diff < 3600)  return `il y a ${Math.floor(diff / 60)}min`;
+    if (diff < 86400) return `il y a ${Math.floor(diff / 3600)}h`;
+    return `il y a ${Math.floor(diff / 86400)}j`;
   };
 
-  const getInitials = (nom: string, prenom: string) => {
-    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
-  };
+  const getInitials = (nom: string, prenom: string) =>
+    `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
+  // ─── PostCard ────────────────────────────────────────────────────────────────
   const PostCard = ({ post }: { post: Post }) => {
-    const [liked, setLiked] = useState(post.user_liked || false);
-    const [shared, setShared] = useState(post.user_shared || false);
-    const [saved, setSaved] = useState(post.user_saved || false);
-    const [likesCount, setLikesCount] = useState(post.reactions.likes);
+    const [liked,       setLiked]       = useState(post.user_liked  || false);
+    const [shared,      setShared]      = useState(post.user_shared || false);
+    const [saved,       setSaved]       = useState(post.user_saved  || false);
+    const [likesCount,  setLikesCount]  = useState(post.reactions.likes);
     const [sharesCount, setSharesCount] = useState(post.reactions.shares);
-    const [isAnimating, setIsAnimating] = useState(false);
+    const [isAnim,      setIsAnim]      = useState(false);
+    const isOwn = post.author_id === userId;
 
     useEffect(() => {
       setLiked(post.user_liked || false);
@@ -310,96 +278,51 @@ export default function ActuScreen() {
       setSharesCount(post.reactions.shares);
     }, [post.id, post.user_liked, post.user_shared, post.user_saved, post.reactions]);
 
-    const isOwnPost = post.author_id === userId;
-
     const onLike = async () => {
-      if (isAnimating) return;
-      setIsAnimating(true);
-
-      if (Platform.OS !== 'web') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }
-
+      if (isAnim) return; setIsAnim(true);
+      if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const newLiked = !liked;
-      setLiked(newLiked);
-      setLikesCount(prev => newLiked ? prev + 1 : prev - 1);
-
-      try {
-        await handleLike(post.id, newLiked);
-      } catch (error) {
-        setLiked(!newLiked);
-        setLikesCount(prev => newLiked ? prev - 1 : prev + 1);
-      } finally {
-        setTimeout(() => setIsAnimating(false), 300);
-      }
+      setLiked(newLiked); setLikesCount(p => newLiked ? p + 1 : p - 1);
+      try { await handleLike(post.id, newLiked); }
+      catch { setLiked(!newLiked); setLikesCount(p => newLiked ? p - 1 : p + 1); }
+      finally { setTimeout(() => setIsAnim(false), 300); }
     };
 
     const onShare = async () => {
-      if (Platform.OS !== 'web') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-
+      if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const newShared = !shared;
-      setShared(newShared);
-      setSharesCount(prev => newShared ? prev + 1 : prev - 1);
-
-      try {
-        await handleShare(post.id, newShared);
-      } catch (error) {
-        setShared(!newShared);
-        setSharesCount(prev => newShared ? prev - 1 : prev + 1);
-      }
+      setShared(newShared); setSharesCount(p => newShared ? p + 1 : p - 1);
+      try { await handleShare(post.id, newShared); }
+      catch { setShared(!newShared); setSharesCount(p => newShared ? p - 1 : p + 1); }
     };
 
     const onSave = async () => {
-      if (Platform.OS !== 'web') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-
-      const newSaved = !saved;
-      setSaved(newSaved);
-
-      try {
-        await handleSave(post.id, newSaved);
-      } catch (error) {
-        setSaved(!newSaved);
-      }
+      if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const newSaved = !saved; setSaved(newSaved);
+      try { await handleSave(post.id, newSaved); }
+      catch { setSaved(!newSaved); }
     };
 
     return (
       <TouchableOpacity
         style={styles.postCard}
         activeOpacity={0.98}
-        onLongPress={() => handleLongPress(post)}
+        onLongPress={() => setSelectedPost(post)}
       >
         <View style={styles.postHeader}>
           <View style={styles.postAuthor}>
-            {post.author.avatar_url ? (
-              <Image source={{ uri: post.author.avatar_url }} style={styles.postAvatar} />
-            ) : (
-              <View style={styles.postAvatarPlaceholder}>
-                <Text style={styles.postAvatarText}>
-                  {getInitials(post.author.nom, post.author.prenom)}
-                </Text>
-              </View>
-            )}
+            {post.author.avatar_url
+              ? <Image source={{ uri: post.author.avatar_url }} style={styles.avatar} />
+              : <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
+                </View>}
             <View>
-              <Text style={styles.postAuthorName}>
-                {post.author.prenom} {post.author.nom}
-              </Text>
+              <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
               <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
             </View>
           </View>
-          {isOwnPost && (
-            <TouchableOpacity
-              onPress={() => {
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-                setSelectedPostForEdit({ id: post.id, content: post.content });
-                setShowEditModal(true);
-              }}
-            >
+          {isOwn && (
+            <TouchableOpacity onPress={() => { setSelectedPostForEdit({ id: post.id, content: post.content }); setShowEditModal(true); }}>
               <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
             </TouchableOpacity>
           )}
@@ -408,190 +331,213 @@ export default function ActuScreen() {
         <Text style={styles.postContent}>{post.content}</Text>
 
         <View style={styles.statsBar}>
-          <TouchableOpacity
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }
-              if (likesCount > 0) {
-                setSelectedPostForLikers(post.id);
-                setShowLikersModal(true);
-              }
-            }}
-          >
-            <Text style={styles.statsText}>
-              {likesCount} {likesCount === 1 ? 'like' : 'likes'}
-            </Text>
+          <TouchableOpacity onPress={() => { if (likesCount > 0) { setSelectedPostForLikers(post.id); setShowLikersModal(true); } }}>
+            <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
           </TouchableOpacity>
           <View style={styles.statsRight}>
             <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
-            <Text style={styles.statsSeparator}>•</Text>
+            <Text style={styles.statsSep}>•</Text>
             <Text style={styles.statsText}>{sharesCount} partages</Text>
           </View>
         </View>
 
         <View style={styles.actionsBar}>
-          <TouchableOpacity
-            style={[styles.actionButton, liked && styles.actionButtonActive]}
-            onPress={onLike}
-            disabled={isAnimating}
-          >
-            <LinearGradient
-              colors={liked ? ['#FF0080', '#FF0080'] : ['transparent', 'transparent']}
-              style={styles.actionGradient}
-            >
-              <Ionicons
-                name={liked ? 'heart' : 'heart-outline'}
-                size={22}
-                color={liked ? '#FFF' : '#666'}
-              />
-              <Text style={[styles.actionText, liked && styles.actionTextActive]}>
-                {liked ? 'Aimé' : 'Aimer'}
-              </Text>
+          <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={onLike} disabled={isAnim}>
+            <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
+              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
+              <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }
-              handleComment(post.id);
-            }}
-          >
-            <View style={styles.actionGradient}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedPostForComments(post.id); setShowCommentsModal(true); }}>
+            <View style={styles.actionGrad}>
               <Ionicons name="chatbubble-outline" size={20} color="#666" />
               <Text style={styles.actionText}>Commenter</Text>
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.actionButton, shared && styles.actionButtonActive]}
-            onPress={onShare}
-          >
-            <LinearGradient
-              colors={shared ? ['#10B981', '#10B981'] : ['transparent', 'transparent']}
-              style={styles.actionGradient}
-            >
-              <Ionicons
-                name={shared ? 'repeat' : 'repeat-outline'}
-                size={22}
-                color={shared ? '#FFF' : '#666'}
-              />
-              <Text style={[styles.actionText, shared && styles.actionTextActive]}>
-                {shared ? 'Partagé' : 'Partager'}
-              </Text>
+          <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={onShare}>
+            <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
+              <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
+              <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.saveButton} onPress={onSave}>
-            <Ionicons
-              name={saved ? 'bookmark' : 'bookmark-outline'}
-              size={22}
-              color={saved ? '#FFD700' : '#666'}
-            />
+          <TouchableOpacity style={styles.saveBtn} onPress={onSave}>
+            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? '#FFD700' : '#666'} />
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
   };
 
+  // ─── SubmissionCard ──────────────────────────────────────────────────────────
+  const SubmissionCard = ({ sub }: { sub: Submission }) => {
+    const [images, setImages] = useState(sub.images);
+    const [totalVotes, setTotalVotes] = useState(sub.total_votes);
+
+    useEffect(() => {
+      setImages(sub.images);
+      setTotalVotes(sub.total_votes);
+    }, [sub]);
+
+    const onVote = async (imageId: string, currentlyVoted: boolean) => {
+      // Optimistic update
+      const newImages = images.map(img =>
+        img.id === imageId
+          ? { ...img, votes: currentlyVoted ? img.votes - 1 : img.votes + 1, user_voted: !currentlyVoted }
+          : img
+      );
+      setImages(newImages);
+      setTotalVotes(newImages.reduce((s, i) => s + i.votes, 0));
+      await handleVote(sub.id, imageId, currentlyVoted);
+    };
+
+    return (
+      <View style={styles.subCard}>
+        {/* Header soumission */}
+        <View style={styles.subHeader}>
+          <View style={styles.subArtsBadge}>
+            <Text style={styles.subArtsBadgeText}>🎨 Arts</Text>
+          </View>
+          <View style={styles.postAuthor}>
+            {sub.author.avatar_url
+              ? <Image source={{ uri: sub.author.avatar_url }} style={styles.avatar} />
+              : <View style={[styles.avatarPlaceholder, { backgroundColor: '#8E44AD' }]}>
+                  <Text style={styles.avatarText}>{getInitials(sub.author.nom, sub.author.prenom)}</Text>
+                </View>}
+            <View>
+              <Text style={styles.authorName}>{sub.author.prenom} {sub.author.nom}</Text>
+              <Text style={styles.postTime}>Run #{sub.run_number} — {sub.run_title}</Text>
+            </View>
+          </View>
+          <View style={styles.totalVotesBadge}>
+            <Ionicons name="heart" size={13} color="#E74C3C" />
+            <Text style={styles.totalVotesText}>{totalVotes}</Text>
+          </View>
+        </View>
+
+        {/* Images défilantes horizontalement */}
+        <FlatList
+          data={images}
+          keyExtractor={img => img.id}
+          horizontal
+          pagingEnabled={images.length > 1}
+          showsHorizontalScrollIndicator={false}
+          style={styles.imagesList}
+          renderItem={({ item: img, index }) => (
+            <View style={[styles.imageSlide, { width: images.length > 1 ? width - 48 : width - 24 }]}>
+              <Image source={{ uri: img.image_url }} style={styles.subImage} resizeMode="cover" />
+              {images.length > 1 && (
+                <View style={styles.imageCounter}>
+                  <Text style={styles.imageCounterText}>{index + 1}/{images.length}</Text>
+                </View>
+              )}
+              {img.description ? (
+                <Text style={styles.imgDesc} numberOfLines={2}>{img.description}</Text>
+              ) : null}
+
+              {/* Bouton vote par image */}
+              <TouchableOpacity
+                style={[styles.voteBtn, img.user_voted && styles.voteBtnVoted]}
+                onPress={() => onVote(img.id, img.user_voted)}
+                activeOpacity={0.8}
+              >
+                {img.user_voted ? (
+                  <>
+                    <Text style={styles.voteBtnText}>Voté 💪</Text>
+                    <Text style={styles.voteBtnCount}>{img.votes}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="heart-outline" size={16} color="#FFF" />
+                    <Text style={styles.voteBtnText}>Voter</Text>
+                    <Text style={styles.voteBtnCount}>{img.votes}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        />
+
+        {/* Indicateurs pagination */}
+        {images.length > 1 && (
+          <View style={styles.dots}>
+            {images.map((_, i) => (
+              <View key={i} style={styles.dot} />
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // ─── Render item ─────────────────────────────────────────────────────────────
+  const renderItem = (item: FeedItem) => {
+    if (item.item_type === 'post')       return <PostCard key={item.id} post={item} />;
+    if (item.item_type === 'submission') return <SubmissionCard key={item.id} sub={item} />;
+    return null;
+  };
+
+  // ─── Label filtre actif ───────────────────────────────────────────────────────
+  const filterLabel: Record<FilterMode, string> = {
+    all:    'Tout',
+    posts:  'Publications',
+    images: 'Images',
+  };
+
+  // ─── Render principal ─────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <Animated.View 
-        style={[
-          styles.headerContainer,
-          { transform: [{ translateY: headerAnim }] }
-        ]}
-      >
+
+      {/* Header */}
+      <Animated.View style={[styles.headerContainer, { transform: [{ translateY: headerAnim }] }]}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
           <View style={styles.headerContent}>
             <HarmoniaLogo size={26} showText={true} />
-            
             <View style={styles.buttonsRow}>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  setShowSearchModal(true);
-                }}
+
+              {/* Filtre */}
+              <TouchableOpacity
+                style={styles.filterBtn}
+                onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowFilter(true); }}
               >
+                <Ionicons name="filter" size={18} color="#FFD700" />
+                <Text style={styles.filterBtnText}>{filterLabel[filterMode]}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.headerButton} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSearchModal(true); }}>
                 <Ionicons name="search-outline" size={20} color="#fff" />
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.createButton}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  }
-                  setShowCreateModal(true);
-                }}
-              >
-                <LinearGradient
-                  colors={['#FFD700', '#FF0080']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.createButtonGradient}
-                >
+              <TouchableOpacity style={styles.headerButton} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreateModal(true); }}>
+                <LinearGradient colors={['#FFD700','#FF0080']} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.createBtnGrad}>
                   <Ionicons name="add" size={18} color="#fff" />
                 </LinearGradient>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  router.push('/notifications');
-                }}
-              >
+              <TouchableOpacity style={styles.headerButton} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/notifications'); }}>
                 <Ionicons name="notifications-outline" size={20} color="#fff" />
-                <View style={styles.notifBadge}>
-                  <Text style={styles.notifBadgeText}>5</Text>
-                </View>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  setShowSavedPostsModal(true);
-                }}
-              >
+              <TouchableOpacity style={styles.headerButton} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSavedPostsModal(true); }}>
                 <Ionicons name="arrow-down-circle-outline" size={20} color="#fff" />
               </TouchableOpacity>
 
-              {/* NOUVEAU : Bouton déconnexion */}
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  setShowLogoutModal(true);
-                }}
-              >
+              <TouchableOpacity style={styles.headerButton} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowLogoutModal(true); }}>
                 <Ionicons name="log-out-outline" size={20} color="#FFD700" />
               </TouchableOpacity>
 
-              <View style={styles.balanceContainer}>
+              <View style={styles.balanceBox}>
                 <Ionicons name="wallet-outline" size={14} color="#FFD700" />
-                <Text style={styles.balanceText}>
-                  {userProfile?.solde_cfa?.toLocaleString() || '0'}
-                </Text>
+                <Text style={styles.balanceText}>{userProfile?.solde_cfa?.toLocaleString() || '0'}</Text>
               </View>
             </View>
           </View>
         </LinearGradient>
       </Animated.View>
 
+      {/* Hint double-tap */}
       {!headerVisible && (
         <View style={styles.doubleTapHint}>
           <Ionicons name="chevron-down-outline" size={16} color="#8A2BE2" />
@@ -599,6 +545,7 @@ export default function ActuScreen() {
         </View>
       )}
 
+      {/* Feed */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -606,183 +553,161 @@ export default function ActuScreen() {
         showsVerticalScrollIndicator={false}
         onTouchEnd={handleDoubleTap}
       >
-        <View style={styles.postsSection}>
-          {posts.length === 0 ? (
-            <View style={styles.emptyPosts}>
-              <Ionicons name="newspaper-outline" size={60} color="#CCC" />
-              <Text style={styles.emptyText}>Connexion en cours ...</Text>
-              <Text style={styles.emptySubtext}>Veuillez patienter</Text>
-            </View>
-          ) : (
-            posts.map((post) => <PostCard key={post.id} post={post} />)
-          )}
-        </View>
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color="#8A2BE2" />
+          </View>
+        ) : items.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <Ionicons name="newspaper-outline" size={60} color="#CCC" />
+            <Text style={styles.emptyText}>Aucun contenu</Text>
+            <Text style={styles.emptySub}>Tirez pour actualiser</Text>
+          </View>
+        ) : (
+          <View style={styles.feedList}>
+            {items.map(item => renderItem(item))}
+          </View>
+        )}
       </ScrollView>
 
+      {/* Modal filtre */}
+      <Modal visible={showFilter} transparent animationType="fade" onRequestClose={() => setShowFilter(false)}>
+        <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setShowFilter(false)}>
+          <View style={styles.filterMenu}>
+            <Text style={styles.filterMenuTitle}>Afficher</Text>
+            {([
+              { key: 'all',    label: 'Tout',          icon: 'apps-outline'        },
+              { key: 'posts',  label: 'Publications',  icon: 'document-text-outline'},
+              { key: 'images', label: 'Images',        icon: 'images-outline'      },
+            ] as { key: FilterMode; label: string; icon: string }[]).map(opt => (
+              <TouchableOpacity
+                key={opt.key}
+                style={[styles.filterOption, filterMode === opt.key && styles.filterOptionActive]}
+                onPress={() => applyFilter(opt.key)}
+              >
+                <Ionicons name={opt.icon as any} size={20} color={filterMode === opt.key ? '#8A2BE2' : '#666'} />
+                <Text style={[styles.filterOptionText, filterMode === opt.key && styles.filterOptionTextActive]}>
+                  {opt.label}
+                </Text>
+                {filterMode === opt.key && <Ionicons name="checkmark" size={18} color="#8A2BE2" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Modal détail post */}
       {selectedPost && (
-        <Modal
-          visible={!!selectedPost}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setSelectedPost(null)}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setSelectedPost(null)}
-          >
+        <Modal visible={!!selectedPost} transparent animationType="fade" onRequestClose={() => setSelectedPost(null)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSelectedPost(null)}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>📊 Détails</Text>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalLabel}>Auteur :</Text>
-                <Text style={styles.modalValue}>
-                  {selectedPost.author.prenom} {selectedPost.author.nom}
-                </Text>
-              </View>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalLabel}>Publié :</Text>
-                <Text style={styles.modalValue}>{formatTimeAgo(selectedPost.created_at)}</Text>
-              </View>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalLabel}>Réactions :</Text>
-                <Text style={styles.modalValue}>
-                  ❤️ {selectedPost.reactions.likes} · 💬 {selectedPost.reactions.comments} · 🔄 {selectedPost.reactions.shares}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.modalButton}
-                onPress={() => setSelectedPost(null)}
-              >
-                <Text style={styles.modalButtonText}>Fermer</Text>
+              <View style={styles.modalInfo}><Text style={styles.modalLabel}>Auteur :</Text><Text style={styles.modalValue}>{selectedPost.author.prenom} {selectedPost.author.nom}</Text></View>
+              <View style={styles.modalInfo}><Text style={styles.modalLabel}>Publié :</Text><Text style={styles.modalValue}>{formatTimeAgo(selectedPost.created_at)}</Text></View>
+              <View style={styles.modalInfo}><Text style={styles.modalLabel}>Réactions :</Text><Text style={styles.modalValue}>❤️ {selectedPost.reactions.likes} · 💬 {selectedPost.reactions.comments} · 🔄 {selectedPost.reactions.shares}</Text></View>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setSelectedPost(null)}>
+                <Text style={styles.modalBtnText}>Fermer</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </Modal>
       )}
 
-      <CreatePostModal
-        visible={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onPostCreated={async () => {
-          await loadFeedData();
-        }}
-      />
-
-      <CommentsModal
-        visible={showCommentsModal}
-        postId={selectedPostForComments}
-        userId={userId}
-        onClose={() => {
-          setShowCommentsModal(false);
-          setSelectedPostForComments(null);
-        }}
-        onCommentAdded={() => {
-          loadFeedData();
-        }}
-      />
-
-      <LikersModal
-        visible={showLikersModal}
-        postId={selectedPostForLikers}
-        onClose={() => {
-          setShowLikersModal(false);
-          setSelectedPostForLikers(null);
-        }}
-      />
-
-      <EditPostModal
-        visible={showEditModal}
-        postId={selectedPostForEdit?.id || null}
-        userId={userId}
-        initialContent={selectedPostForEdit?.content || ''}
-        onClose={() => {
-          setShowEditModal(false);
-          setSelectedPostForEdit(null);
-        }}
-        onPostUpdated={async () => {
-          await loadFeedData();
-        }}
-      />
-
-      <SavedPostsModal
-        visible={showSavedPostsModal}
-        userId={userId}
-        onClose={() => setShowSavedPostsModal(false)}
-        onCommentPress={(postId) => {
-          setShowSavedPostsModal(false);
-          setSelectedPostForComments(postId);
-          setShowCommentsModal(true);
-        }}
-      />
-
-      <SearchModal
-        visible={showSearchModal}
-        userId={userId}
-        onClose={() => setShowSearchModal(false)}
-        onPostPress={(postId) => {
-          setSelectedPostForComments(postId);
-          setShowCommentsModal(true);
-        }}
-      />
-
-      <LogoutModal
-        visible={showLogoutModal}
-        userId={userId}
-        onClose={() => setShowLogoutModal(false)}
-        onLogoutSuccess={handleLogoutSuccess}
-      />
+      {/* Modals existants */}
+      <CreatePostModal visible={showCreateModal} onClose={() => setShowCreateModal(false)} onPostCreated={async () => { await loadFeed(filterMode); }} />
+      <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => { loadFeed(filterMode); }} />
+      <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
+      <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadFeed(filterMode); }} />
+      <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
+      <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
+      <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
     </View>
   );
 }
 
-// Styles (identiques à la version précédente)
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
-  header: { paddingTop: Platform.OS === 'ios' ? 50 : 35, paddingBottom: 6, paddingHorizontal: 12 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  buttonsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  createButton: { borderRadius: 16, overflow: 'hidden' },
-  createButtonGradient: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
-  headerButton: { position: 'relative' },
-  notifBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: '#FF0080', borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center' },
-  notifBadgeText: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
-  balanceContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.2)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 10, gap: 3 },
-  balanceText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  doubleTapHint: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0E6FF', paddingVertical: 6, gap: 4 },
-  doubleTapText: { fontSize: 11, color: '#8A2BE2', fontWeight: '600' },
-  scrollView: { flex: 1 },
-  scrollContent: { paddingTop: HEADER_HEIGHT },
-  postsSection: { paddingVertical: 8, paddingBottom: 100 },
-  postCard: { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
-  postHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
-  postAuthor: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
-  postAvatar: { width: 40, height: 40, borderRadius: 20 },
-  postAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
-  postAvatarText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-  postAuthorName: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
-  postTime: { fontSize: 12, color: '#999', marginTop: 1 },
-  postContent: { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
-  statsBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  statsText: { fontSize: 12, color: '#666' },
-  statsRight: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  statsSeparator: { color: '#CCC' },
-  actionsBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
-  actionButton: { flex: 1, borderRadius: 8, overflow: 'hidden' },
-  actionButtonActive: {},
-  actionGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
-  actionText: { fontSize: 12, fontWeight: '600', color: '#666' },
+  container:      { flex: 1, backgroundColor: '#F5F5F5' },
+  headerContainer:{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
+  header:         { paddingTop: Platform.OS === 'ios' ? 50 : 35, paddingBottom: 6, paddingHorizontal: 12 },
+  headerContent:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  buttonsRow:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerButton:   { position: 'relative' },
+  createBtnGrad:  { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  balanceBox:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 10, gap: 3 },
+  balanceText:    { color: '#fff', fontSize: 10, fontWeight: 'bold' },
+  filterBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
+  filterBtnText:  { color: '#FFD700', fontSize: 11, fontWeight: '700' },
+  doubleTapHint:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0E6FF', paddingVertical: 6, gap: 4 },
+  doubleTapText:  { fontSize: 11, color: '#8A2BE2', fontWeight: '600' },
+  scrollView:     { flex: 1 },
+  scrollContent:  { paddingTop: HEADER_HEIGHT },
+  feedList:       { paddingVertical: 8, paddingBottom: 100 },
+  loadingBox:     { paddingVertical: 60, alignItems: 'center' },
+  emptyBox:       { alignItems: 'center', paddingVertical: 60 },
+  emptyText:      { fontSize: 16, color: '#999', marginTop: 12 },
+  emptySub:       { fontSize: 12, color: '#CCC', marginTop: 5 },
+
+  // Post card
+  postCard:     { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
+  postHeader:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
+  postAuthor:   { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
+  avatar:       { width: 40, height: 40, borderRadius: 20 },
+  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
+  avatarText:   { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  authorName:   { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  postTime:     { fontSize: 12, color: '#999', marginTop: 1 },
+  postContent:  { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
+  statsBar:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  statsText:    { fontSize: 12, color: '#666' },
+  statsRight:   { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  statsSep:     { color: '#CCC' },
+  actionsBar:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
+  actionBtn:    { flex: 1, borderRadius: 8, overflow: 'hidden' },
+  actionBtnActive: {},
+  actionGrad:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
+  actionText:   { fontSize: 12, fontWeight: '600', color: '#666' },
   actionTextActive: { color: '#FFF' },
-  saveButton: { padding: 8 },
-  emptyPosts: { alignItems: 'center', paddingVertical: 60 },
-  emptyText: { fontSize: 16, color: '#999', marginTop: 12 },
-  emptySubtext: { fontSize: 12, color: '#CCC', marginTop: 5 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.7)', justifyContent: 'center', alignItems: 'center' },
+  saveBtn:      { padding: 8 },
+
+  // Submission card
+  subCard:       { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, overflow: 'hidden' },
+  subHeader:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
+  subArtsBadge:  { backgroundColor: '#F0E6FF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  subArtsBadgeText: { color: '#8E44AD', fontSize: 11, fontWeight: '700' },
+  totalVotesBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' },
+  totalVotesText:  { color: '#E74C3C', fontSize: 13, fontWeight: '700' },
+  imagesList:    { flexGrow: 0 },
+  imageSlide:    { paddingHorizontal: 12 },
+  subImage:      { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  imageCounter:  { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  imageCounterText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
+  imgDesc:       { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
+  voteBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                   backgroundColor: '#8A2BE2', borderRadius: 25, paddingVertical: 10,
+                   paddingHorizontal: 20, marginTop: 12, marginBottom: 4, alignSelf: 'center' },
+  voteBtnVoted:  { backgroundColor: '#E74C3C' },
+  voteBtnText:   { color: '#FFF', fontWeight: '700', fontSize: 14 },
+  voteBtnCount:  { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
+  dots:          { flexDirection: 'row', justifyContent: 'center', gap: 5, paddingVertical: 10 },
+  dot:           { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
+
+  // Filtre modal
+  filterOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: Platform.OS === 'ios' ? 100 : 80, paddingRight: 12 },
+  filterMenu:        { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
+  filterMenuTitle:   { color: '#999', fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingVertical: 8, textTransform: 'uppercase' },
+  filterOption:      { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10 },
+  filterOptionActive:{ backgroundColor: '#F0E6FF' },
+  filterOptionText:  { flex: 1, fontSize: 14, color: '#333', fontWeight: '600' },
+  filterOptionTextActive: { color: '#8A2BE2' },
+
+  // Modal détail post
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
   modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 25, width: width * 0.85, maxWidth: 400 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
-  modalInfo: { marginBottom: 12 },
-  modalLabel: { fontSize: 12, color: '#999', marginBottom: 3 },
-  modalValue: { fontSize: 14, color: '#333', fontWeight: '600' },
-  modalButton: { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
-  modalButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  modalTitle:   { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
+  modalInfo:    { marginBottom: 12 },
+  modalLabel:   { fontSize: 12, color: '#999', marginBottom: 3 },
+  modalValue:   { fontSize: 14, color: '#333', fontWeight: '600' },
+  modalBtn:     { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+  modalBtnText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 });
