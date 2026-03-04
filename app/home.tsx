@@ -185,9 +185,6 @@ export default function HomePage() {
                 color={activeTab === 'messages' ? '#FFD700' : '#E0D0FF'}
               />
               {activeTab === 'messages' && <View style={styles.activeIndicator} />}
-              <View style={styles.badge}>
-                <Animated.Text style={styles.badgeText}>3</Animated.Text>
-              </View>
             </TouchableOpacity>
 
             {/* Friends Tab */}
@@ -288,28 +285,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 4,
     elevation: 4,
-  },
-  badge: {
-    position: 'absolute',
-    top: 2,
-    right: 8,
-    backgroundColor: '#FF0080',
-    borderRadius: 12,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#8A2BE2',
-    shadowColor: '#FF0080',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: 'bold',
   },
 });
