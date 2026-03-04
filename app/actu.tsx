@@ -66,7 +66,7 @@ interface Submission {
 type FeedItem = Post | Submission;
 interface UserProfile { solde_cfa: number; trophies_count: number }
 
-// ─── Helpers (hors composant) ─────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const formatTimeAgo = (dateString: string) => {
   const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
   if (diff < 60)    return "À l'instant";
@@ -77,6 +77,96 @@ const formatTimeAgo = (dateString: string) => {
 
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
+
+// ─── Token refresh ────────────────────────────────────────────────────────────
+// Évite plusieurs refreshs simultanés
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise; // déjà en cours → attendre
+  refreshPromise = (async () => {
+    try {
+      const raw = await AsyncStorage.getItem('harmonia_session');
+      if (!raw) return null;
+      const session = JSON.parse(raw);
+      const refresh_token = session?.refresh_token;
+      if (!refresh_token) return null;
+
+      const res = await fetch(`${BACKEND_URL}/refresh-token`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ refresh_token }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.access_token) {
+        console.warn('[refresh] Échec :', data.error);
+        return null;
+      }
+
+      // Mettre à jour la session en AsyncStorage
+      const updatedSession = {
+        ...session,
+        access_token:  data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at:    data.expires_at,
+      };
+      await AsyncStorage.setItem('harmonia_session', JSON.stringify(updatedSession));
+      console.log('[refresh] Token renouvelé ✓');
+      return data.access_token;
+    } catch (err) {
+      console.error('[refresh] Erreur :', err);
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+// ─── fetchWithAuth — wrapper avec retry auto après refresh ───────────────────
+// tokenRef est passé en paramètre pour que le wrapper puisse lire/écrire le token courant
+async function fetchWithAuth(
+  url: string,
+  options: RequestInit,
+  tokenRef: React.MutableRefObject<string>,
+): Promise<Response> {
+  // 1er essai avec le token actuel
+  const res = await fetch(url, options);
+
+  // Si 401 → refresh → retry
+  if (res.status === 401) {
+    console.log('[fetchWithAuth] 401 reçu, refresh en cours…');
+    const newToken = await refreshAccessToken();
+    if (!newToken) {
+      // Refresh impossible → on retourne la réponse 401 originale
+      return res;
+    }
+    tokenRef.current = newToken;
+
+    // Reconstruire les options avec le nouveau token
+    // (le body JSON contenant access_token doit aussi être mis à jour)
+    let newOptions = { ...options };
+    if (options.body && typeof options.body === 'string') {
+      try {
+        const bodyObj = JSON.parse(options.body);
+        if ('access_token' in bodyObj) {
+          bodyObj.access_token = newToken;
+          newOptions = { ...options, body: JSON.stringify(bodyObj) };
+        }
+      } catch {}
+    }
+    // Headers Authorization si présent
+    if (options.headers && (options.headers as any)['Authorization']) {
+      newOptions = {
+        ...newOptions,
+        headers: { ...(options.headers as any), Authorization: `Bearer ${newToken}` },
+      };
+    }
+    return fetch(url, newOptions);
+  }
+
+  return res;
+}
 
 // ─── Props types ──────────────────────────────────────────────────────────────
 interface PostCardProps {
@@ -96,7 +186,7 @@ interface SubmissionCardProps {
   onVote: (submissionKey: string, imageId: string, currentlyVoted: boolean) => Promise<void>;
 }
 
-// ─── PostCard (hors ActuScreen → référence stable) ───────────────────────────
+// ─── PostCard ─────────────────────────────────────────────────────────────────
 const PostCard = React.memo(({
   post, userId,
   onLike, onShare, onSave,
@@ -144,11 +234,7 @@ const PostCard = React.memo(({
   };
 
   return (
-    <TouchableOpacity
-      style={styles.postCard}
-      activeOpacity={0.98}
-      onLongPress={() => onLongPress(post)}
-    >
+    <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
       <View style={styles.postHeader}>
         <View style={styles.postAuthor}>
           {post.author.avatar_url
@@ -214,16 +300,18 @@ const PostCard = React.memo(({
   );
 });
 
-// ─── SubmissionCard (hors ActuScreen → référence stable) ─────────────────────
+// ─── SubmissionCard ───────────────────────────────────────────────────────────
 const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
   const [images,      setImages]      = useState(sub.images);
   const [totalVotes,  setTotalVotes]  = useState(sub.total_votes);
-  const [activeIndex, setActiveIndex] = useState(0);   // ← dot actif
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
     setImages(sub.images);
     setTotalVotes(sub.total_votes);
   }, [sub]);
+
+  const slideWidth = images.length > 1 ? width - 48 : width - 24;
 
   const handleVoteLocal = async (imageId: string, currentlyVoted: boolean) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -236,8 +324,6 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
     setTotalVotes(updated.reduce((s, i) => s + i.votes, 0));
     await onVote(sub.id, imageId, currentlyVoted);
   };
-
-  const slideWidth = images.length > 1 ? width - 48 : width - 24;
 
   return (
     <View style={styles.subCard}>
@@ -269,7 +355,6 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
         pagingEnabled={images.length > 1}
         showsHorizontalScrollIndicator={false}
         style={styles.imagesList}
-        // ← Suivre la page active sans reset du scroll
         onMomentumScrollEnd={e => {
           const idx = Math.round(e.nativeEvent.contentOffset.x / slideWidth);
           setActiveIndex(idx);
@@ -323,7 +408,6 @@ export default function ActuScreen() {
   const [showFilter,  setShowFilter]  = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
 
-  // Modals
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCreateModal,         setShowCreateModal]         = useState(false);
   const [showCommentsModal,       setShowCommentsModal]       = useState(false);
@@ -341,7 +425,7 @@ export default function ActuScreen() {
   const headerAnim = useRef(new Animated.Value(0)).current;
 
   const userIdRef  = useRef('');
-  const tokenRef   = useRef('');
+  const tokenRef   = useRef('');   // ← source de vérité pour le token courant
   const filterRef  = useRef<FilterMode>('all');
 
   // ─── Init session ─────────────────────────────────────────────────────────
@@ -362,7 +446,40 @@ export default function ActuScreen() {
     loadSubmissions();
   }, [userId, accessToken]);
 
-  // ─── Chargement ───────────────────────────────────────────────────────────
+  // ─── loadSubmissions — utilise fetchWithAuth ───────────────────────────────
+  const loadSubmissions = useCallback(async () => {
+    try {
+      const res = await fetchWithAuth(
+        `${BACKEND_URL}/feed`,
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            function:     'getSubmissions',
+            user_id:      userIdRef.current,
+            access_token: tokenRef.current,   // sera mis à jour par fetchWithAuth si 401
+          }),
+        },
+        tokenRef,
+      );
+
+      // Si toujours 401 après refresh → session morte
+      if (res.status === 401) {
+        console.warn('[loadSubmissions] Session expirée, déconnexion');
+        await AsyncStorage.removeItem('harmonia_session');
+        router.replace('/login');
+        return;
+      }
+
+      const data = await res.json();
+      if (data.submissions) {
+        setSubmissions(data.submissions.map((s: any) => ({ ...s, item_type: 'submission' })));
+      }
+    } catch (err) { console.error('Error loading submissions:', err); }
+  }, []);
+
+  // ─── loadPosts — Supabase Edge Function (gère ses propres tokens via anon key)
+  // Pas de fetchWithAuth ici car l'Edge Function utilise l'anon key Supabase
   const loadPosts = useCallback(async () => {
     try {
       const res  = await fetch(API_BASE_HOME, {
@@ -376,24 +493,6 @@ export default function ActuScreen() {
     } catch (err) { console.error('Error loading posts:', err); }
   }, []);
 
-  const loadSubmissions = useCallback(async () => {
-    try {
-      const res  = await fetch(`${BACKEND_URL}/feed`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          function:     'getSubmissions',
-          user_id:      userIdRef.current,
-          access_token: tokenRef.current,
-        }),
-      });
-      const data = await res.json();
-      if (data.submissions) {
-        setSubmissions(data.submissions.map((s: any) => ({ ...s, item_type: 'submission' })));
-      }
-    } catch (err) { console.error('Error loading submissions:', err); }
-  }, []);
-
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -402,7 +501,6 @@ export default function ActuScreen() {
     setRefreshing(false);
   };
 
-  // ─── Refresh manuel ───────────────────────────────────────────────────────
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleManualRefresh = async () => {
@@ -414,7 +512,6 @@ export default function ActuScreen() {
     setIsRefreshing(false);
   };
 
-  // ─── Filtre ───────────────────────────────────────────────────────────────
   const applyFilter = async (mode: FilterMode) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     filterRef.current = mode;
@@ -425,7 +522,6 @@ export default function ActuScreen() {
     if (mode === 'all')    { await Promise.all([loadPosts(), loadSubmissions()]); }
   };
 
-  // ─── Items affichés ───────────────────────────────────────────────────────
   const displayedItems: FeedItem[] = (() => {
     if (filterMode === 'posts')  return posts;
     if (filterMode === 'images') return submissions;
@@ -434,7 +530,6 @@ export default function ActuScreen() {
     );
   })();
 
-  // ─── Header toggle ────────────────────────────────────────────────────────
   const handleDoubleTap = () => {
     const now = Date.now();
     if (lastTap && now - lastTap < 300) toggleHeader();
@@ -450,7 +545,7 @@ export default function ActuScreen() {
     setHeaderVisible(!headerVisible);
   };
 
-  // ─── Post actions (stables grâce à useCallback) ───────────────────────────
+  // ─── Post actions ─────────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
     const res  = await fetch(API_BASE_POSTS, {
       method:  'POST',
@@ -491,18 +586,31 @@ export default function ActuScreen() {
     }
   }, [userId]);
 
+  // ─── Vote — utilise fetchWithAuth ─────────────────────────────────────────
   const handleVote = useCallback(async (submissionKey: string, imageId: string, currentlyVoted: boolean) => {
     try {
-      const res  = await fetch(`${BACKEND_URL}/feed`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
-          user_id:       userId,
-          access_token:  accessToken,
-          submission_id: imageId,
-        }),
-      });
+      const res = await fetchWithAuth(
+        `${BACKEND_URL}/feed`,
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
+            user_id:       userId,
+            access_token:  tokenRef.current,
+            submission_id: imageId,
+          }),
+        },
+        tokenRef,
+      );
+
+      if (res.status === 401) {
+        console.warn('[handleVote] Session expirée, déconnexion');
+        await AsyncStorage.removeItem('harmonia_session');
+        router.replace('/login');
+        return;
+      }
+
       const data = await res.json();
       if (data.success) {
         setSubmissions(prev => prev.map(sub => {
@@ -516,9 +624,8 @@ export default function ActuScreen() {
         }));
       }
     } catch (err) { console.error('Error voting:', err); }
-  }, [userId, accessToken]);
+  }, [userId]);
 
-  // ─── Callbacks stables pour les modals ────────────────────────────────────
   const handleOpenComments = useCallback((postId: string) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedPostForComments(postId);
@@ -548,7 +655,6 @@ export default function ActuScreen() {
       <Animated.View style={[styles.headerContainer, { transform: [{ translateY: headerAnim }] }]}>
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
 
-          {/* Ligne 1 : Logo + Solde */}
           <View style={styles.headerTop}>
             <HarmoniaLogo size={26} showText={true} />
             <View style={styles.balanceBox}>
@@ -559,7 +665,6 @@ export default function ActuScreen() {
             </View>
           </View>
 
-          {/* Ligne 2 : Actions */}
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.filterBtn} onPress={() => {
               if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -666,7 +771,6 @@ export default function ActuScreen() {
         )}
       </ScrollView>
 
-      {/* Modal filtre */}
       <Modal visible={showFilter} transparent animationType="fade" onRequestClose={() => setShowFilter(false)}>
         <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setShowFilter(false)}>
           <View style={styles.filterMenu}>
@@ -690,7 +794,6 @@ export default function ActuScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Modal détail post */}
       {selectedPost && (
         <Modal visible={!!selectedPost} transparent animationType="fade" onRequestClose={() => setSelectedPost(null)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSelectedPost(null)}>
@@ -782,7 +885,7 @@ const styles = StyleSheet.create({
   voteBtnCount:     { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
   dots:             { flexDirection: 'row', justifyContent: 'center', gap: 5, paddingVertical: 10 },
   dot:              { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
-  dotActive:        { backgroundColor: '#8A2BE2', width: 18, borderRadius: 3 },   // ← dot actif élargi
+  dotActive:        { backgroundColor: '#8A2BE2', width: 18, borderRadius: 3 },
 
   filterOverlay:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-start', paddingTop: Platform.OS === 'ios' ? 110 : 90, paddingLeft: 14 },
   filterMenu:             { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
