@@ -7,13 +7,20 @@
  *   3. Frontend PUT l'image directement vers Supabase Storage via signed URL
  *   4. Frontend confirme la soumission au backend (submitImage avec path)
  *   → Les clés Supabase ne quittent jamais le backend
+ *
+ * SOUMISSIONS MULTIPLES :
+ *   - max_submissions du run détermine combien d'images doivent être soumises
+ *   - L'utilisateur doit remplir TOUS les slots avant de pouvoir envoyer
+ *   - Chaque slot a sa propre image + description optionnelle
+ *   - Les images déjà soumises occupent leurs slots et sont verrouillées
+ *   - L'envoi est atomique : toutes les images ou aucune
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, ScrollView,
   Platform, SafeAreaView, ActivityIndicator, Image,
-  Alert, TextInput,
+  Alert, TextInput, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +32,7 @@ const NATIVE      = Platform.OS !== 'web';
 
 const haptic = {
   light:   () => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);   },
+  medium:  () => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);  },
   success: () => { if (NATIVE) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); },
   error:   () => { if (NATIVE) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);   },
 };
@@ -39,9 +47,22 @@ const Storage = {
       return AS.getItem(key);
     } catch { return null; }
   },
+  setItem: async (key: string, value: string): Promise<void> => {
+    if (typeof window === 'undefined') return;
+    try {
+      const mod = await import('@react-native-async-storage/async-storage');
+      const AS  = (mod as any).default ?? mod;
+      await AS.setItem(key, value);
+    } catch {}
+  },
 };
 
-async function getValidToken(): Promise<{ uid: string; token: string } | null> {
+async function getValidToken(): Promise<{
+  uid: string;
+  token: string;
+  refresh_token: string;
+  expires_at: number;
+} | null> {
   try {
     const raw = await Storage.getItem('harmonia_session');
     if (!raw) return null;
@@ -54,11 +75,9 @@ async function getValidToken(): Promise<{ uid: string; token: string } | null> {
 
     if (!uid || !accessToken) return null;
 
-    // Token encore valide (marge 60s)
     const now = Math.floor(Date.now() / 1000);
-    if (expiresAt - now > 60) return { uid, token: accessToken };
+    if (expiresAt - now > 60) return { uid, token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
 
-    // Token expiré → rafraîchir via backend
     if (!refreshToken) return null;
 
     const res = await fetch(`${BACKEND_URL}/refresh-token`, {
@@ -67,13 +86,9 @@ async function getValidToken(): Promise<{ uid: string; token: string } | null> {
       body:    JSON.stringify({ refresh_token: refreshToken }),
     });
 
-    if (!res.ok) {
-      console.warn('[Arts] Rafraîchissement token échoué');
-      return null;
-    }
+    if (!res.ok) { console.warn('[Arts] Rafraîchissement token échoué'); return null; }
 
     const data = await res.json();
-
     const newSession = {
       ...session,
       access_token:  data.access_token,
@@ -82,8 +97,7 @@ async function getValidToken(): Promise<{ uid: string; token: string } | null> {
     };
     await Storage.setItem('harmonia_session', JSON.stringify(newSession));
     console.log('[Arts] Token rafraîchi avec succès');
-    return { uid, token: data.access_token };
-
+    return { uid, token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at };
   } catch (e) {
     console.warn('[Arts] getValidToken error:', e);
     return null;
@@ -106,6 +120,8 @@ const C = {
   white:       '#FFFFFF',
   voting:      '#E67E22',
   submissions: '#16A085',
+  slotFilled:  '#0A3020',
+  slotEmpty:   '#0F1A12',
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -157,6 +173,15 @@ interface ClassementSession {
   runs: ClassementRun[];
 }
 
+// Un slot dans le formulaire multi-images
+interface ImageSlot {
+  index: number;          // 0-based
+  pickedImage: { uri: string; ext: string } | null;
+  description: string;
+  // Si déjà soumis → verrouillé
+  submitted?: Submission;
+}
+
 interface ArtsProps {
   userId?:  string;
   onBack?:  () => void;
@@ -166,8 +191,10 @@ interface ArtsProps {
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps) {
 
-  const [uid,   setUid]   = useState<string | null>(userIdProp ?? null);
-  const [token, setToken] = useState<string | null>(null);
+  const [uid,          setUid]          = useState<string | null>(userIdProp ?? null);
+  const [token,        setToken]        = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string>('');
+  const [expiresAt,    setExpiresAt]    = useState<number>(0);
 
   const [tab, setTab] = useState<Tab>('mine');
 
@@ -175,28 +202,35 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
   const [exploreSess, setExploreSess] = useState<SessionItem[]>([]);
   const [classement,  setClassement]  = useState<ClassementSession[]>([]);
 
-  const [selSession,  setSelSession]  = useState<SessionItem | null>(null);
-  const [runData,     setRunData]     = useState<{
+  const [selSession, setSelSession] = useState<SessionItem | null>(null);
+  const [runData,    setRunData]    = useState<{
     run: RunInfo | null;
     my_submissions: Submission[];
     is_enrolled: boolean;
   } | null>(null);
 
-  // Submit
+  // Submit multi-slots
   const [submitRun,    setSubmitRun]    = useState<RunInfo | null>(null);
-  const [pickedImage,  setPickedImage]  = useState<{ uri: string; ext: string } | null>(null);
-  const [description,  setDescription] = useState('');
-  const [uploading,    setUploading]   = useState(false);
-  const [uploadStep,   setUploadStep]  = useState('');
+  const [slots,        setSlots]        = useState<ImageSlot[]>([]);
+  const [uploading,    setUploading]    = useState(false);
+  const [uploadStep,   setUploadStep]   = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0); // 0-100
 
   const [loading,       setLoading]       = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error,         setError]         = useState('');
 
+  const progressAnim = useRef(new Animated.Value(0)).current;
+
   // ─── Init token ──────────────────────────────────────────────────────────
   useEffect(() => {
     getValidToken().then(t => {
-      if (t) { setUid(t.uid); setToken(t.token); }
+      if (t) {
+        setUid(t.uid);
+        setToken(t.token);
+        setRefreshToken(t.refresh_token);
+        setExpiresAt(t.expires_at);
+      }
     });
   }, []);
 
@@ -204,17 +238,44 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     if (uid && token) loadMySessions();
   }, [uid, token]);
 
+  // ─── Sauvegarder nouveau token si renvoyé par le backend ─────────────────
+  const handleNewToken = useCallback(async (new_token?: any) => {
+    if (!new_token) return;
+    setToken(new_token.access_token);
+    setRefreshToken(new_token.refresh_token);
+    setExpiresAt(new_token.expires_at);
+    try {
+      const raw = await Storage.getItem('harmonia_session');
+      if (raw) {
+        const session = JSON.parse(raw);
+        await Storage.setItem('harmonia_session', JSON.stringify({
+          ...session,
+          access_token:  new_token.access_token,
+          refresh_token: new_token.refresh_token,
+          expires_at:    new_token.expires_at,
+        }));
+      }
+    } catch {}
+  }, []);
+
   // ─── API ─────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
     const res = await fetch(`${BACKEND_URL}/arts`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ user_id: uid, access_token: token, ...body }),
+      body:    JSON.stringify({
+        user_id:       uid,
+        access_token:  token,
+        refresh_token: refreshToken,
+        expires_at:    expiresAt,
+        ...body,
+      }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || `Erreur ${res.status}`);
+    if (data.new_token) handleNewToken(data.new_token);
     return data;
-  }, [uid, token]);
+  }, [uid, token, refreshToken, expiresAt, handleNewToken]);
 
   // ─── Chargements ─────────────────────────────────────────────────────────
   const loadMySessions = useCallback(async () => {
@@ -258,6 +319,24 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     finally { setLoading(false); }
   }, [api]);
 
+  // ─── Initialiser les slots selon le run ──────────────────────────────────
+  // Les soumissions déjà faites occupent les premiers slots (verrouillés)
+  const initSlots = useCallback((run: RunInfo, existingSubmissions: Submission[]) => {
+    const total = run.max_submissions;
+    const newSlots: ImageSlot[] = [];
+
+    for (let i = 0; i < total; i++) {
+      const existing = existingSubmissions[i] ?? null;
+      newSlots.push({
+        index:       i,
+        pickedImage: null,
+        description: '',
+        submitted:   existing ?? undefined,
+      });
+    }
+    setSlots(newSlots);
+  }, []);
+
   // ─── Join session ─────────────────────────────────────────────────────────
   const joinSession = useCallback(async (session_id: string) => {
     setActionLoading(`join-${session_id}`); setError('');
@@ -272,8 +351,8 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     } finally { setActionLoading(null); }
   }, [api, loadMySessions]);
 
-  // ─── Choisir image ────────────────────────────────────────────────────────
-  const pickImage = useCallback(async () => {
+  // ─── Choisir image pour un slot ───────────────────────────────────────────
+  const pickImageForSlot = useCallback(async (slotIndex: number) => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert('Permission requise', "Autorisez l'accès à votre galerie.");
@@ -287,70 +366,132 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
       const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
-      setPickedImage({ uri, ext: ['jpg','jpeg','png','webp'].includes(ext) ? ext : 'jpg' });
+      haptic.light();
+      setSlots(prev => prev.map(s =>
+        s.index === slotIndex
+          ? { ...s, pickedImage: { uri, ext: ['jpg','jpeg','png','webp'].includes(ext) ? ext : 'jpg' } }
+          : s
+      ));
     }
   }, []);
 
-  // ─── Upload sécurisé ─────────────────────────────────────────────────────
-  // Étape 1 : backend génère Signed Upload URL
-  // Étape 2 : frontend PUT l'image directement sur Supabase Storage
-  // Étape 3 : frontend confirme au backend avec le path
-  const handleSubmit = useCallback(async () => {
-    if (!pickedImage || !submitRun) return;
-    setUploading(true); setError('');
+  const clearSlotImage = useCallback((slotIndex: number) => {
+    setSlots(prev => prev.map(s =>
+      s.index === slotIndex ? { ...s, pickedImage: null } : s
+    ));
+  }, []);
+
+  const setSlotDescription = useCallback((slotIndex: number, text: string) => {
+    setSlots(prev => prev.map(s =>
+      s.index === slotIndex ? { ...s, description: text } : s
+    ));
+  }, []);
+
+  // ─── Calcul de la complétion ──────────────────────────────────────────────
+  const slotsToUpload  = slots.filter(s => !s.submitted);
+  const slotsReady     = slotsToUpload.filter(s => !!s.pickedImage);
+  const allSlotsReady  = slotsToUpload.length > 0 && slotsReady.length === slotsToUpload.length;
+  const totalSlots     = slots.length;
+  const filledSlots    = slots.filter(s => s.submitted || s.pickedImage).length;
+
+  // ─── Barre de progression animée ─────────────────────────────────────────
+  useEffect(() => {
+    if (totalSlots === 0) return;
+    const pct = (filledSlots / totalSlots) * 100;
+    Animated.spring(progressAnim, {
+      toValue: pct,
+      useNativeDriver: false,
+      tension: 60,
+      friction: 8,
+    }).start();
+  }, [filledSlots, totalSlots]);
+
+  // ─── Upload sécurisé multi-slots ──────────────────────────────────────────
+  const handleSubmitAll = useCallback(async () => {
+    if (!submitRun || !allSlotsReady) return;
+
+    setUploading(true);
+    setError('');
+    setUploadProgress(0);
+
+    const pending = slotsToUpload.filter(s => !!s.pickedImage);
+    const total   = pending.length;
 
     try {
-      // ── Étape 1 : Demander la signed URL ─────────────────────────────────
-      setUploadStep('Préparation de l\'upload…');
-      const urlData = await api({
-        function: 'getUploadUrl',
-        run_id:   submitRun.id,
-        file_ext: pickedImage.ext,
-      });
+      for (let i = 0; i < pending.length; i++) {
+        const slot = pending[i];
+        const pct  = Math.round(((i) / total) * 100);
+        setUploadProgress(pct);
 
-      const { signed_url, path } = urlData;
+        // Étape 1 : Demander la signed URL
+        setUploadStep(`Image ${i + 1}/${total} — Préparation…`);
+        const urlData = await api({
+          function: 'getUploadUrl',
+          run_id:   submitRun.id,
+          file_ext: slot.pickedImage!.ext,
+        });
 
-      // ── Étape 2 : Uploader l'image via signed URL ─────────────────────────
-      setUploadStep('Envoi de l\'image…');
-      const response  = await fetch(pickedImage.uri);
-      const blob      = await response.blob();
+        const { signed_url, path } = urlData;
 
-      const uploadRes = await fetch(signed_url, {
-        method:  'PUT',
-        headers: { 'Content-Type': `image/${pickedImage.ext}` },
-        body:    blob,
-      });
+        // Étape 2 : PUT vers Supabase Storage
+        setUploadStep(`Image ${i + 1}/${total} — Envoi…`);
+        const response  = await fetch(slot.pickedImage!.uri);
+        const blob      = await response.blob();
 
-      if (!uploadRes.ok) {
-        throw new Error(`Upload échoué (${uploadRes.status})`);
+        const uploadRes = await fetch(signed_url, {
+          method:  'PUT',
+          headers: { 'Content-Type': `image/${slot.pickedImage!.ext}` },
+          body:    blob,
+        });
+
+        if (!uploadRes.ok) throw new Error(`Upload image ${i + 1} échoué (${uploadRes.status})`);
+
+        // Étape 3 : Confirmer au backend
+        setUploadStep(`Image ${i + 1}/${total} — Enregistrement…`);
+        await api({
+          function:    'submitImage',
+          run_id:      submitRun.id,
+          path,
+          description: slot.description.trim() || null,
+        });
       }
 
-      // ── Étape 3 : Confirmer la soumission au backend ──────────────────────
-      setUploadStep('Enregistrement…');
-      await api({
-        function:    'submitImage',
-        run_id:      submitRun.id,
-        path,
-        description: description.trim() || null,
-      });
-
+      setUploadProgress(100);
       haptic.success();
-      setPickedImage(null);
-      setDescription('');
       setUploadStep('');
-      Alert.alert('✅ Soumis !', 'Votre œuvre a été soumise avec succès.');
 
+      const msg = total === 1
+        ? 'Votre œuvre a été soumise avec succès !'
+        : `Vos ${total} œuvres ont été soumises avec succès !`;
+      Alert.alert('✅ Soumission complète', msg);
+
+      // Recharger le run pour refléter les nouvelles soumissions
       if (selSession) await loadRunForSession(selSession);
+
+      // Réinitialiser les slots
+      setSlots(prev => prev.map(s => ({ ...s, pickedImage: null, description: '' })));
+      setSubmitRun(null);
+
     } catch (e: any) {
       setError(e.message);
       haptic.error();
       setUploadStep('');
-    } finally { setUploading(false); }
-  }, [pickedImage, submitRun, description, api, selSession, loadRunForSession]);
+    } finally {
+      setUploading(false);
+    }
+  }, [submitRun, allSlotsReady, slotsToUpload, api, selSession, loadRunForSession]);
+
+  // ─── Ouvrir le formulaire de soumission ──────────────────────────────────
+  const openSubmitForm = useCallback((run: RunInfo, existingSubmissions: Submission[]) => {
+    setSubmitRun(run);
+    initSlots(run, existingSubmissions);
+    setTab('submit');
+  }, [initSlots]);
 
   // ─── Navigation tabs ──────────────────────────────────────────────────────
   const handleTabChange = (t: Tab) => {
     setTab(t);
+    if (t !== 'submit') { setSubmitRun(null); setSlots([]); }
     setSelSession(null);
     setRunData(null);
     setError('');
@@ -360,10 +501,10 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
   };
 
   const tabs: { key: Tab; label: string; icon: string }[] = [
-    { key: 'mine',       label: 'Sessions',   icon: 'person'        },
-    { key: 'explore',    label: 'Explorer',   icon: 'compass'       },
-    { key: 'submit',     label: 'Soumettre',  icon: 'cloud-upload'  },
-    { key: 'classement', label: 'Classement', icon: 'trophy'        },
+    { key: 'mine',       label: 'Sessions',  icon: 'person'       },
+    { key: 'explore',    label: 'Explorer',  icon: 'compass'      },
+    { key: 'submit',     label: 'Soumettre', icon: 'cloud-upload' },
+    { key: 'classement', label: 'Classement',icon: 'trophy'       },
   ];
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -452,7 +593,12 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
                       <RunStatusBadge status={runData.run.status} />
                       <Text style={styles.runTitle}>Run #{runData.run.run_number} — {runData.run.title}</Text>
                     </View>
-                    <InfoRow icon="images-outline" label="Max soumissions" value={String(runData.run.max_submissions)} />
+
+                    {/* Quota soumissions */}
+                    <SubmissionQuotaBar
+                      current={runData.my_submissions.length}
+                      max={runData.run.max_submissions}
+                    />
 
                     {!runData.is_enrolled && runData.run.status !== 'draft' && (
                       <View style={styles.alertBanner}>
@@ -464,16 +610,22 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
                     {runData.run.status === 'submissions_open' && runData.is_enrolled && (
                       <TouchableOpacity
                         style={styles.actionBtn}
-                        onPress={() => { setSubmitRun(runData.run); setTab('submit'); }}
+                        onPress={() => openSubmitForm(runData.run!, runData.my_submissions)}
                       >
                         <Ionicons name="cloud-upload" size={18} color={C.white} />
-                        <Text style={styles.actionBtnText}>Soumettre une œuvre</Text>
+                        <Text style={styles.actionBtnText}>
+                          {runData.my_submissions.length === 0
+                            ? `Soumettre ${runData.run.max_submissions} œuvre${runData.run.max_submissions > 1 ? 's' : ''}`
+                            : `Compléter mes soumissions (${runData.my_submissions.length}/${runData.run.max_submissions})`}
+                        </Text>
                       </TouchableOpacity>
                     )}
 
                     {runData.my_submissions.length > 0 && (
                       <>
-                        <Text style={styles.subTitle}>Mes soumissions ({runData.my_submissions.length}/{runData.run.max_submissions})</Text>
+                        <Text style={styles.subTitle}>
+                          Mes soumissions ({runData.my_submissions.length}/{runData.run.max_submissions})
+                        </Text>
                         <View style={styles.thumbGrid}>
                           {runData.my_submissions.map(sub => (
                             <View key={sub.id} style={styles.thumbItem}>
@@ -503,6 +655,14 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
                       {s.is_paid && (
                         <View style={styles.paidBadge}><Text style={styles.paidText}>{s.price_cfa} CFA</Text></View>
                       )}
+                      {s.current_run && (
+                        <View style={styles.infoRow}>
+                          <Ionicons name="images-outline" size={13} color={C.muted} />
+                          <Text style={styles.infoLabel}>
+                            {s.current_run.max_submissions} œuvre{s.current_run.max_submissions > 1 ? 's' : ''} à soumettre
+                          </Text>
+                        </View>
+                      )}
                     </View>
                     <TouchableOpacity
                       style={styles.joinBtn}
@@ -529,70 +689,136 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
                   : mySessions
                       .filter(s => s.current_run?.status === 'submissions_open')
                       .map(s => (
-                        <TouchableOpacity key={s.id} style={styles.card} onPress={() => setSubmitRun(s.current_run!)} activeOpacity={0.8}>
+                        <TouchableOpacity
+                          key={s.id}
+                          style={styles.card}
+                          onPress={() => openSubmitForm(s.current_run!, [])}
+                          activeOpacity={0.8}
+                        >
                           <View style={styles.cardBody}>
                             <Text style={styles.cardTitle}>{s.title}</Text>
                             <Text style={styles.cardDesc}>Run #{s.current_run!.run_number} — {s.current_run!.title}</Text>
                             <RunStatusBadge status="submissions_open" />
+                            <View style={styles.infoRow}>
+                              <Ionicons name="images-outline" size={13} color={C.submissions} />
+                              <Text style={[styles.infoLabel, { color: C.submissions }]}>
+                                {s.current_run!.max_submissions} œuvre{s.current_run!.max_submissions > 1 ? 's' : ''} requise{s.current_run!.max_submissions > 1 ? 's' : ''}
+                              </Text>
+                            </View>
                           </View>
                           <Ionicons name="chevron-forward" size={18} color={C.muted} style={{ margin: 16 }} />
                         </TouchableOpacity>
                       ))}
               </>
             ) : (
+              /* ─── FORMULAIRE MULTI-SLOTS ─── */
               <View style={styles.submitForm}>
-                <TouchableOpacity style={styles.backRow} onPress={() => { setSubmitRun(null); setPickedImage(null); setDescription(''); }}>
+                <TouchableOpacity
+                  style={styles.backRow}
+                  onPress={() => { setSubmitRun(null); setSlots([]); }}
+                  disabled={uploading}
+                >
                   <Ionicons name="arrow-back" size={18} color={C.purpleLight} />
                   <Text style={styles.backRowText}>Choisir un autre run</Text>
                 </TouchableOpacity>
 
-                <Text style={styles.sectionTitle}>Run #{submitRun.run_number} — {submitRun.title}</Text>
+                <Text style={styles.sectionTitle}>
+                  Run #{submitRun.run_number} — {submitRun.title}
+                </Text>
 
-                {/* Zone image */}
-                <TouchableOpacity style={styles.imagePicker} onPress={pickImage} activeOpacity={0.8} disabled={uploading}>
-                  {pickedImage ? (
-                    <Image source={{ uri: pickedImage.uri }} style={styles.pickedImage} />
-                  ) : (
-                    <View style={styles.imagePickerEmpty}>
-                      <Ionicons name="image-outline" size={48} color={C.muted} />
-                      <Text style={styles.imagePickerText}>Appuyer pour choisir une image</Text>
-                      <Text style={styles.imagePickerHint}>JPG, PNG, WEBP autorisés</Text>
+                {/* Barre de progression globale */}
+                <View style={styles.progressContainer}>
+                  <View style={styles.progressHeader}>
+                    <Text style={styles.progressLabel}>
+                      {filledSlots}/{totalSlots} œuvre{totalSlots > 1 ? 's' : ''}
+                    </Text>
+                    {allSlotsReady && !uploading && (
+                      <Text style={styles.progressReady}>✓ Prêt à envoyer</Text>
+                    )}
+                    {!allSlotsReady && slotsToUpload.length > 0 && (
+                      <Text style={styles.progressPending}>
+                        {slotsToUpload.length - slotsReady.length} manquante{slotsToUpload.length - slotsReady.length > 1 ? 's' : ''}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.progressTrack}>
+                    <Animated.View
+                      style={[
+                        styles.progressFill,
+                        {
+                          width: progressAnim.interpolate({
+                            inputRange:  [0, 100],
+                            outputRange: ['0%', '100%'],
+                          }),
+                          backgroundColor: allSlotsReady ? C.finished : C.submissions,
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Indicateur de règle */}
+                  {slotsToUpload.length > 0 && (
+                    <View style={styles.ruleBox}>
+                      <Ionicons name="information-circle-outline" size={14} color={C.gold} />
+                      <Text style={styles.ruleText}>
+                        Ce run requiert exactement{' '}
+                        <Text style={{ fontWeight: '800', color: C.gold }}>
+                          {submitRun.max_submissions} œuvre{submitRun.max_submissions > 1 ? 's' : ''}
+                        </Text>
+                        . Tous les slots doivent être remplis avant l'envoi.
+                      </Text>
                     </View>
                   )}
-                </TouchableOpacity>
+                </View>
 
-                {/* Description */}
-                <Text style={styles.inputLabel}>Description (optionnel)</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={description}
-                  onChangeText={setDescription}
-                  placeholder="Décrivez votre œuvre…"
-                  placeholderTextColor={C.muted}
-                  multiline
-                  numberOfLines={3}
-                  editable={!uploading}
-                />
+                {/* Slots */}
+                {slots.map(slot => (
+                  <ImageSlotCard
+                    key={slot.index}
+                    slot={slot}
+                    total={totalSlots}
+                    uploading={uploading}
+                    onPickImage={pickImageForSlot}
+                    onClearImage={clearSlotImage}
+                    onChangeDescription={setSlotDescription}
+                  />
+                ))}
 
-                {/* Étape upload en cours */}
-                {!!uploadStep && (
-                  <View style={styles.uploadStepRow}>
+                {/* Progression upload en cours */}
+                {uploading && (
+                  <View style={styles.uploadingBox}>
                     <ActivityIndicator size="small" color={C.purpleLight} />
-                    <Text style={styles.uploadStepText}>{uploadStep}</Text>
+                    <View style={styles.uploadingInfo}>
+                      <Text style={styles.uploadStepText}>{uploadStep}</Text>
+                      <View style={styles.progressTrack}>
+                        <View style={[styles.progressFill, { width: `${uploadProgress}%`, backgroundColor: C.purpleLight }]} />
+                      </View>
+                    </View>
                   </View>
                 )}
 
+                {/* Bouton final */}
                 <TouchableOpacity
-                  style={[styles.actionBtn, !pickedImage && styles.actionBtnDisabled]}
-                  onPress={handleSubmit}
-                  disabled={!pickedImage || uploading}
+                  style={[
+                    styles.submitAllBtn,
+                    !allSlotsReady && styles.submitAllBtnDisabled,
+                  ]}
+                  onPress={handleSubmitAll}
+                  disabled={!allSlotsReady || uploading}
+                  activeOpacity={0.85}
                 >
-                  {uploading
-                    ? <ActivityIndicator size="small" color={C.white} />
-                    : <>
-                        <Ionicons name="cloud-upload" size={18} color={C.white} />
-                        <Text style={styles.actionBtnText}>Soumettre mon œuvre</Text>
-                      </>}
+                  {uploading ? (
+                    <ActivityIndicator size="small" color={C.white} />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload" size={20} color={allSlotsReady ? C.white : C.muted} />
+                      <Text style={[styles.submitAllBtnText, !allSlotsReady && styles.submitAllBtnTextDisabled]}>
+                        {allSlotsReady
+                          ? `Envoyer ${slotsToUpload.length} œuvre${slotsToUpload.length > 1 ? 's' : ''}`
+                          : `Remplissez tous les slots (${slotsReady.length}/${slotsToUpload.length})`}
+                      </Text>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             )
@@ -639,6 +865,137 @@ export default function Arts({ userId: userIdProp, onBack, onClose }: ArtsProps)
   );
 }
 
+// ─── ImageSlotCard ─────────────────────────────────────────────────────────────
+interface ImageSlotCardProps {
+  slot:                 ImageSlot;
+  total:                number;
+  uploading:            boolean;
+  onPickImage:          (index: number) => void;
+  onClearImage:         (index: number) => void;
+  onChangeDescription:  (index: number, text: string) => void;
+}
+
+function ImageSlotCard({
+  slot, total, uploading,
+  onPickImage, onClearImage, onChangeDescription,
+}: ImageSlotCardProps) {
+  const isLocked  = !!slot.submitted;
+  const hasPicked = !!slot.pickedImage;
+  const isFilled  = isLocked || hasPicked;
+
+  return (
+    <View style={[styles.slotCard, isFilled ? styles.slotCardFilled : styles.slotCardEmpty]}>
+
+      {/* En-tête du slot */}
+      <View style={styles.slotHeader}>
+        <View style={[styles.slotBadge, isFilled ? styles.slotBadgeFilled : styles.slotBadgeEmpty]}>
+          {isFilled
+            ? <Ionicons name="checkmark" size={14} color={C.finished} />
+            : <Text style={styles.slotBadgeNum}>{slot.index + 1}</Text>}
+        </View>
+        <Text style={styles.slotTitle}>
+          Œuvre {slot.index + 1}
+          {total > 1 ? ` / ${total}` : ''}
+        </Text>
+        {isLocked && (
+          <View style={styles.lockedBadge}>
+            <Ionicons name="lock-closed" size={11} color={C.gold} />
+            <Text style={styles.lockedText}>Déjà soumise</Text>
+          </View>
+        )}
+        {!isLocked && !hasPicked && (
+          <View style={styles.requiredBadge}>
+            <Text style={styles.requiredText}>Requis</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Zone image */}
+      {isLocked ? (
+        /* Soumission déjà faite → affichage verrouillé */
+        <View style={styles.slotLockedImage}>
+          <Image source={{ uri: slot.submitted!.image_url }} style={styles.slotLockedImg} />
+          <View style={styles.slotLockedOverlay}>
+            <Ionicons name="lock-closed" size={20} color="rgba(255,255,255,0.6)" />
+          </View>
+        </View>
+      ) : (
+        /* Slot libre → sélectionner une image */
+        <TouchableOpacity
+          style={[styles.slotImagePicker, hasPicked && styles.slotImagePickerFilled]}
+          onPress={() => onPickImage(slot.index)}
+          activeOpacity={0.8}
+          disabled={uploading}
+        >
+          {hasPicked ? (
+            <>
+              <Image source={{ uri: slot.pickedImage!.uri }} style={styles.slotPickedImage} />
+              {!uploading && (
+                <TouchableOpacity
+                  style={styles.slotClearBtn}
+                  onPress={() => { haptic.light(); onClearImage(slot.index); }}
+                >
+                  <Ionicons name="close-circle" size={24} color="rgba(255,255,255,0.9)" />
+                </TouchableOpacity>
+              )}
+              <View style={styles.slotChangeHint}>
+                <Ionicons name="pencil" size={12} color="rgba(255,255,255,0.7)" />
+                <Text style={styles.slotChangeHintText}>Appuyer pour changer</Text>
+              </View>
+            </>
+          ) : (
+            <View style={styles.slotEmptyContent}>
+              <View style={styles.slotEmptyIcon}>
+                <Ionicons name="image-outline" size={32} color={C.muted} />
+              </View>
+              <Text style={styles.slotEmptyText}>Appuyer pour choisir</Text>
+              <Text style={styles.slotEmptyHint}>JPG · PNG · WEBP</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* Description */}
+      {isLocked ? (
+        slot.submitted!.description
+          ? <Text style={styles.slotLockedDesc}>{slot.submitted!.description}</Text>
+          : null
+      ) : (
+        <TextInput
+          style={[styles.slotDescInput, uploading && { opacity: 0.5 }]}
+          value={slot.description}
+          onChangeText={t => onChangeDescription(slot.index, t)}
+          placeholder="Description (optionnel)…"
+          placeholderTextColor={C.muted}
+          multiline
+          numberOfLines={2}
+          editable={!uploading}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── SubmissionQuotaBar ───────────────────────────────────────────────────────
+function SubmissionQuotaBar({ current, max }: { current: number; max: number }) {
+  const pct  = max > 0 ? Math.min((current / max) * 100, 100) : 0;
+  const done = current >= max;
+  return (
+    <View style={styles.quotaBar}>
+      <View style={styles.quotaLabelRow}>
+        <Ionicons name="images-outline" size={13} color={done ? C.finished : C.muted} />
+        <Text style={[styles.quotaLabel, done && { color: C.finished }]}>
+          {current}/{max} soumission{max > 1 ? 's' : ''}
+          {done ? '  ✓' : ''}
+        </Text>
+      </View>
+      <View style={styles.quotaTrack}>
+        <View style={[styles.quotaFill, { width: `${pct}%`, backgroundColor: done ? C.finished : C.submissions }]} />
+      </View>
+    </View>
+  );
+}
+
 // ─── Sous-composants ──────────────────────────────────────────────────────────
 function RunStatusBadge({ status }: { status: string }) {
   const cfg: Record<string, { bg: string; text: string; label: string }> = {
@@ -677,10 +1034,10 @@ function Empty({ icon, text, hint }: { icon: string; text: string; hint?: string
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: C.bg },
-  flex:    { flex: 1 },
-  scroll:  { padding: 16, paddingBottom: 40 },
-  centered:{ flex: 1, justifyContent: 'center', alignItems: 'center' },
+  root:     { flex: 1, backgroundColor: C.bg },
+  flex:     { flex: 1 },
+  scroll:   { padding: 16, paddingBottom: 60 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
   header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
                   paddingVertical: 14, paddingTop: Platform.OS === 'ios' ? 56 : 14 },
@@ -740,32 +1097,98 @@ const styles = StyleSheet.create({
                  backgroundColor: '#2A1A00', borderRadius: 8, padding: 10 },
   alertText:   { color: C.gold, fontSize: 12, flex: 1 },
 
-  actionBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                       gap: 8, backgroundColor: C.purple, borderRadius: 12, padding: 14 },
-  actionBtnDisabled: { opacity: 0.4 },
-  actionBtnText:     { color: C.white, fontWeight: '700', fontSize: 15 },
+  actionBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                   gap: 8, backgroundColor: C.purple, borderRadius: 12, padding: 14 },
+  actionBtnText: { color: C.white, fontWeight: '700', fontSize: 15 },
 
-  subTitle:  { color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 12, marginBottom: 8 },
+  subTitle:  { color: C.cream, fontSize: 14, fontWeight: '700', marginTop: 4, marginBottom: 8 },
   thumbGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   thumbItem: { width: 100, gap: 4 },
   thumbImg:  { width: 100, height: 100, borderRadius: 10, backgroundColor: C.surfaceHigh },
   thumbDesc: { color: C.muted, fontSize: 11 },
 
-  submitForm:       { gap: 16 },
-  imagePicker:      { height: 220, backgroundColor: C.surface, borderRadius: 14,
-                      borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
-  imagePickerEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  imagePickerText:  { color: C.muted, fontSize: 13 },
-  imagePickerHint:  { color: C.muted, fontSize: 11, opacity: 0.6 },
-  pickedImage:      { width: '100%', height: '100%', resizeMode: 'cover' },
-  inputLabel:       { color: C.muted, fontSize: 13, fontWeight: '600' },
-  textInput:        { backgroundColor: C.surface, borderRadius: 10, padding: 12,
-                      color: C.cream, fontSize: 14, borderWidth: 1, borderColor: C.border,
-                      textAlignVertical: 'top', minHeight: 80 },
-  uploadStepRow:    { flexDirection: 'row', alignItems: 'center', gap: 10,
-                      backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12 },
-  uploadStepText:   { color: C.purpleLight, fontSize: 13 },
+  // ─── Quota bar ───────────────────────────────────────────────────────────
+  quotaBar:      { gap: 6 },
+  quotaLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  quotaLabel:    { color: C.muted, fontSize: 12, fontWeight: '600' },
+  quotaTrack:    { height: 4, backgroundColor: C.border, borderRadius: 2, overflow: 'hidden' },
+  quotaFill:     { height: '100%', borderRadius: 2 },
 
+  // ─── Progress multi-slots ─────────────────────────────────────────────────
+  progressContainer: { backgroundColor: C.surface, borderRadius: 14, padding: 14,
+                        borderWidth: 1, borderColor: C.border, gap: 10, marginBottom: 4 },
+  progressHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  progressLabel:     { color: C.cream, fontSize: 14, fontWeight: '700' },
+  progressReady:     { color: C.finished, fontSize: 12, fontWeight: '700' },
+  progressPending:   { color: C.voting, fontSize: 12, fontWeight: '600' },
+  progressTrack:     { height: 6, backgroundColor: C.border, borderRadius: 3, overflow: 'hidden' },
+  progressFill:      { height: '100%', borderRadius: 3 },
+  ruleBox:           { flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                        backgroundColor: '#2A1A00', borderRadius: 8, padding: 10 },
+  ruleText:          { flex: 1, color: C.gold, fontSize: 12, lineHeight: 18 },
+
+  // ─── Submit form ─────────────────────────────────────────────────────────
+  submitForm: { gap: 14 },
+
+  // ─── Slot card ────────────────────────────────────────────────────────────
+  slotCard:       { borderRadius: 16, borderWidth: 1, padding: 14, gap: 12 },
+  slotCardEmpty:  { backgroundColor: C.slotEmpty, borderColor: C.border },
+  slotCardFilled: { backgroundColor: C.slotFilled, borderColor: '#1E4A30' },
+
+  slotHeader:      { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  slotBadge:       { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  slotBadgeFilled: { backgroundColor: 'rgba(39,174,96,0.2)' },
+  slotBadgeEmpty:  { backgroundColor: C.border },
+  slotBadgeNum:    { color: C.muted, fontSize: 12, fontWeight: '800' },
+  slotTitle:       { flex: 1, color: C.cream, fontSize: 15, fontWeight: '700' },
+  lockedBadge:     { flexDirection: 'row', alignItems: 'center', gap: 4,
+                     backgroundColor: '#2A1A00', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  lockedText:      { color: C.gold, fontSize: 11, fontWeight: '600' },
+  requiredBadge:   { backgroundColor: '#2A0A0A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  requiredText:    { color: C.danger, fontSize: 11, fontWeight: '600' },
+
+  slotImagePicker:       { height: 200, borderRadius: 12, borderWidth: 1,
+                           borderColor: C.border, overflow: 'hidden', borderStyle: 'dashed' },
+  slotImagePickerFilled: { borderStyle: 'solid', borderColor: '#1E4A30' },
+  slotPickedImage:       { width: '100%', height: '100%', resizeMode: 'cover' },
+  slotClearBtn:          { position: 'absolute', top: 8, right: 8,
+                           backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 14 },
+  slotChangeHint:        { position: 'absolute', bottom: 0, left: 0, right: 0,
+                           flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                           gap: 4, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.5)' },
+  slotChangeHintText:    { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
+  slotEmptyContent:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  slotEmptyIcon:         { width: 60, height: 60, borderRadius: 30,
+                           backgroundColor: C.surfaceHigh, alignItems: 'center', justifyContent: 'center' },
+  slotEmptyText:         { color: C.muted, fontSize: 13, fontWeight: '600' },
+  slotEmptyHint:         { color: C.muted, fontSize: 11, opacity: 0.6 },
+
+  slotLockedImage:   { height: 200, borderRadius: 12, overflow: 'hidden', position: 'relative' },
+  slotLockedImg:     { width: '100%', height: '100%', resizeMode: 'cover' },
+  slotLockedOverlay: { position: 'absolute', top: 8, right: 8,
+                       backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 14,
+                       width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  slotLockedDesc:    { color: C.muted, fontSize: 12, fontStyle: 'italic' },
+
+  slotDescInput: { backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12,
+                   color: C.cream, fontSize: 13, borderWidth: 1, borderColor: C.border,
+                   textAlignVertical: 'top', minHeight: 60 },
+
+  // ─── Upload en cours ──────────────────────────────────────────────────────
+  uploadingBox:  { flexDirection: 'row', alignItems: 'center', gap: 12,
+                   backgroundColor: C.surfaceHigh, borderRadius: 12, padding: 14 },
+  uploadingInfo: { flex: 1, gap: 8 },
+  uploadStepText:{ color: C.purpleLight, fontSize: 13 },
+
+  // ─── Bouton final ─────────────────────────────────────────────────────────
+  submitAllBtn:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                            gap: 10, borderRadius: 14, padding: 16, backgroundColor: C.finished,
+                            marginTop: 4 },
+  submitAllBtnDisabled:   { backgroundColor: C.surfaceHigh },
+  submitAllBtnText:       { color: C.white, fontWeight: '800', fontSize: 16 },
+  submitAllBtnTextDisabled:{ color: C.muted, fontWeight: '700', fontSize: 15 },
+
+  // ─── Classement ───────────────────────────────────────────────────────────
   classSessionBox:   { marginBottom: 20 },
   classSessionTitle: { color: C.cream, fontSize: 17, fontWeight: '800', marginBottom: 10 },
   classRunBox:       { backgroundColor: C.surface, borderRadius: 14, padding: 14,
