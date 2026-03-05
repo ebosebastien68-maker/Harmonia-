@@ -1077,7 +1077,7 @@ function TikTokVideoItem({
 
 const tikStyles = StyleSheet.create({
   root:         { flex: 1, backgroundColor: '#000' },
-  closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 30, right: 16,
+  closeBtn:     { position: 'absolute', top: TIK_CLOSE_TOP, right: 16,
                   zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
                   width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   item:         { width, height, backgroundColor: '#000' },
@@ -1100,10 +1100,14 @@ const tikStyles = StyleSheet.create({
 });
 
 
+const FILTER_OVERLAY_TOP = Platform.OS === 'ios' ? 110 : 90;
+const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50 : 30;
+const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54 : 30;
+
 const styles = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
-  header:          { paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingBottom: 8, paddingHorizontal: 14 },
+  header:          { paddingTop: HEADER_PADDING_TOP, paddingBottom: 8, paddingHorizontal: 14 },
 
   headerTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   balanceBox:   { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, gap: 5 },
@@ -1160,7 +1164,6 @@ const styles = StyleSheet.create({
   videoPlayOverlay: { position: 'absolute', top: 10, right: 10,
                       backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 16,
                       padding: 6 },
-                      justifyContent: 'center', alignItems: 'center' },
   videoBadge:       { position: 'absolute', bottom: 12, left: 12, flexDirection: 'row',
                       alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.6)',
                       borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
@@ -1176,7 +1179,7 @@ const styles = StyleSheet.create({
   dot:              { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
   dotActive:        { backgroundColor: '#8A2BE2', width: 18, borderRadius: 3 },
 
-  filterOverlay:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-start', paddingTop: Platform.OS === 'ios' ? 110 : 90, paddingLeft: 14 },
+  filterOverlay:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-start', paddingTop: FILTER_OVERLAY_TOP, paddingLeft: 14 },
   filterMenu:             { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
   filterMenuTitle:        { color: '#999', fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingVertical: 8, textTransform: 'uppercase' },
   filterOption:           { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10 },
