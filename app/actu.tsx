@@ -1100,6 +1100,7 @@ const tikStyles = StyleSheet.create({
 });
 
 
+const styles = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
   header:          { paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingBottom: 8, paddingHorizontal: 14 },
