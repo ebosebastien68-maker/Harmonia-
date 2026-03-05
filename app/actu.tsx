@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   Image, RefreshControl, Modal, Dimensions, Platform,
-  Animated, FlatList,
+  Animated, FlatList, StatusBar, SafeAreaView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import { Video, ResizeMode } from 'expo-av';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 import CreatePostModal from '../components/CreatePostModal';
 import CommentsModal from '../components/CommentsModal';
@@ -18,7 +19,7 @@ import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
 
-const { width }      = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 const BACKEND_URL    = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE_HOME  = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/home';
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
@@ -66,6 +67,22 @@ interface Submission {
 
 type FeedItem = Post | Submission;
 interface UserProfile { solde_cfa: number; trophies_count: number }
+
+// Item aplati pour le modal TikTok
+interface VideoFeedItem {
+  mediaId:     string;
+  videoUrl:    string;
+  description: string | null;
+  author:      { nom: string; prenom: string; avatar_url: string | null };
+  run_number:  number;
+  run_title:   string;
+  session_id:  string;
+  total_votes: number;
+  user_voted:  boolean;
+  game_type:   'arts' | 'performance';
+  run_id:      string;
+  user_id:     string;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const formatTimeAgo = (dateString: string) => {
@@ -157,8 +174,10 @@ interface PostCardProps {
 }
 
 interface SubmissionCardProps {
-  sub: Submission;
-  onVote: (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  sub:             Submission;
+  allVideoItems:   VideoFeedItem[];
+  onVote:          (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  openVideoModal:  (items: VideoFeedItem[], startIndex: number) => void;
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
@@ -277,7 +296,7 @@ const PostCard = React.memo(({
 
 // ─── SubmissionCard ───────────────────────────────────────────────────────────
 // Gère Arts (images) et Performance (vidéos) via sub.game_type
-const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
+const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal }: SubmissionCardProps) => {
   const [totalVotes,  setTotalVotes]  = useState(sub.total_votes);
   const [userVoted,   setUserVoted]   = useState(sub.user_voted);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -362,18 +381,37 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
         }}
         renderItem={({ item, index }) => (
           <View style={[styles.imageSlide, { width: slideWidth }]}>
-            {isPerformance
-              /* Performance : thumbnail vidéo avec icône play */
-              ? <View style={styles.videoThumb}>
-                  <Ionicons name="play-circle" size={56} color="rgba(255,255,255,0.9)" />
-                  <View style={styles.videoBadge}>
-                    <Ionicons name="videocam" size={12} color="#FFF" />
-                    <Text style={styles.videoBadgeText}>Vidéo</Text>
-                  </View>
+            {isPerformance ? (
+              /* Performance : lecteur vidéo inline + tap → modal TikTok */
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={styles.videoThumb}
+                onPress={() => {
+                  const startIdx = allVideoItems.findIndex(v => v.mediaId === item.id);
+                  openVideoModal(allVideoItems, startIdx >= 0 ? startIdx : 0);
+                }}
+              >
+                <Video
+                  source={{ uri: item.url }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode={ResizeMode.COVER}
+                  isLooping
+                  isMuted
+                  shouldPlay={activeIndex === index}
+                />
+                {/* Overlay play */}
+                <View style={styles.videoPlayOverlay}>
+                  <Ionicons name="expand-outline" size={22} color="rgba(255,255,255,0.85)" />
                 </View>
+                <View style={styles.videoBadge}>
+                  <Ionicons name="videocam" size={12} color="#FFF" />
+                  <Text style={styles.videoBadgeText}>Vidéo</Text>
+                </View>
+              </TouchableOpacity>
+            ) : (
               /* Arts : image normale */
-              : <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
-            }
+              <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
+            )}
             {media.length > 1 && (
               <View style={styles.imageCounter}>
                 <Text style={styles.imageCounterText}>{index + 1}/{media.length}</Text>
@@ -436,6 +474,17 @@ export default function ActuScreen() {
   const [showSavedPostsModal,     setShowSavedPostsModal]     = useState(false);
   const [showSearchModal,         setShowSearchModal]         = useState(false);
   const [showLogoutModal,         setShowLogoutModal]         = useState(false);
+
+  // ─── Modal TikTok vidéo ───────────────────────────────────────────────────
+  const [videoModal,      setVideoModal]      = useState(false);
+  const [videoItems,      setVideoItems]      = useState<VideoFeedItem[]>([]);
+  const [videoStartIndex, setVideoStartIndex] = useState(0);
+
+  const openVideoModal = useCallback((items: VideoFeedItem[], startIndex: number) => {
+    setVideoItems(items);
+    setVideoStartIndex(startIndex);
+    setVideoModal(true);
+  }, []);
 
   const [headerVisible, setHeaderVisible] = useState(true);
   const [lastTap,       setLastTap]       = useState<number | null>(null);
@@ -550,7 +599,25 @@ export default function ActuScreen() {
     );
   })();
 
-  const handleDoubleTap = () => {
+  // Liste aplatie de toutes les vidéos du feed → pour le modal TikTok
+  const allVideoItems: VideoFeedItem[] = displayedItems
+    .filter((item): item is Submission => item.item_type === 'submission' && (item as Submission).game_type === 'performance')
+    .flatMap(sub =>
+      (sub.media ?? []).map(m => ({
+        mediaId:     m.id,
+        videoUrl:    m.url,
+        description: m.description ?? null,
+        author:      sub.author,
+        run_number:  sub.run_number,
+        run_title:   sub.run_title,
+        session_id:  sub.session_id,
+        total_votes: sub.total_votes,
+        user_voted:  sub.user_voted,
+        game_type:   sub.game_type,
+        run_id:      sub.run_id,
+        user_id:     sub.user_id,
+      }))
+    );
     const now = Date.now();
     if (lastTap && now - lastTap < 300) toggleHeader();
     else setLastTap(now);
@@ -789,6 +856,8 @@ export default function ActuScreen() {
                     key={item.id}
                     sub={item}
                     onVote={handleVote}
+                    allVideoItems={allVideoItems}
+                    openVideoModal={openVideoModal}
                   />
             )}
           </View>
@@ -842,11 +911,193 @@ export default function ActuScreen() {
       <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
+
+      {/* Modal TikTok — scroll vertical plein écran */}
+      <TikTokVideoModal
+        visible={videoModal}
+        items={videoItems}
+        startIndex={videoStartIndex}
+        onClose={() => setVideoModal(false)}
+        onVote={handleVote}
+      />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+// ─── TikTokVideoModal ─────────────────────────────────────────────────────────
+interface TikTokVideoModalProps {
+  visible:    boolean;
+  items:      VideoFeedItem[];
+  startIndex: number;
+  onClose:    () => void;
+  onVote:     (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+}
+
+function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTokVideoModalProps) {
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
+  const flatRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    if (visible && flatRef.current && items.length > 0) {
+      flatRef.current.scrollToIndex({ index: startIndex, animated: false });
+      setCurrentIndex(startIndex);
+    }
+  }, [visible, startIndex]);
+
+  if (!visible || items.length === 0) return null;
+
+  return (
+    <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
+      <StatusBar hidden />
+      <View style={tikStyles.root}>
+        {/* Bouton fermer */}
+        <TouchableOpacity style={tikStyles.closeBtn} onPress={onClose}>
+          <Ionicons name="close" size={28} color="#FFF" />
+        </TouchableOpacity>
+
+        <FlatList
+          ref={flatRef}
+          data={items}
+          keyExtractor={item => item.mediaId}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={height}
+          decelerationRate="fast"
+          getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
+          initialScrollIndex={startIndex}
+          onMomentumScrollEnd={e => {
+            const idx = Math.round(e.nativeEvent.contentOffset.y / height);
+            setCurrentIndex(idx);
+          }}
+          renderItem={({ item, index }) => (
+            <TikTokVideoItem
+              item={item}
+              isActive={index === currentIndex}
+              onVote={onVote}
+            />
+          )}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+// ─── TikTokVideoItem ──────────────────────────────────────────────────────────
+function TikTokVideoItem({
+  item,
+  isActive,
+  onVote,
+}: {
+  item: VideoFeedItem;
+  isActive: boolean;
+  onVote: TikTokVideoModalProps['onVote'];
+}) {
+  const [totalVotes, setTotalVotes] = useState(item.total_votes);
+  const [userVoted,  setUserVoted]  = useState(item.user_voted);
+  const [isVoting,   setIsVoting]   = useState(false);
+
+  useEffect(() => {
+    setTotalVotes(item.total_votes);
+    setUserVoted(item.user_voted);
+  }, [item]);
+
+  const handleVoteLocal = async () => {
+    if (isVoting) return;
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsVoting(true);
+    const newVoted = !userVoted;
+    setUserVoted(newVoted);
+    setTotalVotes(p => newVoted ? p + 1 : p - 1);
+    try {
+      await onVote(item.game_type, item.run_id, item.user_id, item.session_id, userVoted);
+    } catch {
+      setUserVoted(!newVoted);
+      setTotalVotes(p => newVoted ? p - 1 : p + 1);
+    } finally {
+      setIsVoting(false);
+    }
+  };
+
+  return (
+    <View style={tikStyles.item}>
+      {/* Vidéo plein écran */}
+      <Video
+        source={{ uri: item.videoUrl }}
+        style={StyleSheet.absoluteFill}
+        resizeMode={ResizeMode.COVER}
+        isLooping
+        isMuted={false}
+        shouldPlay={isActive}
+        useNativeControls={false}
+      />
+
+      {/* Dégradé bas */}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.75)']}
+        style={tikStyles.gradient}
+      />
+
+      {/* Infos auteur + description */}
+      <View style={tikStyles.infoRow}>
+        {item.author.avatar_url
+          ? <Image source={{ uri: item.author.avatar_url }} style={tikStyles.avatar} />
+          : <View style={[tikStyles.avatar, tikStyles.avatarFallback]}>
+              <Text style={tikStyles.avatarText}>
+                {item.author.prenom.charAt(0)}{item.author.nom.charAt(0)}
+              </Text>
+            </View>}
+        <View style={tikStyles.infoText}>
+          <Text style={tikStyles.authorName}>{item.author.prenom} {item.author.nom}</Text>
+          <Text style={tikStyles.runLabel}>Run #{item.run_number} — {item.run_title}</Text>
+          {item.description
+            ? <Text style={tikStyles.desc} numberOfLines={2}>{item.description}</Text>
+            : null}
+        </View>
+      </View>
+
+      {/* Bouton vote flottant */}
+      <TouchableOpacity
+        style={[tikStyles.voteBtn, userVoted && tikStyles.voteBtnVoted]}
+        onPress={handleVoteLocal}
+        disabled={isVoting}
+        activeOpacity={0.85}
+      >
+        <Ionicons
+          name={userVoted ? 'heart' : 'heart-outline'}
+          size={26}
+          color={userVoted ? '#FF4D6A' : '#FFF'}
+        />
+        <Text style={tikStyles.voteCount}>{totalVotes}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const tikStyles = StyleSheet.create({
+  root:         { flex: 1, backgroundColor: '#000' },
+  closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 30, right: 16,
+                  zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
+                  width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  item:         { width, height, backgroundColor: '#000' },
+  gradient:     { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  infoRow:      { position: 'absolute', bottom: 60, left: 16, right: 80,
+                  flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  avatar:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
+  avatarFallback:{ backgroundColor: '#E65100', alignItems: 'center', justifyContent: 'center' },
+  avatarText:   { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  infoText:     { flex: 1, gap: 3 },
+  authorName:   { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  runLabel:     { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  desc:         { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18, marginTop: 2 },
+  voteBtn:      { position: 'absolute', right: 16, bottom: 80,
+                  alignItems: 'center', gap: 4,
+                  backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30,
+                  paddingHorizontal: 10, paddingVertical: 12 },
+  voteBtnVoted: { backgroundColor: 'rgba(255,77,106,0.2)' },
+  voteCount:    { color: '#FFF', fontSize: 13, fontWeight: '800' },
+});
+
+
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
   header:          { paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingBottom: 8, paddingHorizontal: 14 },
@@ -902,6 +1153,10 @@ const styles = StyleSheet.create({
   imageSlide:       { paddingHorizontal: 12 },
   subImage:         { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
   videoThumb:       { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#1A1A2E',
+                      justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  videoPlayOverlay: { position: 'absolute', top: 10, right: 10,
+                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 16,
+                      padding: 6 },
                       justifyContent: 'center', alignItems: 'center' },
   videoBadge:       { position: 'absolute', bottom: 12, left: 12, flexDirection: 'row',
                       alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.6)',
