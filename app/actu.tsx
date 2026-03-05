@@ -26,7 +26,7 @@ const HEADER_HEIGHT  = 75;
 const NATIVE         = Platform.OS !== 'web';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type FilterMode = 'all' | 'posts' | 'images';
+type FilterMode = 'all' | 'posts' | 'images' | 'videos';
 
 interface Post {
   item_type: 'post';
@@ -41,25 +41,27 @@ interface Post {
   user_saved?: boolean;
 }
 
-interface SubmissionImage {
+interface SubmissionMedia {
   id: string;
-  image_url: string;
+  url: string;               // image_url (Arts) ou video_url (Performance)
   description?: string | null;
 }
 
 interface Submission {
-  item_type: 'submission';
-  id: string;
-  run_id: string;
-  session_id: string;
-  user_id: string;
-  run_number: number;
-  run_title: string;
-  author: { nom: string; prenom: string; avatar_url: string | null };
-  images: SubmissionImage[];
+  item_type:   'submission';
+  game_type:   'arts' | 'performance';
+  badge:       string;       // '🎨 Arts' | '🎭 Performance'
+  id:          string;
+  run_id:      string;
+  session_id:  string;
+  user_id:     string;
+  run_number:  number;
+  run_title:   string;
+  author:      { nom: string; prenom: string; avatar_url: string | null };
+  media:       SubmissionMedia[];
   total_votes: number;
-  user_voted: boolean;   // un seul vote par run
-  created_at: string;
+  user_voted:  boolean;
+  created_at:  string;
 }
 
 type FeedItem = Post | Submission;
@@ -156,7 +158,7 @@ interface PostCardProps {
 
 interface SubmissionCardProps {
   sub: Submission;
-  onVote: (runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  onVote: (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
@@ -274,6 +276,7 @@ const PostCard = React.memo(({
 });
 
 // ─── SubmissionCard ───────────────────────────────────────────────────────────
+// Gère Arts (images) et Performance (vidéos) via sub.game_type
 const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
   const [totalVotes,  setTotalVotes]  = useState(sub.total_votes);
   const [userVoted,   setUserVoted]   = useState(sub.user_voted);
@@ -285,7 +288,17 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
     setUserVoted(sub.user_voted);
   }, [sub]);
 
-  const slideWidth = sub.images.length > 1 ? width - 48 : width - 24;
+  const isPerformance = sub.game_type === 'performance';
+
+  // Fallback : supporte l'ancien format (images[]) pendant la transition backend
+  const media: SubmissionMedia[] = sub.media
+    ?? ((sub as any).images ?? []).map((img: any) => ({
+        id:          img.id,
+        url:         img.image_url,
+        description: img.description ?? null,
+      }));
+
+  const slideWidth = media.length > 1 ? width - 48 : width - 24;
 
   const handleVoteLocal = async () => {
     if (isVoting) return;
@@ -295,9 +308,8 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
     setUserVoted(newVoted);
     setTotalVotes(p => newVoted ? p + 1 : p - 1);
     try {
-      await onVote(sub.run_id, sub.user_id, sub.session_id, userVoted);
+      await onVote(sub.game_type ?? 'arts', sub.run_id, sub.user_id, sub.session_id, userVoted);
     } catch {
-      // rollback
       setUserVoted(!newVoted);
       setTotalVotes(p => newVoted ? p - 1 : p + 1);
     } finally {
@@ -305,16 +317,24 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
     }
   };
 
+  // Couleur du badge selon le jeu
+  const badgeBg    = isPerformance ? '#FFF3E0' : '#F0E6FF';
+  const badgeColor = isPerformance ? '#E65100' : '#8E44AD';
+  // Badge label : fallback pour l'ancien format sans badge
+  const badgeLabel = sub.badge ?? '🎨 Arts';
+
   return (
     <View style={styles.subCard}>
+
+      {/* Header : badge + auteur + compteur votes */}
       <View style={styles.subHeader}>
-        <View style={styles.artsBadge}>
-          <Text style={styles.artsBadgeText}>🎨 Arts</Text>
+        <View style={[styles.artsBadge, { backgroundColor: badgeBg }]}>
+          <Text style={[styles.artsBadgeText, { color: badgeColor }]}>{badgeLabel}</Text>
         </View>
         <View style={styles.postAuthor}>
           {sub.author.avatar_url
             ? <Image source={{ uri: sub.author.avatar_url }} style={styles.avatar} />
-            : <View style={[styles.avatarPlaceholder, { backgroundColor: '#8E44AD' }]}>
+            : <View style={[styles.avatarPlaceholder, { backgroundColor: badgeColor }]}>
                 <Text style={styles.avatarText}>{getInitials(sub.author.nom, sub.author.prenom)}</Text>
               </View>}
           <View>
@@ -328,42 +348,53 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
         </View>
       </View>
 
-      {/* Carrousel images — affichage uniquement, plus de vote par image */}
+      {/* Carrousel — Image (Arts) ou Vidéo (Performance) */}
       <FlatList
-        data={sub.images}
-        keyExtractor={img => img.id}
+        data={media}
+        keyExtractor={item => item.id}
         horizontal
-        pagingEnabled={sub.images.length > 1}
+        pagingEnabled={media.length > 1}
         showsHorizontalScrollIndicator={false}
         style={styles.imagesList}
         onMomentumScrollEnd={e => {
           const idx = Math.round(e.nativeEvent.contentOffset.x / slideWidth);
           setActiveIndex(idx);
         }}
-        renderItem={({ item: img, index }) => (
+        renderItem={({ item, index }) => (
           <View style={[styles.imageSlide, { width: slideWidth }]}>
-            <Image source={{ uri: img.image_url }} style={styles.subImage} resizeMode="cover" />
-            {sub.images.length > 1 && (
+            {isPerformance
+              /* Performance : thumbnail vidéo avec icône play */
+              ? <View style={styles.videoThumb}>
+                  <Ionicons name="play-circle" size={56} color="rgba(255,255,255,0.9)" />
+                  <View style={styles.videoBadge}>
+                    <Ionicons name="videocam" size={12} color="#FFF" />
+                    <Text style={styles.videoBadgeText}>Vidéo</Text>
+                  </View>
+                </View>
+              /* Arts : image normale */
+              : <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
+            }
+            {media.length > 1 && (
               <View style={styles.imageCounter}>
-                <Text style={styles.imageCounterText}>{index + 1}/{sub.images.length}</Text>
+                <Text style={styles.imageCounterText}>{index + 1}/{media.length}</Text>
               </View>
             )}
-            {img.description
-              ? <Text style={styles.imgDesc} numberOfLines={2}>{img.description}</Text>
+            {item.description
+              ? <Text style={styles.imgDesc} numberOfLines={2}>{item.description}</Text>
               : null}
           </View>
         )}
       />
 
-      {sub.images.length > 1 && (
+      {media.length > 1 && (
         <View style={styles.dots}>
-          {sub.images.map((_, i) => (
+          {media.map((_, i) => (
             <View key={i} style={[styles.dot, i === activeIndex && styles.dotActive]} />
           ))}
         </View>
       )}
 
-      {/* Bouton vote unique — au niveau du run, pas de l'image */}
+      {/* Bouton vote unique au niveau du run */}
       <TouchableOpacity
         style={[styles.voteBtn, userVoted && styles.voteBtnVoted]}
         onPress={handleVoteLocal}
@@ -374,6 +405,7 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
           ? <><Text style={styles.voteBtnText}>Voté 💪</Text><Text style={styles.voteBtnCount}>{totalVotes}</Text></>
           : <><Ionicons name="heart-outline" size={16} color="#FFF" /><Text style={styles.voteBtnText}>Voter</Text><Text style={styles.voteBtnCount}>{totalVotes}</Text></>}
       </TouchableOpacity>
+
     </View>
   );
 });
@@ -484,8 +516,8 @@ export default function ActuScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (filterMode !== 'images') await loadPosts();
-    if (filterMode !== 'posts')  await loadSubmissions();
+    if (filterMode !== 'images' && filterMode !== 'videos') await loadPosts();
+    if (filterMode !== 'posts') await loadSubmissions();
     setRefreshing(false);
   };
 
@@ -493,7 +525,7 @@ export default function ActuScreen() {
     if (isRefreshing) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsRefreshing(true);
-    if (filterRef.current !== 'images') await loadPosts();
+    if (filterRef.current !== 'images' && filterRef.current !== 'videos') await loadPosts();
     if (filterRef.current !== 'posts')  await loadSubmissions();
     setIsRefreshing(false);
   };
@@ -505,12 +537,14 @@ export default function ActuScreen() {
     setShowFilter(false);
     if (mode === 'posts')  { await loadPosts(); }
     if (mode === 'images') { await loadSubmissions(); }
+    if (mode === 'videos') { await loadSubmissions(); }
     if (mode === 'all')    { await Promise.all([loadPosts(), loadSubmissions()]); }
   };
 
   const displayedItems: FeedItem[] = (() => {
     if (filterMode === 'posts')  return posts;
-    if (filterMode === 'images') return submissions;
+    if (filterMode === 'images') return submissions.filter(s => s.item_type !== 'submission' || (s as Submission).game_type !== 'performance');
+    if (filterMode === 'videos') return submissions.filter(s => s.item_type !== 'submission' || (s as Submission).game_type === 'performance');
     return [...posts, ...submissions].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
@@ -572,8 +606,8 @@ export default function ActuScreen() {
     }
   }, [userId]);
 
-  // ─── Vote — par run, pas par image ───────────────────────────────────────
-  const handleVote = useCallback(async (runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
+  // ─── Vote — par run, Arts ou Performance ─────────────────────────────────
+  const handleVote = useCallback(async (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
     try {
       const session = await getValidToken();
       if (!session) return;
@@ -588,6 +622,7 @@ export default function ActuScreen() {
           access_token:      session.token,
           refresh_token:     session.refresh_token,
           expires_at:        session.expires_at,
+          game_type:         gameType,
           run_id:            runId,
           vote_for_user_id:  voteForUserId,
           session_id:        sessionId,
@@ -635,7 +670,7 @@ export default function ActuScreen() {
     setSelectedPost(post);
   }, []);
 
-  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images' };
+  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos' };
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -768,6 +803,7 @@ export default function ActuScreen() {
               { key: 'all',    label: 'Tout',         icon: 'apps-outline'          },
               { key: 'posts',  label: 'Publications', icon: 'document-text-outline'  },
               { key: 'images', label: 'Images',       icon: 'images-outline'         },
+              { key: 'videos', label: 'Vidéos',       icon: 'videocam-outline'       },
             ] as { key: FilterMode; label: string; icon: string }[]).map(opt => (
               <TouchableOpacity
                 key={opt.key}
@@ -865,6 +901,12 @@ const styles = StyleSheet.create({
   imagesList:       { flexGrow: 0 },
   imageSlide:       { paddingHorizontal: 12 },
   subImage:         { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  videoThumb:       { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#1A1A2E',
+                      justifyContent: 'center', alignItems: 'center' },
+  videoBadge:       { position: 'absolute', bottom: 12, left: 12, flexDirection: 'row',
+                      alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.6)',
+                      borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  videoBadgeText:   { color: '#FFF', fontSize: 11, fontWeight: '700' },
   imageCounter:     { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   imageCounterText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
   imgDesc:          { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
