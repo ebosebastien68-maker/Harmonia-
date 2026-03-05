@@ -618,6 +618,8 @@ export default function ActuScreen() {
         user_id:     sub.user_id,
       }))
     );
+
+  const handleDoubleTap = () => {
     const now = Date.now();
     if (lastTap && now - lastTap < 300) toggleHeader();
     else setLastTap(now);
