@@ -17,7 +17,8 @@ import * as Haptics from 'expo-haptics';
 import AwaleAdmin from './components/AwaleAdmin'; 
 import AdminAwale from './components/AdminAwale'; 
 import AdminDames from './components/AdminDames'; 
-import AdminArts from './components/AdminArts'; // NOUVEAU composant Arts
+import AdminArts from './components/AdminArts'; 
+import AdminPerformance from './components/AdminPerformance'; // NOUVEAU composant Performance
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -206,7 +207,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Gestion des pions</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 4 : ARTS (NOUVEAU) */}
+            {/* BOUTON 4 : ARTS */}
             <TouchableOpacity 
               style={styles.gameCard} 
               onPress={() => setSelectedGame('arts')}
@@ -218,7 +219,19 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Galerie & Médias</Text>
             </TouchableOpacity>
 
-            {/* BOUTON 5 : CLASSEMENTS (DÉSACTIVÉ) */}
+            {/* BOUTON 5 : PERFORMANCE (NOUVEAU) */}
+            <TouchableOpacity 
+              style={styles.gameCard} 
+              onPress={() => setSelectedGame('performance')}
+            >
+              <LinearGradient colors={['#6366F1', '#4F46E5']} style={styles.gameIconContainer}>
+                <Ionicons name="flash" size={40} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.gameName}>Performance</Text>
+              <Text style={styles.gameDescription}>Stats & Analyses</Text>
+            </TouchableOpacity>
+
+            {/* BOUTON 6 : CLASSEMENTS (DÉSACTIVÉ) */}
             <View style={[styles.gameCard, styles.gameCardDisabled]}>
               <View style={styles.gameIconContainer}>
                 <Ionicons name="trophy-outline" size={40} color="#CCC" />
@@ -265,7 +278,6 @@ export default function AuthAdmin() {
     );
   }
 
-  // Rendu de la nouvelle interface "Arts"
   if (selectedGame === 'arts') {
     return (
       <AdminArts 
@@ -276,10 +288,20 @@ export default function AuthAdmin() {
     );
   }
 
+  // Rendu de la nouvelle interface "Performance"
+  if (selectedGame === 'performance') {
+    return (
+      <AdminPerformance 
+        adminEmail={adminData.email} 
+        adminPassword={adminData.password} 
+        onBack={() => setSelectedGame(null)} 
+      />
+    );
+  }
+
   return null;
 }
 
-// Les styles restent identiques à la version précédente
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   header: { 
