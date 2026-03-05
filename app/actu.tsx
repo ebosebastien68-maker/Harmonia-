@@ -45,8 +45,6 @@ interface SubmissionImage {
   id: string;
   image_url: string;
   description?: string | null;
-  votes: number;
-  user_voted: boolean;
 }
 
 interface Submission {
@@ -60,6 +58,7 @@ interface Submission {
   author: { nom: string; prenom: string; avatar_url: string | null };
   images: SubmissionImage[];
   total_votes: number;
+  user_voted: boolean;   // un seul vote par run
   created_at: string;
 }
 
@@ -157,7 +156,7 @@ interface PostCardProps {
 
 interface SubmissionCardProps {
   sub: Submission;
-  onVote: (submissionKey: string, imageId: string, currentlyVoted: boolean) => Promise<void>;
+  onVote: (runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
@@ -276,27 +275,34 @@ const PostCard = React.memo(({
 
 // ─── SubmissionCard ───────────────────────────────────────────────────────────
 const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
-  const [images,      setImages]      = useState(sub.images);
   const [totalVotes,  setTotalVotes]  = useState(sub.total_votes);
+  const [userVoted,   setUserVoted]   = useState(sub.user_voted);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isVoting,    setIsVoting]    = useState(false);
 
   useEffect(() => {
-    setImages(sub.images);
     setTotalVotes(sub.total_votes);
+    setUserVoted(sub.user_voted);
   }, [sub]);
 
-  const slideWidth = images.length > 1 ? width - 48 : width - 24;
+  const slideWidth = sub.images.length > 1 ? width - 48 : width - 24;
 
-  const handleVoteLocal = async (imageId: string, currentlyVoted: boolean) => {
+  const handleVoteLocal = async () => {
+    if (isVoting) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const updated = images.map(img =>
-      img.id === imageId
-        ? { ...img, votes: currentlyVoted ? img.votes - 1 : img.votes + 1, user_voted: !currentlyVoted }
-        : img
-    );
-    setImages(updated);
-    setTotalVotes(updated.reduce((s, i) => s + i.votes, 0));
-    await onVote(sub.id, imageId, currentlyVoted);
+    setIsVoting(true);
+    const newVoted = !userVoted;
+    setUserVoted(newVoted);
+    setTotalVotes(p => newVoted ? p + 1 : p - 1);
+    try {
+      await onVote(sub.run_id, sub.user_id, sub.session_id, userVoted);
+    } catch {
+      // rollback
+      setUserVoted(!newVoted);
+      setTotalVotes(p => newVoted ? p - 1 : p + 1);
+    } finally {
+      setIsVoting(false);
+    }
   };
 
   return (
@@ -322,11 +328,12 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
         </View>
       </View>
 
+      {/* Carrousel images — affichage uniquement, plus de vote par image */}
       <FlatList
-        data={images}
+        data={sub.images}
         keyExtractor={img => img.id}
         horizontal
-        pagingEnabled={images.length > 1}
+        pagingEnabled={sub.images.length > 1}
         showsHorizontalScrollIndicator={false}
         style={styles.imagesList}
         onMomentumScrollEnd={e => {
@@ -336,34 +343,37 @@ const SubmissionCard = React.memo(({ sub, onVote }: SubmissionCardProps) => {
         renderItem={({ item: img, index }) => (
           <View style={[styles.imageSlide, { width: slideWidth }]}>
             <Image source={{ uri: img.image_url }} style={styles.subImage} resizeMode="cover" />
-            {images.length > 1 && (
+            {sub.images.length > 1 && (
               <View style={styles.imageCounter}>
-                <Text style={styles.imageCounterText}>{index + 1}/{images.length}</Text>
+                <Text style={styles.imageCounterText}>{index + 1}/{sub.images.length}</Text>
               </View>
             )}
             {img.description
               ? <Text style={styles.imgDesc} numberOfLines={2}>{img.description}</Text>
               : null}
-            <TouchableOpacity
-              style={[styles.voteBtn, img.user_voted && styles.voteBtnVoted]}
-              onPress={() => handleVoteLocal(img.id, img.user_voted)}
-              activeOpacity={0.8}
-            >
-              {img.user_voted
-                ? <><Text style={styles.voteBtnText}>Voté 💪</Text><Text style={styles.voteBtnCount}>{img.votes}</Text></>
-                : <><Ionicons name="heart-outline" size={16} color="#FFF" /><Text style={styles.voteBtnText}>Voter</Text><Text style={styles.voteBtnCount}>{img.votes}</Text></>}
-            </TouchableOpacity>
           </View>
         )}
       />
 
-      {images.length > 1 && (
+      {sub.images.length > 1 && (
         <View style={styles.dots}>
-          {images.map((_, i) => (
+          {sub.images.map((_, i) => (
             <View key={i} style={[styles.dot, i === activeIndex && styles.dotActive]} />
           ))}
         </View>
       )}
+
+      {/* Bouton vote unique — au niveau du run, pas de l'image */}
+      <TouchableOpacity
+        style={[styles.voteBtn, userVoted && styles.voteBtnVoted]}
+        onPress={handleVoteLocal}
+        disabled={isVoting}
+        activeOpacity={0.8}
+      >
+        {userVoted
+          ? <><Text style={styles.voteBtnText}>Voté 💪</Text><Text style={styles.voteBtnCount}>{totalVotes}</Text></>
+          : <><Ionicons name="heart-outline" size={16} color="#FFF" /><Text style={styles.voteBtnText}>Voter</Text><Text style={styles.voteBtnCount}>{totalVotes}</Text></>}
+      </TouchableOpacity>
     </View>
   );
 });
@@ -562,8 +572,8 @@ export default function ActuScreen() {
     }
   }, [userId]);
 
-  // ─── Vote — getValidToken avant l'appel ───────────────────────────────────
-  const handleVote = useCallback(async (submissionKey: string, imageId: string, currentlyVoted: boolean) => {
+  // ─── Vote — par run, pas par image ───────────────────────────────────────
+  const handleVote = useCallback(async (runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
     try {
       const session = await getValidToken();
       if (!session) return;
@@ -573,10 +583,14 @@ export default function ActuScreen() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
-          user_id:       session.uid,
-          access_token:  session.token,
-          submission_id: imageId,
+          function:          currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
+          user_id:           session.uid,
+          access_token:      session.token,
+          refresh_token:     session.refresh_token,
+          expires_at:        session.expires_at,
+          run_id:            runId,
+          vote_for_user_id:  voteForUserId,
+          session_id:        sessionId,
         }),
       });
 
@@ -588,17 +602,16 @@ export default function ActuScreen() {
       }
 
       const data = await res.json();
-      if (data.success) {
-        setSubmissions(prev => prev.map(sub => {
-          if (sub.id !== submissionKey) return sub;
-          const newImages = sub.images.map(img =>
-            img.id === imageId
-              ? { ...img, votes: data.votes, user_voted: data.user_voted }
-              : img
-          );
-          return { ...sub, images: newImages, total_votes: newImages.reduce((s, i) => s + i.votes, 0) };
-        }));
+      if (data.new_token) {
+        tokenRef.current = data.new_token.access_token;
+        const raw = await AsyncStorage.getItem('harmonia_session');
+        if (raw) {
+          await AsyncStorage.setItem('harmonia_session', JSON.stringify({
+            ...JSON.parse(raw), ...data.new_token,
+          }));
+        }
       }
+      if (!data.success) throw new Error(data.error);
     } catch (err) { console.error('Error voting:', err); }
   }, []);
 
@@ -855,7 +868,7 @@ const styles = StyleSheet.create({
   imageCounter:     { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   imageCounterText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
   imgDesc:          { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
-  voteBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#8A2BE2', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 20, marginTop: 12, marginBottom: 4, alignSelf: 'center' },
+  voteBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#8A2BE2', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 20, marginTop: 10, marginBottom: 14, marginHorizontal: 14, alignSelf: 'center' },
   voteBtnVoted:     { backgroundColor: '#E74C3C' },
   voteBtnText:      { color: '#FFF', fontWeight: '700', fontSize: 14 },
   voteBtnCount:     { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
