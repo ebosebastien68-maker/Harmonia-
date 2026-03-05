@@ -78,94 +78,68 @@ const formatTimeAgo = (dateString: string) => {
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
-// ─── Token refresh ────────────────────────────────────────────────────────────
-// Évite plusieurs refreshs simultanés
-let refreshPromise: Promise<string | null> | null = null;
+// ─── getValidToken — même logique que arts.tsx ────────────────────────────────
+// Vérifie expires_at AVANT la requête. Si le token expire dans < 60s → refresh préventif.
+async function getValidToken(): Promise<{
+  uid: string;
+  token: string;
+  refresh_token: string;
+  expires_at: number;
+} | null> {
+  try {
+    const raw = await AsyncStorage.getItem('harmonia_session');
+    if (!raw) return null;
+    const session = JSON.parse(raw);
 
-async function refreshAccessToken(): Promise<string | null> {
-  if (refreshPromise) return refreshPromise; // déjà en cours → attendre
-  refreshPromise = (async () => {
-    try {
-      const raw = await AsyncStorage.getItem('harmonia_session');
-      if (!raw) return null;
-      const session = JSON.parse(raw);
-      const refresh_token = session?.refresh_token;
-      if (!refresh_token) return null;
+    const uid          = session?.user?.id      || '';
+    const accessToken  = session?.access_token  || '';
+    const refreshToken = session?.refresh_token || '';
+    const expiresAt    = session?.expires_at    || 0;
 
-      const res = await fetch(`${BACKEND_URL}/refresh-token`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ refresh_token }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.access_token) {
-        console.warn('[refresh] Échec :', data.error);
-        return null;
-      }
+    if (!uid || !accessToken) return null;
 
-      // Mettre à jour la session en AsyncStorage
-      const updatedSession = {
-        ...session,
-        access_token:  data.access_token,
-        refresh_token: data.refresh_token,
-        expires_at:    data.expires_at,
-      };
-      await AsyncStorage.setItem('harmonia_session', JSON.stringify(updatedSession));
-      console.log('[refresh] Token renouvelé ✓');
-      return data.access_token;
-    } catch (err) {
-      console.error('[refresh] Erreur :', err);
+    const now = Math.floor(Date.now() / 1000);
+
+    // Token encore valide (> 60s restantes) → on le retourne directement
+    if (expiresAt - now > 60) {
+      return { uid, token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
+    }
+
+    // Token expiré ou bientôt expiré → refresh préventif
+    if (!refreshToken) return null;
+
+    console.log('[ActuScreen] Token expiré, rafraîchissement…');
+    const res = await fetch(`${BACKEND_URL}/refresh-token`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      console.warn('[ActuScreen] Rafraîchissement token échoué');
       return null;
-    } finally {
-      refreshPromise = null;
     }
-  })();
-  return refreshPromise;
-}
 
-// ─── fetchWithAuth — wrapper avec retry auto après refresh ───────────────────
-// tokenRef est passé en paramètre pour que le wrapper puisse lire/écrire le token courant
-async function fetchWithAuth(
-  url: string,
-  options: RequestInit,
-  tokenRef: React.MutableRefObject<string>,
-): Promise<Response> {
-  // 1er essai avec le token actuel
-  const res = await fetch(url, options);
+    const data = await res.json();
+    const updatedSession = {
+      ...session,
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at:    data.expires_at,
+    };
+    await AsyncStorage.setItem('harmonia_session', JSON.stringify(updatedSession));
+    console.log('[ActuScreen] Token rafraîchi avec succès ✓');
 
-  // Si 401 → refresh → retry
-  if (res.status === 401) {
-    console.log('[fetchWithAuth] 401 reçu, refresh en cours…');
-    const newToken = await refreshAccessToken();
-    if (!newToken) {
-      // Refresh impossible → on retourne la réponse 401 originale
-      return res;
-    }
-    tokenRef.current = newToken;
-
-    // Reconstruire les options avec le nouveau token
-    // (le body JSON contenant access_token doit aussi être mis à jour)
-    let newOptions = { ...options };
-    if (options.body && typeof options.body === 'string') {
-      try {
-        const bodyObj = JSON.parse(options.body);
-        if ('access_token' in bodyObj) {
-          bodyObj.access_token = newToken;
-          newOptions = { ...options, body: JSON.stringify(bodyObj) };
-        }
-      } catch {}
-    }
-    // Headers Authorization si présent
-    if (options.headers && (options.headers as any)['Authorization']) {
-      newOptions = {
-        ...newOptions,
-        headers: { ...(options.headers as any), Authorization: `Bearer ${newToken}` },
-      };
-    }
-    return fetch(url, newOptions);
+    return {
+      uid,
+      token:         data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at:    data.expires_at,
+    };
+  } catch (e) {
+    console.warn('[ActuScreen] getValidToken error:', e);
+    return null;
   }
-
-  return res;
 }
 
 // ─── Props types ──────────────────────────────────────────────────────────────
@@ -407,6 +381,7 @@ export default function ActuScreen() {
   const [filterMode,  setFilterMode]  = useState<FilterMode>('all');
   const [showFilter,  setShowFilter]  = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCreateModal,         setShowCreateModal]         = useState(false);
@@ -425,18 +400,17 @@ export default function ActuScreen() {
   const headerAnim = useRef(new Animated.Value(0)).current;
 
   const userIdRef  = useRef('');
-  const tokenRef   = useRef('');   // ← source de vérité pour le token courant
+  const tokenRef   = useRef('');
   const filterRef  = useRef<FilterMode>('all');
 
   // ─── Init session ─────────────────────────────────────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem('harmonia_session').then(raw => {
-      if (!raw) return;
-      const s = JSON.parse(raw);
-      userIdRef.current = s.user.id;
-      tokenRef.current  = s.access_token;
-      setUserId(s.user.id);
-      setAccessToken(s.access_token);
+    getValidToken().then(t => {
+      if (!t) return;
+      userIdRef.current = t.uid;
+      tokenRef.current  = t.token;
+      setUserId(t.uid);
+      setAccessToken(t.token);
     });
   }, []);
 
@@ -446,26 +420,31 @@ export default function ActuScreen() {
     loadSubmissions();
   }, [userId, accessToken]);
 
-  // ─── loadSubmissions — utilise fetchWithAuth ───────────────────────────────
+  // ─── loadSubmissions — getValidToken avant chaque appel ───────────────────
   const loadSubmissions = useCallback(async () => {
     try {
-      const res = await fetchWithAuth(
-        `${BACKEND_URL}/feed`,
-        {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            function:     'getSubmissions',
-            user_id:      userIdRef.current,
-            access_token: tokenRef.current,   // sera mis à jour par fetchWithAuth si 401
-          }),
-        },
-        tokenRef,
-      );
+      // Récupérer un token valide (refresh préventif si nécessaire)
+      const session = await getValidToken();
+      if (!session) {
+        console.warn('[loadSubmissions] Session invalide');
+        return;
+      }
+      // Mettre à jour les refs avec le token potentiellement rafraîchi
+      tokenRef.current  = session.token;
+      userIdRef.current = session.uid;
 
-      // Si toujours 401 après refresh → session morte
+      const res = await fetch(`${BACKEND_URL}/feed`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          function:     'getSubmissions',
+          user_id:      session.uid,
+          access_token: session.token,
+        }),
+      });
+
       if (res.status === 401) {
-        console.warn('[loadSubmissions] Session expirée, déconnexion');
+        console.warn('[loadSubmissions] 401 malgré refresh → déconnexion');
         await AsyncStorage.removeItem('harmonia_session');
         router.replace('/login');
         return;
@@ -478,8 +457,7 @@ export default function ActuScreen() {
     } catch (err) { console.error('Error loading submissions:', err); }
   }, []);
 
-  // ─── loadPosts — Supabase Edge Function (gère ses propres tokens via anon key)
-  // Pas de fetchWithAuth ici car l'Edge Function utilise l'anon key Supabase
+  // ─── loadPosts — Edge Function Supabase (anon key, pas de token user) ─────
   const loadPosts = useCallback(async () => {
     try {
       const res  = await fetch(API_BASE_HOME, {
@@ -500,8 +478,6 @@ export default function ActuScreen() {
     if (filterMode !== 'posts')  await loadSubmissions();
     setRefreshing(false);
   };
-
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleManualRefresh = async () => {
     if (isRefreshing) return;
@@ -586,26 +562,26 @@ export default function ActuScreen() {
     }
   }, [userId]);
 
-  // ─── Vote — utilise fetchWithAuth ─────────────────────────────────────────
+  // ─── Vote — getValidToken avant l'appel ───────────────────────────────────
   const handleVote = useCallback(async (submissionKey: string, imageId: string, currentlyVoted: boolean) => {
     try {
-      const res = await fetchWithAuth(
-        `${BACKEND_URL}/feed`,
-        {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
-            user_id:       userId,
-            access_token:  tokenRef.current,
-            submission_id: imageId,
-          }),
-        },
-        tokenRef,
-      );
+      const session = await getValidToken();
+      if (!session) return;
+      tokenRef.current = session.token;
+
+      const res = await fetch(`${BACKEND_URL}/feed`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          function:      currentlyVoted ? 'unvoteSubmission' : 'voteSubmission',
+          user_id:       session.uid,
+          access_token:  session.token,
+          submission_id: imageId,
+        }),
+      });
 
       if (res.status === 401) {
-        console.warn('[handleVote] Session expirée, déconnexion');
+        console.warn('[handleVote] 401 malgré refresh → déconnexion');
         await AsyncStorage.removeItem('harmonia_session');
         router.replace('/login');
         return;
@@ -624,7 +600,7 @@ export default function ActuScreen() {
         }));
       }
     } catch (err) { console.error('Error voting:', err); }
-  }, [userId]);
+  }, []);
 
   const handleOpenComments = useCallback((postId: string) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
