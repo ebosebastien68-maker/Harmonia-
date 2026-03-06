@@ -27,7 +27,7 @@ const HEADER_HEIGHT  = 75;
 const NATIVE         = Platform.OS !== 'web';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type FilterMode = 'all' | 'posts' | 'images' | 'videos' | 'audios';
+type FilterMode = 'all' | 'posts' | 'images' | 'videos' | 'audios' | 'artisanat';
 
 interface Post {
   item_type: 'post';
@@ -50,7 +50,7 @@ interface SubmissionMedia {
 
 interface Submission {
   item_type:   'submission';
-  game_type:   'arts' | 'performance' | 'music';
+  game_type:   'arts' | 'performance' | 'music' | 'artisanat';
   badge:       string;       // '🎨 Arts' | '🎭 Performance' | '🎵 Music'
   id:          string;
   run_id:      string;
@@ -176,7 +176,7 @@ interface PostCardProps {
 interface SubmissionCardProps {
   sub:             Submission;
   allVideoItems:   VideoFeedItem[];
-  onVote:          (gameType: 'arts' | 'performance' | 'music', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  onVote:          (gameType: 'arts' | 'performance' | 'music' | 'artisanat', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
   openVideoModal:  (items: VideoFeedItem[], startIndex: number) => void;
 }
 
@@ -415,7 +415,7 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
     setUserVoted(sub.user_voted);
   }, [sub]);
 
-  const isPerformance = sub.game_type === 'performance';
+  const isPerformance = sub.game_type === 'performance' || sub.game_type === 'artisanat';
   const isMusic       = sub.game_type === 'music';
 
   // Fallback : supporte l'ancien format (images[]) pendant la transition backend
@@ -446,8 +446,9 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
   };
 
   // Couleur du badge selon le jeu
-  const badgeBg    = isPerformance ? '#FFF3E0' : isMusic ? '#EDE9FE' : '#F0E6FF';
-  const badgeColor = isPerformance ? '#E65100' : isMusic ? '#7C3AED' : '#8E44AD';
+  const isArtisanat   = sub.game_type === 'artisanat';
+  const badgeBg    = isPerformance || isArtisanat ? '#FFF3E0' : isMusic ? '#EDE9FE' : '#F0E6FF';
+  const badgeColor = isPerformance || isArtisanat ? '#E65100' : isMusic ? '#7C3AED' : '#8E44AD';
   // Badge label : fallback pour l'ancien format sans badge
   const badgeLabel = sub.badge ?? '🎨 Arts';
 
@@ -688,7 +689,7 @@ export default function ActuScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'audios') await loadPosts();
+    if (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'audios' && filterMode !== 'artisanat') await loadPosts();
     if (filterMode !== 'posts') await loadSubmissions();
     setRefreshing(false);
   };
@@ -697,7 +698,7 @@ export default function ActuScreen() {
     if (isRefreshing) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsRefreshing(true);
-    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'audios') await loadPosts();
+    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'audios' && filterRef.current !== 'artisanat') await loadPosts();
     if (filterRef.current !== 'posts')  await loadSubmissions();
     setIsRefreshing(false);
   };
@@ -711,6 +712,7 @@ export default function ActuScreen() {
     if (mode === 'images') { await loadSubmissions(); }
     if (mode === 'videos') { await loadSubmissions(); }
     if (mode === 'audios') { await loadSubmissions(); }
+    if (mode === 'artisanat') { await loadSubmissions(); }
     if (mode === 'all')    { await Promise.all([loadPosts(), loadSubmissions()]); }
   };
 
@@ -719,6 +721,7 @@ export default function ActuScreen() {
     if (filterMode === 'images') return submissions.filter(s => (s as Submission).game_type === 'arts');
     if (filterMode === 'videos') return submissions.filter(s => (s as Submission).game_type === 'performance');
     if (filterMode === 'audios') return submissions.filter(s => (s as Submission).game_type === 'music');
+    if (filterMode === 'artisanat') return submissions.filter(s => (s as Submission).game_type === 'artisanat');
     return [...posts, ...submissions].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
@@ -726,7 +729,7 @@ export default function ActuScreen() {
 
   // Liste aplatie de toutes les vidéos du feed → pour le modal TikTok
   const allVideoItems: VideoFeedItem[] = displayedItems
-    .filter((item): item is Submission => item.item_type === 'submission' && (item as Submission).game_type === 'performance')
+    .filter((item): item is Submission => item.item_type === 'submission' && ((item as Submission).game_type === 'performance' || (item as Submission).game_type === 'artisanat'))
     .flatMap(sub =>
       (sub.media ?? []).map(m => ({
         mediaId:     m.id,
@@ -801,7 +804,7 @@ export default function ActuScreen() {
   }, [userId]);
 
   // ─── Vote — par run, Arts ou Performance ─────────────────────────────────
-  const handleVote = useCallback(async (gameType: 'arts' | 'performance' | 'music', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
+  const handleVote = useCallback(async (gameType: 'arts' | 'performance' | 'music' | 'artisanat', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
     try {
       const session = await getValidToken();
       if (!session) return;
@@ -864,7 +867,7 @@ export default function ActuScreen() {
     setSelectedPost(post);
   }, []);
 
-  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', audios: 'Musique' };
+  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', audios: 'Musique', artisanat: 'Artisanat' };
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -1000,7 +1003,8 @@ export default function ActuScreen() {
               { key: 'posts',  label: 'Publications', icon: 'document-text-outline'  },
               { key: 'images', label: 'Images',       icon: 'images-outline'         },
               { key: 'videos', label: 'Vidéos',       icon: 'videocam-outline'       },
-              { key: 'audios', label: 'Musique',       icon: 'musical-notes-outline'  },
+              { key: 'audios',     label: 'Musique',    icon: 'musical-notes-outline'  },
+              { key: 'artisanat', label: 'Artisanat',  icon: 'hammer-outline'         },
             ] as { key: FilterMode; label: string; icon: string }[]).map(opt => (
               <TouchableOpacity
                 key={opt.key}
