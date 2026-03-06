@@ -19,7 +19,8 @@ import AdminAwale from './components/AdminAwale';
 import AdminDames from './components/AdminDames'; 
 import AdminArts from './components/AdminArts'; 
 import AdminPerformance from './components/AdminPerformance';
-import AdminMusic from './components/AdminMusic'; // NOUVEAU composant Musique
+import AdminMusic from './components/AdminMusic';
+import AdminArtisanat from './components/AdminArtisanat'; // NOUVEAU
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -97,7 +98,6 @@ export default function AuthAdmin() {
         </LinearGradient>
 
         <View style={styles.formContainer}>
-          {/* Inputs Email/Password restants identiques */}
           <View style={styles.inputContainer}>
             <Ionicons name="mail" size={20} color="#8A2BE2" />
             <TextInput
@@ -179,7 +179,7 @@ export default function AuthAdmin() {
                 <Ionicons name="help-circle" size={40} color="#FFF" />
               </LinearGradient>
               <Text style={styles.gameName}>Vrai ou Faux</Text>
-              <Text style={styles.gameDescription}>Séquences & Questions</Text>
+              <Text style={styles.gameDescription}>Questions & Quiz</Text>
             </TouchableOpacity>
 
             {/* AWALÉ */}
@@ -218,7 +218,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Stats & Analyses</Text>
             </TouchableOpacity>
 
-            {/* MUSIQUE (NOUVEAU) */}
+            {/* MUSIQUE */}
             <TouchableOpacity style={styles.gameCard} onPress={() => setSelectedGame('music')}>
               <LinearGradient colors={['#06B6D4', '#0891B2']} style={styles.gameIconContainer}>
                 <Ionicons name="musical-notes" size={40} color="#FFF" />
@@ -226,6 +226,24 @@ export default function AuthAdmin() {
               <Text style={styles.gameName}>Musique</Text>
               <Text style={styles.gameDescription}>Playlist & Audio</Text>
             </TouchableOpacity>
+
+            {/* ARTISANAT (NOUVEAU) */}
+            <TouchableOpacity style={styles.gameCard} onPress={() => setSelectedGame('artisanat')}>
+              <LinearGradient colors={['#92400E', '#78350F']} style={styles.gameIconContainer}>
+                <Ionicons name="hammer" size={40} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.gameName}>Artisanat</Text>
+              <Text style={styles.gameDescription}>Ateliers & Créations</Text>
+            </TouchableOpacity>
+
+            {/* CLASSEMENTS (DÉSACTIVÉ) */}
+            <View style={[styles.gameCard, styles.gameCardDisabled]}>
+              <View style={styles.gameIconContainer}>
+                <Ionicons name="trophy-outline" size={40} color="#CCC" />
+              </View>
+              <Text style={styles.gameNameDisabled}>Classements</Text>
+              <Text style={styles.comingSoon}>Bientôt disponible</Text>
+            </View>
             
           </View>
         </View>
@@ -234,7 +252,6 @@ export default function AuthAdmin() {
   }
 
   // --- VUE 3 : GESTIONNAIRE DE JEU ---
-  
   if (selectedGame === 'vraioufaux') {
     return <AwaleAdmin adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
   }
@@ -250,11 +267,14 @@ export default function AuthAdmin() {
   if (selectedGame === 'performance') {
     return <AdminPerformance adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
   }
-  
-  // Rendu de la nouvelle interface "Musique"
   if (selectedGame === 'music') {
+    return <AdminMusic adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
+  }
+  
+  // Rendu de l'interface "Artisanat"
+  if (selectedGame === 'artisanat') {
     return (
-      <AdminMusic 
+      <AdminArtisanat 
         adminEmail={adminData.email} 
         adminPassword={adminData.password} 
         onBack={() => setSelectedGame(null)} 
