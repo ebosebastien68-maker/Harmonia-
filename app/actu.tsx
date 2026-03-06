@@ -610,9 +610,10 @@ export default function ActuScreen() {
     setVideoModal(true);
   }, []);
 
-  const [headerVisible, setHeaderVisible] = useState(true);
-  const [lastTap,       setLastTap]       = useState<number | null>(null);
-  const headerAnim = useRef(new Animated.Value(0)).current;
+  const [headerVisible,  setHeaderVisible]  = useState(true);
+  const headerAnim       = useRef(new Animated.Value(0)).current;
+  const headerHeightRef  = useRef(75);   // mis à jour via onLayout
+  const lastTapRef       = useRef<number | null>(null);
 
   const userIdRef  = useRef('');
   const tokenRef   = useRef('');
@@ -747,20 +748,27 @@ export default function ActuScreen() {
       }))
     );
 
-  const handleDoubleTap = () => {
-    const now = Date.now();
-    if (lastTap && now - lastTap < 300) toggleHeader();
-    else setLastTap(now);
-  };
-
-  const toggleHeader = () => {
+  const toggleHeader = useCallback(() => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Animated.spring(headerAnim, {
-      toValue: headerVisible ? -HEADER_HEIGHT : 0,
-      useNativeDriver: true, tension: 80, friction: 10,
-    }).start();
-    setHeaderVisible(!headerVisible);
-  };
+    setHeaderVisible(prev => {
+      const nextVisible = !prev;
+      Animated.spring(headerAnim, {
+        toValue: nextVisible ? 0 : -headerHeightRef.current,
+        useNativeDriver: true, tension: 100, friction: 12,
+      }).start();
+      return nextVisible;
+    });
+  }, []);  // stable
+
+  const handleDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (lastTapRef.current && now - lastTapRef.current < 300) {
+      toggleHeader();
+      lastTapRef.current = null;
+    } else {
+      lastTapRef.current = now;
+    }
+  }, []);  // stable — toggleHeader est aussi stable
 
   // ─── Post actions ─────────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
@@ -874,7 +882,8 @@ export default function ActuScreen() {
     <View style={styles.container}>
 
       <Animated.View style={[styles.headerContainer, { transform: [{ translateY: headerAnim }] }]}>
-        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
+        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}
+          onLayout={e => { headerHeightRef.current = e.nativeEvent.layout.height; }}>
 
           <View style={styles.headerTop}>
             <HarmoniaLogo size={26} showText={true} />
@@ -1041,7 +1050,7 @@ export default function ActuScreen() {
       <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
       <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(); }} />
       <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
-      <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
+      <SearchModal visible={showSearchModal} userId={userId} accessToken={accessToken} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
 
       {/* Modal TikTok — scroll vertical plein écran */}
