@@ -8,6 +8,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  ScrollView, // NOUVEAU: Importation de ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,7 +21,7 @@ import AdminDames from './components/AdminDames';
 import AdminArts from './components/AdminArts'; 
 import AdminPerformance from './components/AdminPerformance';
 import AdminMusic from './components/AdminMusic';
-import AdminArtisanat from './components/AdminArtisanat'; // NOUVEAU
+import AdminArtisanat from './components/AdminArtisanat';
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -168,7 +169,12 @@ export default function AuthAdmin() {
           </View>
         </LinearGradient>
 
-        <View style={styles.dashboardContainer}>
+        {/* NOUVEAU : Remplacement de View par ScrollView */}
+        <ScrollView 
+          style={styles.dashboardContainer} 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={styles.sectionTitle}>🎮 Gestionnaires Disponibles</Text>
           
           <View style={styles.gamesGrid}>
@@ -227,7 +233,7 @@ export default function AuthAdmin() {
               <Text style={styles.gameDescription}>Playlist & Audio</Text>
             </TouchableOpacity>
 
-            {/* ARTISANAT (NOUVEAU) */}
+            {/* ARTISANAT */}
             <TouchableOpacity style={styles.gameCard} onPress={() => setSelectedGame('artisanat')}>
               <LinearGradient colors={['#92400E', '#78350F']} style={styles.gameIconContainer}>
                 <Ionicons name="hammer" size={40} color="#FFF" />
@@ -246,7 +252,7 @@ export default function AuthAdmin() {
             </View>
             
           </View>
-        </View>
+        </ScrollView>
       </View>
     );
   }
@@ -270,16 +276,8 @@ export default function AuthAdmin() {
   if (selectedGame === 'music') {
     return <AdminMusic adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
   }
-  
-  // Rendu de l'interface "Artisanat"
   if (selectedGame === 'artisanat') {
-    return (
-      <AdminArtisanat 
-        adminEmail={adminData.email} 
-        adminPassword={adminData.password} 
-        onBack={() => setSelectedGame(null)} 
-      />
-    );
+    return <AdminArtisanat adminEmail={adminData.email} adminPassword={adminData.password} onBack={() => setSelectedGame(null)} />;
   }
 
   return null;
@@ -326,7 +324,11 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   infoText: { flex: 1, fontSize: 13, color: '#6A0DAD', lineHeight: 18 },
-  dashboardContainer: { flex: 1, padding: 25 },
+  
+  // NOUVEAU : Styles ajustés pour le ScrollView
+  dashboardContainer: { flex: 1 },
+  scrollContent: { padding: 25, paddingBottom: 50 }, // Marges internes du ScrollView
+  
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20 },
   gamesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15 },
   gameCard: { 
