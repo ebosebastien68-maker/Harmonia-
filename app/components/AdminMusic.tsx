@@ -4,7 +4,7 @@
  * VUES :
  *   1. Liste des sessions → créer / modifier / supprimer / voir joueurs
  *   2. Détail session    → liste des runs + créer run
- *   3. Détail run        → joueurs inscrits + soumissions vidéos + classement + changer status
+ *   3. Détail run        → joueurs inscrits + soumissions audios + classement + changer status
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -53,7 +53,7 @@ interface Run {
 interface SubmissionGroup {
   user_id: string; nom_complet: string; avatar_url: string | null;
   votes: number;
-  videos: { id: string; audio_url: string; description?: string; duration_s?: number }[];
+  audios: { id: string; audio_url: string; description?: string; duration_s?: number }[];
 }
 interface ClassementEntry {
   user_id: string; nom: string; prenom: string;
@@ -254,12 +254,12 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
       try {
         await api({ function: 'deleteSubmission', submission_id: subId });
         setSubmissions(prev => prev.map(g => ({
-          ...g, videos: g.videos.filter(v => v.id !== subId)
-        })).filter(g => g.videos.length > 0));
+          ...g, audios: g.audios.filter(v => v.id !== subId)
+        })).filter(g => g.audios.length > 0));
       } catch (e: any) { setError(e.message); }
       finally { setActionLoading(null); }
     };
-    const msg = 'Supprimer cette vidéo ?';
+    const msg = 'Supprimer cet audio ?';
     if (Platform.OS === 'web') { if (window.confirm(msg)) doIt(); }
     else Alert.alert('Supprimer ?', msg, [
       { text: 'Annuler', style: 'cancel' },
@@ -396,10 +396,10 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
 
               {showRunForm && (
                 <View style={styles.formBox}>
-                  <Text style={styles.formTitle}>🎥 Nouveau Run</Text>
+                  <Text style={styles.formTitle}>🎵 Nouveau Run</Text>
                   <Text style={styles.label}>Titre *</Text>
                   <TextInput style={styles.input} value={runTitle} onChangeText={setRunTitle} placeholder="Ex: Manche 1 — Chorégraphie libre" />
-                  <Text style={styles.label}>Max vidéos par joueur</Text>
+                  <Text style={styles.label}>Max audios par joueur</Text>
                   <TextInput style={styles.input} value={runMaxSub} onChangeText={setRunMaxSub} keyboardType="numeric" placeholder="1" />
                   <Text style={[styles.label, { marginTop: 10, color: C.muted }]}>Conditions run suivant (optionnel)</Text>
                   <View style={styles.twoCol}>
@@ -435,7 +435,7 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
                       <Text style={styles.runTitle}>Run #{run.run_number} — {run.title}</Text>
                     </View>
                     <View style={styles.runMeta}>
-                      <MetaCell icon="musical-notes-outline"  label="Max vidéos" value={String(run.max_submissions)} />
+                      <MetaCell icon="musical-notes-outline"  label="Max audios" value={String(run.max_submissions)} />
                       <MetaCell icon="people-outline"    label="Joueurs"    value={String(run.players_count)} />
                       <MetaCell icon="film-outline"      label="Soum."      value={String(run.submissions_count)} />
                     </View>
@@ -500,17 +500,17 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
                     onPress={() => setRunTab(t)}
                   >
                     <Text style={[styles.innerTabText, runTab === t && styles.innerTabTextActive]}>
-                      {t === 'submissions' ? '🎥 Vidéos' : '🏆 Classement'}
+                      {t === 'submissions' ? '🎵 Audios' : '🏆 Classement'}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {/* Soumissions vidéos — groupées par artiste */}
+              {/* Soumissions audios — groupées par artiste */}
               {runTab === 'submissions' && (
                 <>
                   {submissions.length === 0 ? (
-                    <View style={styles.empty}><Ionicons name="musical-notes-outline" size={40} color={C.muted} /><Text style={styles.emptyText}>Aucune vidéo soumise</Text></View>
+                    <View style={styles.empty}><Ionicons name="musical-notes-outline" size={40} color={C.muted} /><Text style={styles.emptyText}>Aucun audio soumis</Text></View>
                   ) : (
                     submissions.map(group => (
                       <View key={group.user_id} style={styles.subCard}>
@@ -521,17 +521,17 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
                             <Text style={styles.subVotesText}>{group.votes} votes</Text>
                           </View>
                         </View>
-                        {group.videos.map(video => (
-                          <View key={video.id} style={styles.videoRow}>
-                            <View style={styles.videoThumb}>
+                        {group.audios.map(audio => (
+                          <View key={audio.id} style={styles.audioRow}>
+                            <View style={styles.audioThumb}>
                               <Ionicons name="play-circle" size={28} color="rgba(255,255,255,0.85)" />
                             </View>
-                            <View style={styles.videoInfo}>
-                              {video.description ? <Text style={styles.videoDesc} numberOfLines={2}>{video.description}</Text> : null}
-                              {video.duration_s   ? <Text style={styles.videoDuration}>{Math.floor(video.duration_s / 60)}:{String(video.duration_s % 60).padStart(2, '0')}</Text> : null}
+                            <View style={styles.audioInfo}>
+                              {audio.description ? <Text style={styles.audioDesc} numberOfLines={2}>{audio.description}</Text> : null}
+                              {audio.duration_s   ? <Text style={styles.audioDuration}>{Math.floor(audio.duration_s / 60)}:{String(audio.duration_s % 60).padStart(2, '0')}</Text> : null}
                             </View>
-                            <TouchableOpacity style={styles.subDelBtn} onPress={() => deleteSubmission(video.id)} disabled={!!actionLoading}>
-                              {actionLoading === `sub-${video.id}`
+                            <TouchableOpacity style={styles.subDelBtn} onPress={() => deleteSubmission(audio.id)} disabled={!!actionLoading}>
+                              {actionLoading === `sub-${audio.id}`
                                 ? <ActivityIndicator size="small" color={C.danger} />
                                 : <Ionicons name="trash-outline" size={18} color={C.danger} />}
                             </TouchableOpacity>
@@ -579,7 +579,7 @@ export default function AdminMusic({ adminEmail, adminPassword, onBack }: AdminM
 function RunStatusBadge({ status }: { status: string }) {
   const cfg: Record<string, { bg: string; text: string; label: string }> = {
     draft:            { bg: '#FBE9E7', text: C.draft,       label: '📝 Brouillon'       },
-    submissions_open: { bg: '#CCFBF1', text: C.submissions, label: '🎥 Soumissions'     },
+    submissions_open: { bg: '#CCFBF1', text: C.submissions, label: '🎵 Soumissions'     },
     voting_open:      { bg: '#FFEDD5', text: C.voting,      label: '🗳️ Votes ouverts'   },
     finished:         { bg: '#D1FAE5', text: C.finished,    label: '🏆 Terminé'         },
   };
@@ -699,13 +699,13 @@ const styles = StyleSheet.create({
   subVotes:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
   subVotesText:  { color: C.danger, fontSize: 12, fontWeight: '700' },
 
-  videoRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8,
+  audioRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8,
                    backgroundColor: C.bg, borderRadius: 10, padding: 10 },
-  videoThumb:    { width: 48, height: 48, borderRadius: 8, backgroundColor: '#1A1A2E',
+  audioThumb:    { width: 48, height: 48, borderRadius: 8, backgroundColor: '#1A1A2E',
                    justifyContent: 'center', alignItems: 'center' },
-  videoInfo:     { flex: 1, gap: 3 },
-  videoDesc:     { color: C.textSoft, fontSize: 12 },
-  videoDuration: { color: C.muted, fontSize: 11 },
+  audioInfo:     { flex: 1, gap: 3 },
+  audioDesc:     { color: C.textSoft, fontSize: 12 },
+  audioDuration: { color: C.muted, fontSize: 11 },
   subDelBtn:     { padding: 8 },
 
   classRow:      { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface,
