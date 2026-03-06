@@ -433,7 +433,7 @@ export default function Music({ userId: userIdProp, onBack, onClose }: MusicProp
         setUploadProgress(pct);
 
         // Étape 1 : Demander la signed URL
-        setUploadStep(`Vidéo ${i + 1}/${total} — Préparation…`);
+        setUploadStep(`Audio ${i + 1}/${total} — Préparation…`);
         const urlData = await api({
           function: 'getUploadUrl',
           run_id:   submitRun.id,
@@ -443,20 +443,30 @@ export default function Music({ userId: userIdProp, onBack, onClose }: MusicProp
         const { signed_url, path } = urlData;
 
         // Étape 2 : PUT vers Supabase Storage
-        setUploadStep(`Vidéo ${i + 1}/${total} — Envoi…`);
+        setUploadStep(`Audio ${i + 1}/${total} — Envoi…`);
         const response  = await fetch(slot.pickedAudio!.uri);
         const blob      = await response.blob();
 
+        // Mapping ext → MIME type accepté par Supabase Storage
+        const MIME_MAP: Record<string, string> = {
+          mp3: 'audio/mpeg',
+          wav: 'audio/wav',
+          m4a: 'audio/mp4',
+          aac: 'audio/aac',
+          ogg: 'audio/ogg',
+        };
+        const mimeType = MIME_MAP[slot.pickedAudio!.ext] ?? 'audio/mpeg';
+
         const uploadRes = await fetch(signed_url, {
           method:  'PUT',
-          headers: { 'Content-Type': `audio/${slot.pickedAudio!.ext}` },
+          headers: { 'Content-Type': mimeType },
           body:    blob,
         });
 
-        if (!uploadRes.ok) throw new Error(`Upload vidéo ${i + 1} échoué (${uploadRes.status})`);
+        if (!uploadRes.ok) throw new Error(`Upload audio ${i + 1} échoué (${uploadRes.status})`);
 
         // Étape 3 : Confirmer au backend
-        setUploadStep(`Vidéo ${i + 1}/${total} — Enregistrement…`);
+        setUploadStep(`Audio ${i + 1}/${total} — Enregistrement…`);
         await api({
           function:    'submitAudio',
           run_id:      submitRun.id,
