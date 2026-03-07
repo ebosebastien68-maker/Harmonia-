@@ -1,17 +1,18 @@
-// SearchModal.tsx
-// Recherche par mots-clés : Publications + Soumissions (Arts / Performance / Musique / Artisanat)
-// Catégories : Tout | Publications | Images | Vidéos | Musique | Artisanat
+// SearchModal.tsx — Recherche avec médias interactifs
+// Vidéos (autoplay muted, tap → son), Images, Audio (seekbar), Vote inline
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, Modal, TouchableOpacity, TextInput,
-  ScrollView, Image, Platform, ActivityIndicator, Keyboard, FlatList,
+  ScrollView, Image, Platform, ActivityIndicator, Keyboard,
+  Dimensions, PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Video, Audio, ResizeMode } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 
-const BACKEND_URL    = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+const BACKEND_URL     = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE_SEARCH = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/search';
 const API_BASE_POSTS  = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
 const NATIVE = Platform.OS !== 'web';
@@ -27,9 +28,7 @@ interface Post {
   user_liked: boolean; user_shared: boolean; user_saved: boolean;
 }
 
-interface SubmissionMedia {
-  id: string; url: string; description?: string | null;
-}
+interface SubmissionMedia { id: string; url: string; description?: string | null; }
 
 interface Submission {
   id: string; game_type: 'arts' | 'performance' | 'music' | 'artisanat'; badge: string;
@@ -40,176 +39,359 @@ interface Submission {
   total_votes: number; user_voted: boolean; created_at: string;
 }
 
-type SearchResult = ({ kind: 'post' } & Post) | ({ kind: 'sub' } & Submission);
+type Result = ({ kind: 'post' } & Post) | ({ kind: 'sub' } & Submission);
 
 interface SearchModalProps {
-  visible:      boolean;
-  userId:       string;
-  accessToken:  string;
-  onClose:      () => void;
-  onPostPress:  (postId: string) => void;
+  visible: boolean; userId: string; accessToken: string;
+  onClose: () => void; onPostPress: (postId: string) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const formatTimeAgo = (d: string) => {
+const fmtAgo = (d: string) => {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
-  if (s < 60)    return "À l'instant";
-  if (s < 3600)  return `il y a ${Math.floor(s / 60)}min`;
+  if (s < 60) return "À l'instant";
+  if (s < 3600) return `il y a ${Math.floor(s / 60)}min`;
   if (s < 86400) return `il y a ${Math.floor(s / 3600)}h`;
   return `il y a ${Math.floor(s / 86400)}j`;
 };
-const initials = (nom: string, p: string) => `${p.charAt(0)}${nom.charAt(0)}`.toUpperCase();
+const ini = (nom: string, p: string) => `${p[0]}${nom[0]}`.toUpperCase();
+const fmtMs = (ms: number) => {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
 
-// Surligne les occurrences du mot-clé dans un texte
-function Highlighted({ text, query }: { text: string; query: string }) {
-  if (!query.trim()) return <Text>{text}</Text>;
-  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+// ─── Highlighted ──────────────────────────────────────────────────────────────
+function Hl({ text, q }: { text: string; q: string }) {
+  if (!q.trim()) return <Text>{text}</Text>;
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${safe})`, 'gi'));
   return (
     <Text>
       {parts.map((p, i) =>
-        p.toLowerCase() === query.toLowerCase()
-          ? <Text key={i} style={S.highlight}>{p}</Text>
+        p.toLowerCase() === q.toLowerCase()
+          ? <Text key={i} style={S.hl}>{p}</Text>
           : <Text key={i}>{p}</Text>
       )}
     </Text>
   );
 }
 
-// ─── Categories config ────────────────────────────────────────────────────────
-const CATEGORIES: { key: SearchCategory; label: string; icon: string }[] = [
-  { key: 'all',       label: 'Tout',         icon: 'apps-outline'           },
-  { key: 'posts',     label: 'Publications', icon: 'document-text-outline'  },
-  { key: 'images',    label: 'Images',       icon: 'images-outline'         },
-  { key: 'videos',    label: 'Vidéos',       icon: 'videocam-outline'       },
-  { key: 'music',     label: 'Musique',      icon: 'musical-notes-outline'  },
-  { key: 'artisanat', label: 'Artisanat',    icon: 'hammer-outline'         },
+// ─── Categories ───────────────────────────────────────────────────────────────
+const CATS: { key: SearchCategory; label: string; icon: string }[] = [
+  { key: 'all',       label: 'Tout',         icon: 'apps-outline'          },
+  { key: 'posts',     label: 'Publications', icon: 'document-text-outline' },
+  { key: 'images',    label: 'Images',       icon: 'images-outline'        },
+  { key: 'videos',    label: 'Vidéos',       icon: 'videocam-outline'      },
+  { key: 'music',     label: 'Musique',      icon: 'musical-notes-outline' },
+  { key: 'artisanat', label: 'Artisanat',    icon: 'hammer-outline'        },
 ];
 
-const GAME_TYPE_FOR_CATEGORY: Record<SearchCategory, string | null> = {
-  all: null, posts: null,
-  images: 'arts', videos: 'performance', music: 'music', artisanat: 'artisanat',
+const GT_FOR_CAT: Record<SearchCategory, string | null> = {
+  all: null, posts: null, images: 'arts', videos: 'performance', music: 'music', artisanat: 'artisanat',
 };
 
-// ─── PostResultCard ───────────────────────────────────────────────────────────
-function PostResultCard({
-  post, query, userId, onCommentPress,
-}: { post: Post; query: string; userId: string; onCommentPress: () => void }) {
-  const [liked,      setLiked]      = useState(post.user_liked);
-  const [likesCount, setLikesCount] = useState(post.reactions.likes);
+// ─── AudioMini ────────────────────────────────────────────────────────────────
+function AudioMini({ url, description }: { url: string; description?: string | null }) {
+  const [isPlaying,  setIsPlaying]  = useState(false);
+  const [isLoading,  setIsLoading]  = useState(false);
+  const [posMs,      setPosMs]      = useState(0);
+  const [durMs,      setDurMs]      = useState(0);
+  const soundRef    = useRef<Audio.Sound | null>(null);
+  const barWidthRef = useRef(0);
 
-  const handleLike = async () => {
+  useEffect(() => () => { soundRef.current?.unloadAsync().catch(() => {}); }, []);
+
+  const seekToRatio = useCallback(async (ratio: number) => {
+    const s = soundRef.current; if (!s) return;
+    const st = await s.getStatusAsync();
+    if (!st.isLoaded || !st.durationMillis) return;
+    const pos = Math.max(0, Math.min(Math.floor(ratio * st.durationMillis), st.durationMillis));
+    await s.setPositionAsync(pos); setPosMs(pos);
+  }, []);
+
+  const skip = useCallback(async (delta: number) => {
+    const s = soundRef.current; if (!s) return;
+    const st = await s.getStatusAsync(); if (!st.isLoaded) return;
+    const pos = Math.max(0, Math.min((st.positionMillis ?? 0) + delta, st.durationMillis ?? 0));
+    await s.setPositionAsync(pos); setPosMs(pos);
+  }, []);
+
+  const pan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder:  () => true,
+    onPanResponderGrant: (e) => {
+      const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
+      seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
+    },
+    onPanResponderMove: (e) => {
+      const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
+      seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
+    },
+  })).current;
+
+  const togglePlay = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const newLiked = !liked;
-    setLiked(newLiked);
-    setLikesCount(c => newLiked ? c + 1 : c - 1);
     try {
-      await fetch(API_BASE_POSTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: newLiked ? 'like-post' : 'unlike-post', user_id: userId, post_id: post.id }),
-      });
-    } catch { setLiked(!newLiked); setLikesCount(c => newLiked ? c - 1 : c + 1); }
+      if (!soundRef.current) {
+        setIsLoading(true);
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+        const { sound: ns } = await Audio.Sound.createAsync(
+          { uri: url }, { shouldPlay: true },
+          st => {
+            if (!st.isLoaded) return;
+            setPosMs(st.positionMillis ?? 0);
+            setDurMs(st.durationMillis ?? 0);
+            setIsPlaying(st.isPlaying);
+            if (st.didJustFinish) { setIsPlaying(false); setPosMs(0); }
+          }
+        );
+        soundRef.current = ns; setIsPlaying(true); setIsLoading(false);
+      } else {
+        const st = await soundRef.current.getStatusAsync(); if (!st.isLoaded) return;
+        if (st.isPlaying) { await soundRef.current.pauseAsync(); setIsPlaying(false); }
+        else {
+          if ((st.positionMillis ?? 0) >= (st.durationMillis ?? 0) - 200) await soundRef.current.setPositionAsync(0);
+          await soundRef.current.playAsync(); setIsPlaying(true);
+        }
+      }
+    } catch { setIsLoading(false); }
   };
 
+  const prog = durMs > 0 ? posMs / durMs : 0;
+
   return (
-    <View style={S.card}>
-      <View style={S.cardHeader}>
-        {post.author.avatar_url
-          ? <Image source={{ uri: post.author.avatar_url }} style={S.avatar} />
-          : <View style={S.avatarFallback}><Text style={S.avatarText}>{initials(post.author.nom, post.author.prenom)}</Text></View>}
-        <View style={{ flex: 1 }}>
-          <Text style={S.authorName}>{post.author.prenom} {post.author.nom}</Text>
-          <Text style={S.timeText}>{formatTimeAgo(post.created_at)}</Text>
-        </View>
-        <View style={S.postBadge}><Text style={S.postBadgeText}>📝 Publication</Text></View>
+    <View style={S.audioBox}>
+      <View style={S.audioTop}>
+        <Ionicons name="musical-notes" size={16} color="#7C3AED" />
+        <Text style={S.audioDesc} numberOfLines={1}>{description || 'Piste audio'}</Text>
       </View>
 
-      <Text style={S.cardBody}>
-        <Highlighted text={post.content} query={query} />
-      </Text>
+      <View style={S.seekBar} onLayout={e => { barWidthRef.current = e.nativeEvent.layout.width; }} {...pan.panHandlers}>
+        <View style={S.seekTrack} />
+        <View style={[S.seekFill, { width: `${Math.round(prog * 100)}%` }]} />
+        <View style={[S.seekThumb, { left: `${Math.round(prog * 100)}%` as any }]} />
+      </View>
 
-      <View style={S.cardActions}>
-        <TouchableOpacity style={S.actionBtn} onPress={handleLike}>
-          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={18} color={liked ? '#FF0080' : '#888'} />
-          <Text style={[S.actionText, liked && { color: '#FF0080' }]}>{likesCount}</Text>
+      <View style={S.seekTimes}>
+        <Text style={S.seekTime}>{fmtMs(posMs)}</Text>
+        {durMs > 0 && <Text style={S.seekTime}>{fmtMs(durMs)}</Text>}
+      </View>
+
+      <View style={S.audioCtrl}>
+        <TouchableOpacity style={S.skipBtn} onPress={() => skip(-10000)} disabled={!soundRef.current}>
+          <Ionicons name="play-back" size={16} color={soundRef.current ? '#7C3AED' : '#CCC'} />
+          <Text style={[S.skipTxt, !soundRef.current && { color: '#CCC' }]}>10</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={S.actionBtn} onPress={onCommentPress}>
-          <Ionicons name="chatbubble-outline" size={18} color="#888" />
-          <Text style={S.actionText}>{post.reactions.comments}</Text>
+        <TouchableOpacity style={[S.playBtn, isPlaying && S.playBtnActive]} onPress={togglePlay} disabled={isLoading}>
+          {isLoading
+            ? <ActivityIndicator size="small" color="#7C3AED" />
+            : <Ionicons name={isPlaying ? 'pause' : 'play'} size={20} color={isPlaying ? '#FFF' : '#7C3AED'} />}
         </TouchableOpacity>
-        <TouchableOpacity style={S.actionBtn}>
-          <Ionicons name="repeat-outline" size={18} color="#888" />
-          <Text style={S.actionText}>{post.reactions.shares}</Text>
+        <TouchableOpacity style={S.skipBtn} onPress={() => skip(10000)} disabled={!soundRef.current}>
+          <Ionicons name="play-forward" size={16} color={soundRef.current ? '#7C3AED' : '#CCC'} />
+          <Text style={[S.skipTxt, !soundRef.current && { color: '#CCC' }]}>10</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-// ─── SubmissionResultCard ─────────────────────────────────────────────────────
-function SubmissionResultCard({ sub, query }: { sub: Submission; query: string }) {
-  const isMusic   = sub.game_type === 'music';
-  const isImage   = sub.game_type === 'arts';
-  const isVideo   = sub.game_type === 'performance' || sub.game_type === 'artisanat';
+// ─── VideoMini ────────────────────────────────────────────────────────────────
+function VideoMini({ url, description }: { url: string; description?: string | null }) {
+  const [muted,   setMuted]   = useState(true);
+  const [playing, setPlaying] = useState(false);
 
-  const badgeBg    = isImage ? '#F0E6FF' : isMusic ? '#EDE9FE' : '#FFF3E0';
-  const badgeColor = isImage ? '#8E44AD' : isMusic ? '#7C3AED' : '#E65100';
+  return (
+    <View style={S.videoBox}>
+      <Video
+        source={{ uri: url }}
+        style={S.videoPlayer}
+        resizeMode={ResizeMode.COVER}
+        isLooping isMuted={muted} shouldPlay={playing} useNativeControls={false}
+      />
+      <TouchableOpacity
+        style={S.videoOverlay}
+        activeOpacity={0.85}
+        onPress={() => {
+          if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          if (!playing) { setPlaying(true); setMuted(false); }
+          else setMuted(m => !m);
+        }}
+      >
+        {!playing && (
+          <View style={S.videoPlayIcon}>
+            <Ionicons name="play" size={28} color="#FFF" />
+          </View>
+        )}
+        {playing && (
+          <View style={S.videoMuteIcon}>
+            <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={16} color="#FFF" />
+          </View>
+        )}
+      </TouchableOpacity>
+      {description && <Text style={S.videoDesc} numberOfLines={1}>{description}</Text>}
+    </View>
+  );
+}
 
-  const mediaIcon  = isImage ? 'images-outline' : isMusic ? 'musical-notes-outline' : 'videocam-outline';
-  const mediaLabel = isImage ? 'image' : isMusic ? 'piste' : 'vidéo';
+// ─── PostCard ─────────────────────────────────────────────────────────────────
+function PostCard({ post, q, userId, onComment }: { post: Post; q: string; userId: string; onComment: () => void }) {
+  const [liked, setLiked] = useState(post.user_liked);
+  const [likes, setLikes] = useState(post.reactions.likes);
 
-  // Statut badge
-  const statusConfig: Record<string, { label: string; color: string }> = {
-    submissions_open: { label: 'En cours',     color: '#0EA5E9' },
-    voting_open:      { label: 'Vote ouvert',  color: '#10B981' },
-    finished:         { label: 'Terminé',      color: '#6B7280' },
+  const doLike = async () => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const nl = !liked; setLiked(nl); setLikes(c => nl ? c + 1 : c - 1);
+    try {
+      await fetch(API_BASE_POSTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: nl ? 'like-post' : 'unlike-post', user_id: userId, post_id: post.id }),
+      });
+    } catch { setLiked(!nl); setLikes(c => nl ? c - 1 : c + 1); }
   };
-  const status = statusConfig[sub.run_status] ?? { label: sub.run_status, color: '#999' };
-
-  // Chercher la description qui correspond à la query
-  const matchedDesc = sub.media.find(m => m.description?.toLowerCase().includes(query.toLowerCase()))?.description;
 
   return (
     <View style={S.card}>
-      {/* Header */}
-      <View style={S.cardHeader}>
+      <View style={S.cardHead}>
+        {post.author.avatar_url
+          ? <Image source={{ uri: post.author.avatar_url }} style={S.av} />
+          : <View style={S.avFb}><Text style={S.avTxt}>{ini(post.author.nom, post.author.prenom)}</Text></View>}
+        <View style={{ flex: 1 }}>
+          <Text style={S.name}>{post.author.prenom} {post.author.nom}</Text>
+          <Text style={S.time}>{fmtAgo(post.created_at)}</Text>
+        </View>
+        <View style={S.postBadge}><Text style={S.postBadgeTxt}>📝</Text></View>
+      </View>
+      <Text style={S.body}><Hl text={post.content} q={q} /></Text>
+      <View style={S.actions}>
+        <TouchableOpacity style={S.actBtn} onPress={doLike}>
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={18} color={liked ? '#FF0080' : '#888'} />
+          <Text style={[S.actTxt, liked && { color: '#FF0080' }]}>{likes}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={S.actBtn} onPress={onComment}>
+          <Ionicons name="chatbubble-outline" size={18} color="#888" />
+          <Text style={S.actTxt}>{post.reactions.comments}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={S.actBtn}>
+          <Ionicons name="repeat-outline" size={18} color="#888" />
+          <Text style={S.actTxt}>{post.reactions.shares}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ─── SubCard ──────────────────────────────────────────────────────────────────
+function SubCard({ sub, q, userId, accessToken }: { sub: Submission; q: string; userId: string; accessToken: string }) {
+  const [votes,    setVotes]    = useState(sub.total_votes);
+  const [voted,    setVoted]    = useState(sub.user_voted);
+  const [voting,   setVoting]   = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const isMusic  = sub.game_type === 'music';
+  const isImage  = sub.game_type === 'arts';
+  const badgeBg  = isImage ? '#F0E6FF' : isMusic ? '#EDE9FE' : '#FFF3E0';
+  const badgeClr = isImage ? '#8E44AD' : isMusic ? '#7C3AED' : '#E65100';
+
+  const stMap: Record<string, { label: string; color: string }> = {
+    submissions_open: { label: 'Soumissions', color: '#0EA5E9' },
+    voting_open:      { label: 'Vote ouvert',  color: '#10B981' },
+    finished:         { label: 'Terminé',      color: '#6B7280' },
+  };
+  const st = stMap[sub.run_status] ?? { label: sub.run_status, color: '#999' };
+
+  const doVote = async () => {
+    if (voting) return;
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setVoting(true);
+    const nv = !voted; setVoted(nv); setVotes(v => nv ? v + 1 : v - 1);
+    try {
+      const res = await fetch(`${BACKEND_URL}/feed`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          function: nv ? 'voteSubmission' : 'unvoteSubmission',
+          user_id: userId, access_token: accessToken,
+          game_type: sub.game_type, run_id: sub.run_id,
+          vote_for_user_id: sub.user_id, session_id: sub.session_id,
+        }),
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error);
+    } catch { setVoted(!nv); setVotes(v => nv ? v - 1 : v + 1); }
+    finally { setVoting(false); }
+  };
+
+  const matchedDesc = sub.media.find(m => m.description?.toLowerCase().includes(q.toLowerCase()))?.description;
+  const mediaLabel  = isImage ? 'image' : isMusic ? 'piste' : 'vidéo';
+  const mediaIcon   = isImage ? 'images-outline' : isMusic ? 'musical-notes-outline' : 'videocam-outline';
+
+  return (
+    <View style={S.card}>
+      <View style={S.cardHead}>
         {sub.author.avatar_url
-          ? <Image source={{ uri: sub.author.avatar_url }} style={S.avatar} />
-          : <View style={[S.avatarFallback, { backgroundColor: badgeColor }]}>
-              <Text style={S.avatarText}>{initials(sub.author.nom, sub.author.prenom)}</Text>
+          ? <Image source={{ uri: sub.author.avatar_url }} style={S.av} />
+          : <View style={[S.avFb, { backgroundColor: badgeClr }]}>
+              <Text style={S.avTxt}>{ini(sub.author.nom, sub.author.prenom)}</Text>
             </View>}
         <View style={{ flex: 1 }}>
-          <Text style={S.authorName}>{sub.author.prenom} {sub.author.nom}</Text>
-          <Text style={S.timeText}>Run #{sub.run_number} — <Highlighted text={sub.run_title} query={query} /></Text>
+          <Text style={S.name}>{sub.author.prenom} {sub.author.nom}</Text>
+          <Text style={S.time}>Run #{sub.run_number} — <Hl text={sub.run_title} q={q} /></Text>
         </View>
         <View style={[S.gameBadge, { backgroundColor: badgeBg }]}>
-          <Text style={[S.gameBadgeText, { color: badgeColor }]}>{sub.badge}</Text>
+          <Text style={[S.gameBadgeTxt, { color: badgeClr }]}>{sub.badge}</Text>
         </View>
       </View>
 
-      {/* Description matchée */}
-      {matchedDesc ? (
+      {matchedDesc && (
         <View style={S.descRow}>
           <Ionicons name="chatbubble-outline" size={13} color="#999" />
-          <Text style={S.descText} numberOfLines={2}>
-            <Highlighted text={matchedDesc} query={query} />
-          </Text>
+          <Text style={S.descTxt} numberOfLines={2}><Hl text={matchedDesc} q={q} /></Text>
         </View>
-      ) : null}
+      )}
 
-      {/* Footer */}
-      <View style={S.cardFooter}>
-        <View style={S.footerLeft}>
-          <Ionicons name={mediaIcon as any} size={14} color="#888" />
-          <Text style={S.footerText}>{sub.media.length} {mediaLabel}{sub.media.length > 1 ? 's' : ''}</Text>
+      {/* Toggle médias */}
+      {sub.media.length > 0 && (
+        <>
+          <TouchableOpacity style={S.mediaToggle} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setExpanded(e => !e); }}>
+            <Ionicons name={mediaIcon as any} size={15} color="#8A2BE2" />
+            <Text style={S.mediaToggleTxt}>
+              {expanded ? 'Masquer' : `Voir ${sub.media.length} ${mediaLabel}${sub.media.length > 1 ? 's' : ''}`}
+            </Text>
+            <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8A2BE2" />
+          </TouchableOpacity>
+
+          {expanded && (
+            <View style={S.mediaList}>
+              {sub.media.map(m =>
+                isImage  ? <Image key={m.id} source={{ uri: m.url }} style={S.imgMedia} resizeMode="cover" />
+                : isMusic ? <AudioMini key={m.id} url={m.url} description={m.description} />
+                          : <VideoMini key={m.id} url={m.url} description={m.description} />
+              )}
+            </View>
+          )}
+        </>
+      )}
+
+      <View style={S.footer}>
+        <View style={[S.statusPill, { backgroundColor: st.color + '22' }]}>
+          <Text style={[S.statusTxt, { color: st.color }]}>{st.label}</Text>
         </View>
-        <View style={S.footerMid}>
-          <Ionicons name="heart" size={14} color="#E74C3C" />
-          <Text style={S.footerText}>{sub.total_votes} vote{sub.total_votes !== 1 ? 's' : ''}</Text>
-        </View>
-        <View style={[S.statusPill, { backgroundColor: status.color + '22' }]}>
-          <Text style={[S.statusText, { color: status.color }]}>{status.label}</Text>
-        </View>
+        <View style={{ flex: 1 }} />
+        {sub.run_status === 'voting_open' ? (
+          <TouchableOpacity style={[S.voteBtn, voted && S.voteBtnVoted]} onPress={doVote} disabled={voting} activeOpacity={0.8}>
+            {voting
+              ? <ActivityIndicator size="small" color="#FFF" />
+              : <><Ionicons name={voted ? 'heart' : 'heart-outline'} size={16} color="#FFF" />
+                  <Text style={S.voteTxt}>{voted ? 'Voté' : 'Voter'}</Text>
+                  <Text style={S.voteCount}>{votes}</Text></>}
+          </TouchableOpacity>
+        ) : (
+          <View style={S.voteStat}>
+            <Ionicons name="heart" size={14} color="#E74C3C" />
+            <Text style={S.voteStatTxt}>{votes} vote{votes !== 1 ? 's' : ''}</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -218,45 +400,14 @@ function SubmissionResultCard({ sub, query }: { sub: Submission; query: string }
 // ─── SearchModal ──────────────────────────────────────────────────────────────
 export default function SearchModal({ visible, userId, accessToken, onClose, onPostPress }: SearchModalProps) {
   const [query,    setQuery]    = useState('');
-  const [category, setCategory] = useState<SearchCategory>('all');
-  const [results,  setResults]  = useState<SearchResult[]>([]);
+  const [cat,      setCat]      = useState<SearchCategory>('all');
+  const [results,  setResults]  = useState<Result[]>([]);
   const [loading,  setLoading]  = useState(false);
   const [searched, setSearched] = useState(false);
 
   useEffect(() => {
-    if (!visible) { setQuery(''); setResults([]); setSearched(false); setCategory('all'); }
+    if (!visible) { setQuery(''); setResults([]); setSearched(false); setCat('all'); }
   }, [visible]);
-
-  const handleSearch = async () => {
-    if (!query.trim()) return;
-    Keyboard.dismiss();
-    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setLoading(true);
-    setSearched(true);
-
-    try {
-      const searchPosts = category === 'all' || category === 'posts';
-      const searchSubs  = category === 'all' || category !== 'posts';
-
-      const [postsData, subsData] = await Promise.all([
-        searchPosts ? fetchPosts() : Promise.resolve([]),
-        searchSubs  ? fetchSubs()  : Promise.resolve([]),
-      ]);
-
-      // Fusionner et trier par date
-      const merged: SearchResult[] = [
-        ...postsData.map(p => ({ ...p, kind: 'post' as const })),
-        ...subsData.map(s  => ({ ...s, kind: 'sub'  as const })),
-      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      setResults(merged);
-    } catch (e) {
-      console.error('[Search] Erreur:', e);
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchPosts = async (): Promise<Post[]> => {
     const res = await fetch(API_BASE_SEARCH, {
@@ -264,40 +415,50 @@ export default function SearchModal({ visible, userId, accessToken, onClose, onP
       headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
       body: JSON.stringify({ action: 'search-posts', user_id: userId, query: query.trim() }),
     });
-    const data = await res.json();
-    return data.success && data.posts ? data.posts : [];
+    const d = await res.json();
+    return d.success && d.posts ? d.posts : [];
   };
 
   const fetchSubs = async (): Promise<Submission[]> => {
-    const gameType = GAME_TYPE_FOR_CATEGORY[category];
-    const body: any = {
-      function:     'searchSubmissions',
-      user_id:      userId,
-      access_token: accessToken,
-      query:        query.trim(),
-    };
+    const gameType = GT_FOR_CAT[cat];
+    const body: any = { function: 'searchSubmissions', user_id: userId, access_token: accessToken, query: query.trim() };
     if (gameType) body.game_type = gameType;
-
     const res = await fetch(`${BACKEND_URL}/feed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    const data = await res.json();
-    return data.success && data.submissions ? data.submissions : [];
+    const d = await res.json();
+    return d.success && d.submissions ? d.submissions : [];
   };
 
-  const postsCount = results.filter(r => r.kind === 'post').length;
-  const subsCount  = results.filter(r => r.kind === 'sub').length;
+  const doSearch = async () => {
+    if (!query.trim()) return;
+    Keyboard.dismiss();
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setLoading(true); setSearched(true);
+    try {
+      const searchPosts = cat === 'all' || cat === 'posts';
+      const searchSubs  = cat === 'all' || cat !== 'posts';
+      const [posts, subs] = await Promise.all([
+        searchPosts ? fetchPosts() : Promise.resolve([]),
+        searchSubs  ? fetchSubs()  : Promise.resolve([]),
+      ]);
+      const merged: Result[] = [
+        ...posts.map(p => ({ ...p, kind: 'post' as const })),
+        ...subs.map(s  => ({ ...s, kind: 'sub'  as const })),
+      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setResults(merged);
+    } catch { setResults([]); }
+    finally { setLoading(false); }
+  };
+
+  const postsN = results.filter(r => r.kind === 'post').length;
+  const subsN  = results.filter(r => r.kind === 'sub').length;
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <View style={S.container}>
+      <View style={S.root}>
 
-        {/* ─── Header gradient ─────────────────────────────────────── */}
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
-
-          {/* Titre + back */}
           <View style={S.headerTop}>
             <TouchableOpacity onPress={onClose} style={S.backBtn}>
               <Ionicons name="chevron-back" size={26} color="#FFF" />
@@ -306,16 +467,15 @@ export default function SearchModal({ visible, userId, accessToken, onClose, onP
             <View style={{ width: 34 }} />
           </View>
 
-          {/* Barre de recherche */}
-          <View style={S.searchBar}>
+          <View style={S.bar}>
             <Ionicons name="search" size={20} color="#999" style={{ marginRight: 8 }} />
             <TextInput
-              style={S.searchInput}
-              placeholder="Mots-clés..."
+              style={S.input}
+              placeholder="Mots-clés, descriptions, titres…"
               placeholderTextColor="#999"
               value={query}
               onChangeText={setQuery}
-              onSubmitEditing={handleSearch}
+              onSubmitEditing={doSearch}
               returnKeyType="search"
               autoFocus
             />
@@ -326,99 +486,61 @@ export default function SearchModal({ visible, userId, accessToken, onClose, onP
             )}
           </View>
 
-          {/* Chips catégories */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={S.chips}
-            style={{ marginBottom: 10 }}
-          >
-            {CATEGORIES.map(cat => {
-              const active = category === cat.key;
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={S.chips} style={{ marginBottom: 10 }}>
+            {CATS.map(c => {
+              const active = cat === c.key;
               return (
-                <TouchableOpacity
-                  key={cat.key}
-                  style={[S.chip, active && S.chipActive]}
-                  onPress={() => {
-                    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setCategory(cat.key);
-                    setResults([]);
-                    setSearched(false);
-                  }}
-                >
-                  <Ionicons name={cat.icon as any} size={14} color={active ? '#8A2BE2' : 'rgba(255,255,255,0.75)'} />
-                  <Text style={[S.chipText, active && S.chipTextActive]}>{cat.label}</Text>
+                <TouchableOpacity key={c.key} style={[S.chip, active && S.chipOn]}
+                  onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCat(c.key); setResults([]); setSearched(false); }}>
+                  <Ionicons name={c.icon as any} size={13} color={active ? '#8A2BE2' : 'rgba(255,255,255,0.8)'} />
+                  <Text style={[S.chipTxt, active && S.chipTxtOn]}>{c.label}</Text>
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
 
-          {/* Bouton rechercher */}
-          <TouchableOpacity
-            style={[S.searchBtn, (!query.trim() || loading) && S.searchBtnDisabled]}
-            onPress={handleSearch}
-            disabled={!query.trim() || loading}
-          >
+          <TouchableOpacity style={[S.searchBtn, (!query.trim() || loading) && { opacity: 0.4 }]} onPress={doSearch} disabled={!query.trim() || loading}>
             {loading
               ? <ActivityIndicator size="small" color="#FFF" />
-              : <><Ionicons name="search" size={18} color="#FFF" /><Text style={S.searchBtnText}>Rechercher</Text></>}
+              : <><Ionicons name="search" size={18} color="#FFF" /><Text style={S.searchBtnTxt}>Rechercher</Text></>}
           </TouchableOpacity>
-
         </LinearGradient>
 
-        {/* ─── Résultats ────────────────────────────────────────────── */}
         <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-
           {loading ? (
-            <View style={S.centerBox}>
+            <View style={S.center}>
               <ActivityIndicator size="large" color="#8A2BE2" />
-              <Text style={S.stateText}>Recherche en cours…</Text>
+              <Text style={S.stTxt}>Recherche en cours…</Text>
             </View>
-
           ) : searched && results.length === 0 ? (
-            <View style={S.centerBox}>
+            <View style={S.center}>
               <Ionicons name="search-outline" size={70} color="#CCC" />
-              <Text style={S.stateTitle}>Aucun résultat</Text>
-              <Text style={S.stateText}>Essayez avec d'autres mots-clés</Text>
+              <Text style={S.stTitle}>Aucun résultat</Text>
+              <Text style={S.stTxt}>Essayez avec d'autres mots-clés</Text>
             </View>
-
-          ) : searched && results.length > 0 ? (
+          ) : searched ? (
             <>
-              {/* Compteurs */}
               <View style={S.countBar}>
-                <Text style={S.countText}>{results.length} résultat{results.length > 1 ? 's' : ''}</Text>
-                <View style={S.countPills}>
-                  {postsCount > 0 && <View style={S.countPill}><Text style={S.countPillText}>📝 {postsCount}</Text></View>}
-                  {subsCount  > 0 && <View style={S.countPill}><Text style={S.countPillText}>🎭 {subsCount}</Text></View>}
+                <Text style={S.countTxt}>{results.length} résultat{results.length > 1 ? 's' : ''}</Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {postsN > 0 && <View style={S.pill}><Text style={S.pillTxt}>📝 {postsN}</Text></View>}
+                  {subsN  > 0 && <View style={S.pill}><Text style={S.pillTxt}>🎭 {subsN}</Text></View>}
                 </View>
               </View>
-
               {results.map(item =>
                 item.kind === 'post'
-                  ? <PostResultCard
-                      key={`post-${item.id}`}
-                      post={item}
-                      query={query}
-                      userId={userId}
-                      onCommentPress={() => { onClose(); onPostPress(item.id); }}
-                    />
-                  : <SubmissionResultCard
-                      key={`sub-${item.id}`}
-                      sub={item}
-                      query={query}
-                    />
+                  ? <PostCard key={`p-${item.id}`} post={item} q={query} userId={userId} onComment={() => { onClose(); onPostPress(item.id); }} />
+                  : <SubCard  key={`s-${item.id}`} sub={item}  q={query} userId={userId} accessToken={accessToken} />
               )}
-              <View style={{ height: 40 }} />
+              <View style={{ height: 50 }} />
             </>
-
           ) : (
-            <View style={S.centerBox}>
+            <View style={S.center}>
               <Ionicons name="search-circle-outline" size={80} color="#E0D0FF" />
-              <Text style={S.stateTitle}>Rechercher dans Harmonia</Text>
-              <Text style={S.stateText}>Publications, runs, descriptions…{'\n'}Choisissez une catégorie et tapez vos mots-clés</Text>
+              <Text style={S.stTitle}>Rechercher dans Harmonia</Text>
+              <Text style={S.stTxt}>Publications, vidéos, images, sons…{'\n'}Choisissez une catégorie et tapez vos mots-clés</Text>
             </View>
           )}
-
         </ScrollView>
       </View>
     </Modal>
@@ -427,85 +549,77 @@ export default function SearchModal({ visible, userId, accessToken, onClose, onP
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  container:      { flex: 1, backgroundColor: '#F5F5F5' },
-
-  // Header
-  header:         { paddingTop: Platform.OS === 'ios' ? 55 : 40, paddingBottom: 6, paddingHorizontal: 16 },
-  headerTop:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  backBtn:        { padding: 4 },
-  headerTitle:    { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
-
-  // Search bar
-  searchBar:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF',
-                    borderRadius: 12, paddingHorizontal: 12, height: 44, marginBottom: 12 },
-  searchInput:    { flex: 1, fontSize: 15, color: '#333' },
-
-  // Chips
-  chips:          { paddingRight: 16, gap: 8, flexDirection: 'row' },
-  chip:           { flexDirection: 'row', alignItems: 'center', gap: 5,
-                    backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 20,
-                    paddingHorizontal: 12, paddingVertical: 6 },
-  chipActive:     { backgroundColor: '#FFF' },
-  chipText:       { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.85)' },
-  chipTextActive: { color: '#8A2BE2' },
-
-  // Search button
-  searchBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                       backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 10,
-                       borderRadius: 10, gap: 6, marginTop: 4, marginBottom: 6 },
-  searchBtnDisabled: { opacity: 0.45 },
-  searchBtnText:     { color: '#FFF', fontSize: 15, fontWeight: '600' },
-
-  // States
-  centerBox:    { paddingVertical: 70, alignItems: 'center', paddingHorizontal: 40 },
-  stateTitle:   { fontSize: 17, fontWeight: '700', color: '#999', marginTop: 18, textAlign: 'center' },
-  stateText:    { fontSize: 13, color: '#BBB', marginTop: 8, textAlign: 'center', lineHeight: 20 },
-
-  // Count bar
-  countBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                   paddingHorizontal: 16, paddingVertical: 12,
-                   backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-  countText:     { fontSize: 13, fontWeight: '700', color: '#8A2BE2' },
-  countPills:    { flexDirection: 'row', gap: 6 },
-  countPill:     { backgroundColor: '#F0E6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  countPillText: { fontSize: 11, fontWeight: '700', color: '#8A2BE2' },
-
-  // Card
-  card:       { backgroundColor: '#FFF', marginHorizontal: 12, marginVertical: 6,
-                borderRadius: 14, padding: 14,
-                ...Platform.select({
-                  ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
-                  android: { elevation: 3 },
-                }) },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  avatar:          { width: 36, height: 36, borderRadius: 18 },
-  avatarFallback:  { width: 36, height: 36, borderRadius: 18, backgroundColor: '#8A2BE2',
-                     justifyContent: 'center', alignItems: 'center' },
-  avatarText:      { color: '#FFF', fontSize: 13, fontWeight: 'bold' },
-  authorName:      { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
-  timeText:        { fontSize: 11, color: '#999', marginTop: 1 },
-  postBadge:       { backgroundColor: '#F5F5F5', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
-  postBadgeText:   { fontSize: 11, fontWeight: '600', color: '#666' },
-  gameBadge:       { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  gameBadgeText:   { fontSize: 11, fontWeight: '700' },
-
-  cardBody:    { fontSize: 14, color: '#333', lineHeight: 20, marginBottom: 10 },
-  highlight:   { backgroundColor: '#FFF3CD', fontWeight: '700', color: '#8A2BE2' },
-
-  cardActions: { flexDirection: 'row', gap: 20, paddingTop: 10,
-                 borderTopWidth: 1, borderTopColor: '#F5F5F5' },
-  actionBtn:   { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionText:  { fontSize: 13, color: '#666', fontWeight: '600' },
-
-  descRow:    { flexDirection: 'row', alignItems: 'flex-start', gap: 6,
-                marginBottom: 10, backgroundColor: '#FAFAFA', borderRadius: 8, padding: 8 },
-  descText:   { flex: 1, fontSize: 13, color: '#555', lineHeight: 18 },
-
-  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 12,
-                paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
-  footerLeft: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  footerMid:  { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 'auto' },
-  footerText: { fontSize: 12, color: '#888', fontWeight: '600' },
-  statusPill: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  statusText: { fontSize: 11, fontWeight: '700' },
+  root:   { flex: 1, backgroundColor: '#F5F5F5' },
+  header: { paddingTop: Platform.OS === 'ios' ? 55 : 40, paddingBottom: 6, paddingHorizontal: 16 },
+  headerTop:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  backBtn:     { padding: 4 },
+  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
+  bar:   { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 12, height: 44, marginBottom: 12 },
+  input: { flex: 1, fontSize: 15, color: '#333' },
+  chips:     { paddingRight: 16, gap: 8, flexDirection: 'row' },
+  chip:      { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  chipOn:    { backgroundColor: '#FFF' },
+  chipTxt:   { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.85)' },
+  chipTxtOn: { color: '#8A2BE2' },
+  searchBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 10, borderRadius: 10, gap: 6, marginTop: 4, marginBottom: 6 },
+  searchBtnTxt: { color: '#FFF', fontSize: 15, fontWeight: '600' },
+  center:  { paddingVertical: 70, alignItems: 'center', paddingHorizontal: 40 },
+  stTitle: { fontSize: 17, fontWeight: '700', color: '#999', marginTop: 18, textAlign: 'center' },
+  stTxt:   { fontSize: 13, color: '#BBB', marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  countBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  countTxt: { fontSize: 13, fontWeight: '700', color: '#8A2BE2' },
+  pill:     { backgroundColor: '#F0E6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  pillTxt:  { fontSize: 11, fontWeight: '700', color: '#8A2BE2' },
+  card:     { backgroundColor: '#FFF', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, padding: 14,
+              ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 }, android: { elevation: 3 } }) },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  av:       { width: 36, height: 36, borderRadius: 18 },
+  avFb:     { width: 36, height: 36, borderRadius: 18, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
+  avTxt:    { color: '#FFF', fontSize: 13, fontWeight: 'bold' },
+  name:     { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  time:     { fontSize: 11, color: '#999', marginTop: 1 },
+  postBadge:    { backgroundColor: '#F5F5F5', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
+  postBadgeTxt: { fontSize: 12 },
+  gameBadge:    { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  gameBadgeTxt: { fontSize: 11, fontWeight: '700' },
+  body:    { fontSize: 14, color: '#333', lineHeight: 20, marginBottom: 10 },
+  hl:      { backgroundColor: '#FFF3CD', fontWeight: '700', color: '#8A2BE2' },
+  actions: { flexDirection: 'row', gap: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
+  actBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  actTxt:  { fontSize: 13, color: '#666', fontWeight: '600' },
+  descRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 10, backgroundColor: '#FAFAFA', borderRadius: 8, padding: 8 },
+  descTxt: { flex: 1, fontSize: 13, color: '#555', lineHeight: 18 },
+  mediaToggle:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 4 },
+  mediaToggleTxt: { flex: 1, fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  mediaList:      { gap: 10, marginBottom: 10 },
+  imgMedia:       { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#EEE' },
+  videoBox:       { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000', height: 200 },
+  videoPlayer:    { width: '100%', height: '100%' },
+  videoOverlay:   { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
+  videoPlayIcon:  { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center' },
+  videoMuteIcon:  { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 14, width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
+  videoDesc:      { position: 'absolute', bottom: 8, left: 10, right: 10, color: '#FFF', fontSize: 12, fontWeight: '500' },
+  audioBox:  { backgroundColor: '#F8F5FF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
+  audioTop:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  audioDesc: { flex: 1, fontSize: 12, color: '#555', fontWeight: '500' },
+  seekBar:   { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
+  seekTrack: { position: 'absolute', left: 2, right: 2, height: 4, backgroundColor: '#DDD6FE', borderRadius: 2 },
+  seekFill:  { position: 'absolute', left: 2, height: 4, backgroundColor: '#7C3AED', borderRadius: 2 },
+  seekThumb: { position: 'absolute', top: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#7C3AED', marginLeft: -8, elevation: 3 },
+  seekTimes: { flexDirection: 'row', justifyContent: 'space-between' },
+  seekTime:  { fontSize: 10, color: '#9CA3AF' },
+  audioCtrl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18 },
+  skipBtn:   { alignItems: 'center', gap: 2 },
+  skipTxt:   { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
+  playBtn:   { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
+  playBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
+  footer:      { flexDirection: 'row', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5', gap: 8 },
+  statusPill:  { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  statusTxt:   { fontSize: 11, fontWeight: '700' },
+  voteBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#8A2BE2', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 },
+  voteBtnVoted:{ backgroundColor: '#E74C3C' },
+  voteTxt:     { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  voteCount:   { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600' },
+  voteStat:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  voteStatTxt: { fontSize: 13, color: '#E74C3C', fontWeight: '700' },
 });
