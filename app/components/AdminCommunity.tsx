@@ -572,8 +572,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Ad
                         <Text style={S.settingTitle}>Inscriptions</Text>
                         <Text style={S.settingSub}>
                           {settings.registrations_open
-                            ? '✅ Ouvertes — les nouveaux utilisateurs peuvent s'inscrire'
-                            : '🔐 Fermées — tout nouvel essai d'inscription est bloqué'}
+                            ? "✅ Ouvertes — les nouveaux utilisateurs peuvent s'inscrire"
+                            : "🔐 Fermées — tout nouvel essai d'inscription est bloqué"}
                         </Text>
                         <Text style={S.settingMeta}>Dernière modif : {fmtDate(settings.updated_at)}</Text>
                       </View>
