@@ -624,8 +624,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                           </Text>
                           <Text style={S.settingSub}>
                             {settings.registrations_open
-                              ? 'Les nouveaux utilisateurs peuvent s'inscrire.'
-                              : 'Toute tentative d\'inscription est bloquée.'}
+                              ? "Les nouveaux utilisateurs peuvent s'inscrire."
+                              : "Toute tentative d\'inscription est bloquée."}
                           </Text>
                           <Text style={S.settingMeta}>Modifié le {fmtDate(settings.updated_at)}</Text>
                         </View>
