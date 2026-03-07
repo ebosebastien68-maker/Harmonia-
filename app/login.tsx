@@ -20,6 +20,7 @@ import * as Haptics from 'expo-haptics';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 
 const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/auth';
+const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com'; // ← NOUVEAU
 
 type AuthMode = 'login' | 'signup' | 'reset' | 'verify-signup' | 'verify-reset';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -117,10 +118,8 @@ export default function LoginPage() {
   // Formater la date pour l'API (YYYY-MM-DD) - Format PostgreSQL
   const formatDateForAPI = (): string => {
     if (Platform.OS === 'web') {
-      // Sur web, on a déjà le bon format depuis l'input HTML5
       return dateNaissanceWeb;
     } else {
-      // Sur mobile, on convertit le Date object
       const day = dateNaissance.getDate().toString().padStart(2, '0');
       const month = (dateNaissance.getMonth() + 1).toString().padStart(2, '0');
       const year = dateNaissance.getFullYear();
@@ -132,7 +131,6 @@ export default function LoginPage() {
   const isValidDate = (dateString: string): boolean => {
     const regex = /^\d{4}-\d{2}-\d{2}$/;
     if (!regex.test(dateString)) return false;
-    
     const date = new Date(dateString);
     return date instanceof Date && !isNaN(date.getTime());
   };
@@ -141,23 +139,45 @@ export default function LoginPage() {
   // INSCRIPTION
   // =====================
   const handleSignup = async () => {
-    // Validation
+    // Validations locales
     if (!email.trim() || !password.trim() || !nom.trim() || !prenom.trim()) {
       showMessage('error', 'Veuillez remplir tous les champs');
       return;
     }
-
     if (password.length < 6) {
       showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
       return;
     }
-
-    // Validation de la date
     const dateForAPI = formatDateForAPI();
     if (!isValidDate(dateForAPI)) {
       showMessage('error', 'Format de date invalide');
       return;
     }
+
+    // ── VÉRIFIER SI LES INSCRIPTIONS SONT OUVERTES ────────────────────────
+    // Appel Express backend (supabaseAdmin côté serveur = bypass RLS garanti)
+    // fail-closed : si le serveur est injoignable on bloque par sécurité
+    try {
+      const chkRes = await fetch(`${WS_BASE}/check-registrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (chkRes.ok) {
+        const chk = await chkRes.json();
+        if (chk.registrations_open === false) {
+          showMessage('error', chk.registrations_message || 'Les inscriptions sont actuellement fermées. 🔐');
+          return;
+        }
+      } else {
+        showMessage('error', 'Impossible de vérifier les inscriptions. Réessayez plus tard.');
+        return;
+      }
+    } catch {
+      showMessage('error', 'Impossible de joindre le serveur. Vérifiez votre connexion.');
+      return;
+    }
+    // ──────────────────────────────────────────────────────────────────────
 
     setLoading(true);
     showMessage('info', 'Création du compte en cours...');
@@ -182,7 +202,7 @@ export default function LoginPage() {
           password,
           nom: nom.trim(),
           prenom: prenom.trim(),
-          date_naissance: dateForAPI,  // Format YYYY-MM-DD
+          date_naissance: dateForAPI,
         }),
       });
 
@@ -190,7 +210,7 @@ export default function LoginPage() {
       console.log('📥 Réponse serveur:', data);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Erreur lors de l\'inscription');
+        throw new Error(data.error || "Erreur lors de l'inscription");
       }
 
       setPendingEmail(email.trim().toLowerCase());
@@ -239,7 +259,7 @@ export default function LoginPage() {
       }
     } catch (error: any) {
       console.error('Verify email error:', error);
-      showMessage('error', error.message || 'Impossible de vérifier l\'email');
+      showMessage('error', error.message || "Impossible de vérifier l'email");
     } finally {
       setLoading(false);
     }
@@ -302,7 +322,7 @@ export default function LoginPage() {
     }
 
     setLoading(true);
-    showMessage('info', 'Envoi de l\'email en cours...');
+    showMessage('info', "Envoi de l'email en cours...");
 
     try {
       const response = await fetch(API_BASE, {
@@ -332,7 +352,7 @@ export default function LoginPage() {
       showMessage('success', 'Email envoyé ! Vérifiez votre boîte mail.');
     } catch (error: any) {
       console.error('Request reset error:', error);
-      showMessage('error', error.message || 'Impossible d\'envoyer l\'email');
+      showMessage('error', error.message || "Impossible d'envoyer l'email");
     } finally {
       setLoading(false);
     }
@@ -386,12 +406,10 @@ export default function LoginPage() {
       showMessage('error', 'Veuillez remplir les deux champs');
       return;
     }
-
     if (newPassword.length < 6) {
       showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
       return;
     }
-
     if (newPassword !== confirmPassword) {
       showMessage('error', 'Les mots de passe ne correspondent pas');
       return;
@@ -446,7 +464,6 @@ export default function LoginPage() {
   // =====================
   const renderDatePicker = () => {
     if (Platform.OS === 'web') {
-      // 🌐 VERSION WEB - Input HTML5
       return (
         <View style={styles.inputContainer}>
           <Ionicons name="calendar-outline" size={20} color="#999" style={styles.inputIcon} />
@@ -470,7 +487,6 @@ export default function LoginPage() {
         </View>
       );
     } else {
-      // 📱 VERSION MOBILE - DateTimePicker natif
       return (
         <>
           <TouchableOpacity 
@@ -556,6 +572,7 @@ export default function LoginPage() {
 
           {/* CARD PRINCIPALE */}
           <View style={styles.card}>
+
             {/* ==================== CONNEXION ==================== */}
             {mode === 'login' && (
               <>
@@ -590,11 +607,7 @@ export default function LoginPage() {
                     editable={!loading}
                   />
                   <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    <Ionicons
-                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                      size={20}
-                      color="#999"
-                    />
+                    <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
                   </TouchableOpacity>
                 </View>
 
@@ -602,15 +615,8 @@ export default function LoginPage() {
                   <Text style={styles.forgotPassword}>Mot de passe oublié ?</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  onPress={handleLogin}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#FF0080', '#FF8C00']}
-                    style={styles.primaryButton}
-                  >
+                <TouchableOpacity onPress={handleLogin} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#FF0080', '#FF8C00']} style={styles.primaryButton}>
                     <Text style={styles.buttonText}>Se connecter</Text>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -655,7 +661,6 @@ export default function LoginPage() {
                   />
                 </View>
 
-                {/* DATE PICKER MULTI-PLATEFORME */}
                 {renderDatePicker()}
 
                 <View style={styles.inputContainer}>
@@ -686,23 +691,12 @@ export default function LoginPage() {
                     editable={!loading}
                   />
                   <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    <Ionicons
-                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                      size={20}
-                      color="#999"
-                    />
+                    <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
                   </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleSignup}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#11998e', '#38ef7d']}
-                    style={styles.primaryButton}
-                  >
+                <TouchableOpacity onPress={handleSignup} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#11998e', '#38ef7d']} style={styles.primaryButton}>
                     <Text style={styles.buttonText}>Créer mon compte</Text>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -733,15 +727,8 @@ export default function LoginPage() {
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleVerifySignup}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#00c6ff', '#0072ff']}
-                    style={styles.primaryButton}
-                  >
+                <TouchableOpacity onPress={handleVerifySignup} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#00c6ff', '#0072ff']} style={styles.primaryButton}>
                     <Text style={styles.buttonText}>Vérifier l'activation</Text>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -776,15 +763,8 @@ export default function LoginPage() {
                   />
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleRequestReset}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#FF0080', '#FF8C00']}
-                    style={styles.primaryButton}
-                  >
+                <TouchableOpacity onPress={handleRequestReset} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#FF0080', '#FF8C00']} style={styles.primaryButton}>
                     <Text style={styles.buttonText}>Envoyer le lien</Text>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -815,15 +795,8 @@ export default function LoginPage() {
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleVerifyReset}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#00c6ff', '#0072ff']}
-                    style={styles.primaryButton}
-                  >
+                <TouchableOpacity onPress={handleVerifyReset} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#00c6ff', '#0072ff']} style={styles.primaryButton}>
                     <Text style={styles.buttonText}>Vérifier l'activation</Text>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -846,11 +819,7 @@ export default function LoginPage() {
                         editable={!loading}
                       />
                       <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
-                        <Ionicons
-                          name={showNewPassword ? 'eye-outline' : 'eye-off-outline'}
-                          size={20}
-                          color="#999"
-                        />
+                        <Ionicons name={showNewPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
                       </TouchableOpacity>
                     </View>
 
@@ -867,23 +836,12 @@ export default function LoginPage() {
                         editable={!loading}
                       />
                       <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                        <Ionicons
-                          name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
-                          size={20}
-                          color="#999"
-                        />
+                        <Ionicons name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
                       </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity
-                      onPress={handleResetPassword}
-                      disabled={loading}
-                      activeOpacity={0.8}
-                    >
-                      <LinearGradient
-                        colors={['#11998e', '#38ef7d']}
-                        style={styles.primaryButton}
-                      >
+                    <TouchableOpacity onPress={handleResetPassword} disabled={loading} activeOpacity={0.8}>
+                      <LinearGradient colors={['#11998e', '#38ef7d']} style={styles.primaryButton}>
                         <Text style={styles.buttonText}>Réinitialiser</Text>
                       </LinearGradient>
                     </TouchableOpacity>
@@ -897,6 +855,7 @@ export default function LoginPage() {
                 </TouchableOpacity>
               </>
             )}
+
           </View>
         </ScrollView>
       </LinearGradient>
@@ -905,200 +864,64 @@ export default function LoginPage() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  gradientBackground: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  gradientBackground: { flex: 1 },
   scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
+    flexGrow: 1, justifyContent: 'center',
+    paddingVertical: 40, paddingHorizontal: 20,
   },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 40,
-  },
-  tagline: {
-    fontSize: 16,
-    color: '#E0D0FF',
-    fontStyle: 'italic',
-    marginTop: 12,
-    letterSpacing: 1,
-  },
+  logoContainer: { alignItems: 'center', marginBottom: 40 },
+  tagline: { fontSize: 16, color: '#E0D0FF', fontStyle: 'italic', marginTop: 12, letterSpacing: 1 },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 10,
+    backgroundColor: '#fff', borderRadius: 25, padding: 30,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3, shadowRadius: 20, elevation: 10,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 30,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  title:    { fontSize: 28, fontWeight: 'bold', color: '#333', marginBottom: 10, textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#666', marginBottom: 30, textAlign: 'center', lineHeight: 20 },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5',
+    borderRadius: 12, paddingHorizontal: 15, marginBottom: 15,
+    borderWidth: 1, borderColor: '#E0E0E0',
   },
-  inputIcon: {
-    marginRight: 10,
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 15,
-    fontSize: 16,
-    color: '#333',
-  },
-  dateText: {
-    flex: 1,
-    paddingVertical: 15,
-    fontSize: 16,
-    color: '#333',
-  },
-  forgotPassword: {
-    color: '#8A2BE2',
-    fontSize: 14,
-    textAlign: 'right',
-    marginBottom: 20,
-    fontWeight: '600',
-  },
-  primaryButton: {
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-  },
-  linkButton: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  linkText: {
-    color: '#666',
-    fontSize: 14,
-  },
-  linkBold: {
-    color: '#8A2BE2',
-    fontWeight: 'bold',
-  },
+  inputIcon:    { marginRight: 10 },
+  input:        { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  dateText:     { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  forgotPassword: { color: '#8A2BE2', fontSize: 14, textAlign: 'right', marginBottom: 20, fontWeight: '600' },
+  primaryButton:  { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+  buttonText:     { color: '#fff', fontSize: 16, fontWeight: 'bold', textTransform: 'uppercase' },
+  linkButton:     { marginTop: 20, alignItems: 'center' },
+  linkText:       { color: '#666', fontSize: 14 },
+  linkBold:       { color: '#8A2BE2', fontWeight: 'bold' },
   infoBox: {
-    backgroundColor: '#F0F8FF',
-    borderRadius: 12,
-    padding: 20,
-    marginVertical: 20,
-    borderWidth: 1,
-    borderColor: '#B0D4FF',
+    backgroundColor: '#F0F8FF', borderRadius: 12, padding: 20,
+    marginVertical: 20, borderWidth: 1, borderColor: '#B0D4FF',
   },
-  infoText: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 24,
-  },
-  resetFormContainer: {
-    marginTop: 30,
-    paddingTop: 30,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  resetFormTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  // Status Message Styles
+  infoText: { fontSize: 14, color: '#333', lineHeight: 24 },
+  resetFormContainer: { marginTop: 30, paddingTop: 30, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  resetFormTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
   statusMessageContainer: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderRadius: 12,
-    zIndex: 1000,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    position: 'absolute', top: 50, left: 20, right: 20,
+    flexDirection: 'row', alignItems: 'center', padding: 15,
+    borderRadius: 12, zIndex: 1000,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5,
   },
-  statusMessageSuccess: {
-    backgroundColor: '#10B981',
-  },
-  statusMessageError: {
-    backgroundColor: '#EF4444',
-  },
-  statusMessageWarning: {
-    backgroundColor: '#F59E0B',
-  },
-  statusMessageInfo: {
-    backgroundColor: '#3B82F6',
-  },
-  statusIcon: {
-    marginRight: 10,
-  },
-  statusMessageText: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  // Loading Overlay
+  statusMessageSuccess: { backgroundColor: '#10B981' },
+  statusMessageError:   { backgroundColor: '#EF4444' },
+  statusMessageWarning: { backgroundColor: '#F59E0B' },
+  statusMessageInfo:    { backgroundColor: '#3B82F6' },
+  statusIcon:        { marginRight: 10 },
+  statusMessageText: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
   loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 999,
+    justifyContent: 'center', alignItems: 'center', zIndex: 999,
   },
   loadingCard: {
-    backgroundColor: '#fff',
-    padding: 30,
-    borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    backgroundColor: '#fff', padding: 30, borderRadius: 20, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5,
   },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '600',
-  },
+  loadingText: { marginTop: 15, fontSize: 16, color: '#333', fontWeight: '600' },
 });
