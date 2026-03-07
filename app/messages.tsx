@@ -22,6 +22,7 @@ import ChatBox from '../components/ChatBox';
 
 const API_BASE    = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/messages';
 const STREAM_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/messages-stream';
+const WS_BASE     = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
 type ViewMode = 'tabs' | 'chat';
 type TabMode  = 'online' | 'friends' | 'groups' | 'history';
@@ -101,10 +102,11 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
       const session = await AsyncStorage.getItem('harmonia_session');
       if (session) {
         const parsed = JSON.parse(session);
+        const token  = parsed.access_token || parsed.session?.access_token || '';
         setUserId(parsed.user.id);
-        // ← Stocker le token pour les groupes WebSocket
-        setAccessToken(parsed.access_token || parsed.session?.access_token || '');
-        await loadAllData(parsed.user.id);
+        setAccessToken(token);
+        // On passe le token directement car setAccessToken est async (état pas encore visible)
+        await loadAllData(parsed.user.id, token);
         await updatePresence(true);
       }
     } catch (error) {
@@ -139,12 +141,12 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   // =====================
   // CHARGEMENT DONNÉES
   // =====================
-  const loadAllData = async (uid: string) => {
+  const loadAllData = async (uid: string, token?: string) => {
     await Promise.all([
       loadConversations(uid),
       loadOnlineFriends(uid),
       loadAllFriends(uid),
-      loadGroups(uid),
+      loadGroups(uid, token ?? accessToken),
     ]);
   };
 
@@ -184,16 +186,38 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     } catch {}
   };
 
-  const loadGroups = async (uid: string) => {
+  // ── Groupes — backend Express /groups (handleGetUserGroups) ─────────────
+  const loadGroups = async (uid: string, token?: string) => {
+    const tok = token ?? accessToken;
+    if (!tok) return;   // token pas encore disponible, sera rappelé après init
     try {
-      const res  = await fetch(API_BASE, {
+      const res  = await fetch(`${WS_BASE}/groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'get-user-groups', user_id: uid }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: uid, access_token: tok }),
       });
       const data = await res.json();
-      if (data.success) setGroups(data.groups);
-    } catch {}
+      if (data.success) {
+        // Mapper la réponse au format Conversation attendu par l'UI
+        const mapped: Conversation[] = (data.groups ?? []).map((g: any) => ({
+          type:        'group' as const,
+          id:          g.id,
+          name:        g.name,
+          description: g.description ?? undefined,
+          memberCount: g.member_count ?? 0,
+          createdAt:   g.created_at,
+          lastMessage: g.last_message ? {
+            content:     g.last_message.content,
+            createdAt:   g.last_message.created_at,
+            isFromMe:    g.last_message.is_from_me,
+            senderName:  g.last_message.is_from_me ? undefined : g.last_message.sender_name,
+          } : null,
+        }));
+        setGroups(mapped);
+      }
+    } catch (e) {
+      console.error('[loadGroups]', e);
+    }
   };
 
   // =====================
