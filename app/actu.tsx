@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   Image, RefreshControl, Modal, Dimensions, Platform,
   Animated, FlatList, StatusBar, SafeAreaView, ActivityIndicator,
+  PanResponder,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -160,6 +161,9 @@ async function getValidToken(): Promise<{
   }
 }
 
+// ─── MemoLogo — stable, ne re-render jamais ──────────────────────────────────
+const MemoLogo = React.memo(() => <HarmoniaLogo size={26} showText={true} />, () => true);
+
 // ─── Props types ──────────────────────────────────────────────────────────────
 interface PostCardProps {
   post: Post;
@@ -295,7 +299,7 @@ const PostCard = React.memo(({
 });
 
 // ─── AudioTrackCard ──────────────────────────────────────────────────────────
-// Lecteur audio inline pour les soumissions Music
+// Lecteur audio avec seekbar tactile + boutons -10s / +10s
 function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: number; total: number }) {
   const [sound,      setSound]      = useState<Audio.Sound | null>(null);
   const [isPlaying,  setIsPlaying]  = useState(false);
@@ -303,20 +307,61 @@ function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: 
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
 
-  // Nettoyage au démontage
+  const soundRef    = useRef<Audio.Sound | null>(null);
+  const barWidthRef = useRef(0);
+
   useEffect(() => {
-    return () => { sound?.unloadAsync().catch(() => {}); };
-  }, [sound]);
+    return () => { soundRef.current?.unloadAsync().catch(() => {}); };
+  }, []);
 
   const formatMs = (ms: number) => {
     const s = Math.floor(ms / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   };
 
+  // Seek à une position ratio 0–1
+  const seekToRatio = useCallback(async (ratio: number) => {
+    const s = soundRef.current;
+    if (!s) return;
+    const status = await s.getStatusAsync();
+    if (!status.isLoaded || !status.durationMillis) return;
+    const newPos = Math.max(0, Math.min(Math.floor(ratio * status.durationMillis), status.durationMillis));
+    await s.setPositionAsync(newPos);
+    setPositionMs(newPos);
+  }, []);
+
+  // Skip ±10 secondes
+  const skip = useCallback(async (deltaMs: number) => {
+    const s = soundRef.current;
+    if (!s) return;
+    const status = await s.getStatusAsync();
+    if (!status.isLoaded) return;
+    const dur = status.durationMillis ?? 0;
+    const newPos = Math.max(0, Math.min((status.positionMillis ?? 0) + deltaMs, dur));
+    await s.setPositionAsync(newPos);
+    setPositionMs(newPos);
+  }, []);
+
+  // PanResponder sur la seekbar
+  const seekPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder:  () => true,
+      onPanResponderGrant: (e) => {
+        const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
+        seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
+      },
+      onPanResponderMove: (e) => {
+        const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
+        seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
+      },
+    })
+  ).current;
+
   const togglePlay = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      if (!sound) {
+      if (!soundRef.current) {
         setIsLoading(true);
         await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
         const { sound: newSound } = await Audio.Sound.createAsync(
@@ -324,26 +369,27 @@ function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: 
           { shouldPlay: true },
           (status) => {
             if (!status.isLoaded) return;
-            setPositionMs(status.positionMillis);
+            setPositionMs(status.positionMillis ?? 0);
             setDurationMs(status.durationMillis ?? 0);
             setIsPlaying(status.isPlaying);
             if (status.didJustFinish) { setIsPlaying(false); setPositionMs(0); }
           }
         );
+        soundRef.current = newSound;
         setSound(newSound);
         setIsPlaying(true);
         setIsLoading(false);
       } else {
-        const status = await sound.getStatusAsync();
+        const status = await soundRef.current.getStatusAsync();
         if (!status.isLoaded) return;
         if (status.isPlaying) {
-          await sound.pauseAsync();
+          await soundRef.current.pauseAsync();
           setIsPlaying(false);
         } else {
-          if (status.positionMillis >= (status.durationMillis ?? 0) - 200) {
-            await sound.setPositionAsync(0);
+          if ((status.positionMillis ?? 0) >= (status.durationMillis ?? 0) - 200) {
+            await soundRef.current.setPositionAsync(0);
           }
-          await sound.playAsync();
+          await soundRef.current.playAsync();
           setIsPlaying(true);
         }
       }
@@ -357,32 +403,38 @@ function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: 
 
   return (
     <View style={styles.audioTrack}>
-      {/* Numéro de piste si plusieurs */}
       {total > 1 && (
         <Text style={styles.audioTrackNum}>Piste {index + 1}/{total}</Text>
       )}
+      {item.description ? (
+        <Text style={styles.audioTrackDesc} numberOfLines={1}>{item.description}</Text>
+      ) : null}
 
-      <View style={styles.audioTrackRow}>
-        {/* Icône waveform */}
-        <View style={styles.audioIconBg}>
-          <Ionicons name="musical-notes" size={20} color="#7C3AED" />
-        </View>
+      {/* Seekbar tactile */}
+      <View
+        style={styles.audioSeekBar}
+        onLayout={e => { barWidthRef.current = e.nativeEvent.layout.width; }}
+        {...seekPan.panHandlers}
+      >
+        <View style={styles.audioSeekTrack} />
+        <View style={[styles.audioSeekFill, { width: `${Math.round(progress * 100)}%` }]} />
+        {/* Thumb */}
+        <View style={[styles.audioSeekThumb, { left: `${Math.round(progress * 100)}%` as any }]} />
+      </View>
 
-        {/* Barre de progression + temps */}
-        <View style={styles.audioTrackInfo}>
-          {item.description
-            ? <Text style={styles.audioTrackDesc} numberOfLines={1}>{item.description}</Text>
-            : null}
-          <View style={styles.audioProgressBar}>
-            <View style={[styles.audioProgressFill, { width: `${Math.round(progress * 100)}%` }]} />
-          </View>
-          <View style={styles.audioTimings}>
-            <Text style={styles.audioTime}>{formatMs(positionMs)}</Text>
-            {durationMs > 0 && <Text style={styles.audioTime}>{formatMs(durationMs)}</Text>}
-          </View>
-        </View>
+      {/* Temps */}
+      <View style={styles.audioTimings}>
+        <Text style={styles.audioTime}>{formatMs(positionMs)}</Text>
+        {durationMs > 0 && <Text style={styles.audioTime}>{formatMs(durationMs)}</Text>}
+      </View>
 
-        {/* Bouton play/pause */}
+      {/* Contrôles : -10s | play/pause | +10s */}
+      <View style={styles.audioControls}>
+        <TouchableOpacity style={styles.audioSkipBtn} onPress={() => skip(-10000)} disabled={!sound}>
+          <Ionicons name="play-back" size={18} color={sound ? '#7C3AED' : '#CCC'} />
+          <Text style={[styles.audioSkipText, !sound && { color: '#CCC' }]}>10</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.audioPlayBtn, isPlaying && styles.audioPlayBtnActive]}
           onPress={togglePlay}
@@ -393,9 +445,14 @@ function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: 
             ? <ActivityIndicator size="small" color="#7C3AED" />
             : <Ionicons
                 name={isPlaying ? 'pause' : 'play'}
-                size={20}
+                size={22}
                 color={isPlaying ? '#FFF' : '#7C3AED'}
               />}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.audioSkipBtn} onPress={() => skip(10000)} disabled={!sound}>
+          <Ionicons name="play-forward" size={18} color={sound ? '#7C3AED' : '#CCC'} />
+          <Text style={[styles.audioSkipText, !sound && { color: '#CCC' }]}>10</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -886,7 +943,8 @@ export default function ActuScreen() {
           onLayout={e => { headerHeightRef.current = e.nativeEvent.layout.height; }}>
 
           <View style={styles.headerTop}>
-            <HarmoniaLogo size={26} showText={true} />
+            {/* Logo mémoïsé — ne re-render pas */}
+            <MemoLogo />
             <View style={styles.balanceBox}>
               <Ionicons name="wallet-outline" size={14} color="#FFD700" />
               <Text style={styles.balanceText}>
@@ -1078,10 +1136,20 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const flatRef = useRef<FlatList>(null);
 
+  // viewabilityConfig stable en ref — déclenche l'autoplay dès 80% visible
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      setCurrentIndex(viewableItems[0].index ?? 0);
+    }
+  }).current;
+
   useEffect(() => {
     if (visible && flatRef.current && items.length > 0) {
-      flatRef.current.scrollToIndex({ index: startIndex, animated: false });
-      setCurrentIndex(startIndex);
+      setTimeout(() => {
+        flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
+        setCurrentIndex(startIndex);
+      }, 50);
     }
   }, [visible, startIndex]);
 
@@ -1091,7 +1159,6 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
     <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
       <StatusBar hidden />
       <View style={tikStyles.root}>
-        {/* Bouton fermer */}
         <TouchableOpacity style={tikStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={28} color="#FFF" />
         </TouchableOpacity>
@@ -1106,10 +1173,8 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
           decelerationRate="fast"
           getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
           initialScrollIndex={startIndex}
-          onMomentumScrollEnd={e => {
-            const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-            setCurrentIndex(idx);
-          }}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
           renderItem={({ item, index }) => (
             <TikTokVideoItem
               item={item}
@@ -1337,21 +1402,32 @@ const styles = StyleSheet.create({
 
   // ─── Music / Audio ──────────────────────────────────────────────────────────
   musicList:         { paddingHorizontal: 12, paddingVertical: 4, gap: 8 },
-  audioTrack:        { backgroundColor: '#F8F5FF', borderRadius: 12, padding: 12,
-                       borderWidth: 1, borderColor: '#E9D5FF' },
+  audioTrack:        { backgroundColor: '#F8F5FF', borderRadius: 14, padding: 14,
+                       borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
   audioTrackNum:     { fontSize: 11, color: '#7C3AED', fontWeight: '700',
-                       marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  audioTrackRow:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  audioIconBg:       { width: 40, height: 40, borderRadius: 20,
-                       backgroundColor: '#EDE9FE', justifyContent: 'center', alignItems: 'center' },
-  audioTrackInfo:    { flex: 1, gap: 4 },
-  audioTrackDesc:    { fontSize: 12, color: '#555', fontWeight: '500' },
-  audioProgressBar:  { height: 4, backgroundColor: '#DDD6FE', borderRadius: 2, overflow: 'hidden' },
-  audioProgressFill: { height: '100%', backgroundColor: '#7C3AED', borderRadius: 2 },
-  audioTimings:      { flexDirection: 'row', justifyContent: 'space-between' },
-  audioTime:         { fontSize: 10, color: '#9CA3AF' },
-  audioPlayBtn:      { width: 40, height: 40, borderRadius: 20, borderWidth: 2,
-                       borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center',
-                       backgroundColor: '#FFF' },
-  audioPlayBtnActive:{ backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
+                       textTransform: 'uppercase', letterSpacing: 0.5 },
+  audioTrackDesc:    { fontSize: 13, color: '#444', fontWeight: '500', marginBottom: 2 },
+
+  // Seekbar tactile
+  audioSeekBar:   { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
+  audioSeekTrack: { position: 'absolute', left: 2, right: 2, height: 4,
+                    backgroundColor: '#DDD6FE', borderRadius: 2 },
+  audioSeekFill:  { position: 'absolute', left: 2, height: 4,
+                    backgroundColor: '#7C3AED', borderRadius: 2 },
+  audioSeekThumb: { position: 'absolute', top: 6, width: 16, height: 16,
+                    borderRadius: 8, backgroundColor: '#7C3AED',
+                    marginLeft: -8, elevation: 3,
+                    shadowColor: '#7C3AED', shadowOpacity: 0.4, shadowRadius: 4 },
+
+  audioTimings:   { flexDirection: 'row', justifyContent: 'space-between' },
+  audioTime:      { fontSize: 10, color: '#9CA3AF' },
+
+  // Contrôles
+  audioControls:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20 },
+  audioSkipBtn:   { alignItems: 'center', gap: 2 },
+  audioSkipText:  { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
+  audioPlayBtn:   { width: 48, height: 48, borderRadius: 24, borderWidth: 2,
+                    borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center',
+                    backgroundColor: '#FFF' },
+  audioPlayBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
 });
