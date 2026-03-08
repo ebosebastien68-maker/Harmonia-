@@ -75,10 +75,13 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [grpName,       setGrpName]       = useState('');
   const [grpDesc,       setGrpDesc]       = useState('');
   const [showAddMember, setShowAddMember] = useState(false);
-  const [memberSearch,  setMemberSearch]  = useState('');
-  const [memberList,    setMemberList]    = useState<UserProfile[]>([]);
-  const [memberLoading, setMemberLoading] = useState(false);
-  const [memberMsg,     setMemberMsg]     = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  // ── Picker partagé : champs nom/prenom + résultats (un seul picker actif) ──
+  const [pickNom,      setPickNom]      = useState('');
+  const [pickPrenom,   setPickPrenom]   = useState('');
+  const [pickResults,  setPickResults]  = useState<UserProfile[]>([]);
+  const [pickLoading,  setPickLoading]  = useState(false);
+  const [pickMsg,      setPickMsg]      = useState<{type:'ok'|'err'; text:string}|null>(null);
 
   // ── Notifications ──────────────────────────────────────────────────────────
   const [notifications,    setNotifications]    = useState<Notification[]>([]);
@@ -88,21 +91,13 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [notifContent,     setNotifContent]     = useState('');
   const [notifTarget,      setNotifTarget]      = useState<UserProfile | null>(null);
   const [showTargetPicker, setShowTargetPicker] = useState(false);
-  const [targetSearch,     setTargetSearch]     = useState('');
-  const [targetList,       setTargetList]       = useState<UserProfile[]>([]);
-  const [targetLoading,    setTargetLoading]    = useState(false);
-  const [targetMsg,        setTargetMsg]        = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   // ── Trophées ───────────────────────────────────────────────────────────────
-  const [trophySearch,       setTrophySearch]       = useState('');
-  const [trophySearchResult, setTrophySearchResult] = useState<UserProfile[]>([]);
-  const [trophySearchLoad,   setTrophySearchLoad]   = useState(false);
-  const [trophySearchMsg,    setTrophySearchMsg]    = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const [trophyUser,         setTrophyUser]         = useState<UserProfile | null>(null);
-  const [trophyTitle,        setTrophyTitle]        = useState('');
-  const [trophyDesc,         setTrophyDesc]         = useState('');
-  const [userTrophies,       setUserTrophies]       = useState<Trophy[]>([]);
-  const [trophiesLoading,    setTrophiesLoading]    = useState(false);
+  const [trophyUser,      setTrophyUser]      = useState<UserProfile | null>(null);
+  const [trophyTitle,     setTrophyTitle]     = useState('');
+  const [trophyDesc,      setTrophyDesc]      = useState('');
+  const [userTrophies,    setUserTrophies]    = useState<Trophy[]>([]);
+  const [trophiesLoading, setTrophiesLoading] = useState(false);
 
   // ── Réglages ───────────────────────────────────────────────────────────────
   const [settings,   setSettings]   = useState<AppSettings | null>(null);
@@ -138,6 +133,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     if (section === 'groups')        loadGroups();
     if (section === 'notifications') loadNotifications();
     if (section === 'settings')      loadSettingsAndSessions();
+    if (section === 'trophies')      resetPicker();
   }, [section]);
 
   const loadGroups = useCallback(async () => {
@@ -183,30 +179,29 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setTrophiesLoading(false); }
   }, [api]);
 
-  // ── Recherche utilisateurs — avec bouton ───────────────────────────────────
-  const doSearchUsers = async (
-    term: string,
-    setList: (u: UserProfile[]) => void,
-    setLoad: (b: boolean) => void,
-    setMsg:  (m: { type: 'ok' | 'err'; text: string } | null) => void
-  ) => {
-    if (!term.trim()) {
-      setMsg({ type: 'err', text: 'Saisissez un nom ou prénom.' });
+  // ── Recherche exacte nom + prenom dans profiles ──────────────────────────
+  const resetPicker = () => {
+    setPickNom(''); setPickPrenom(''); setPickResults([]); setPickMsg(null);
+  };
+
+  const searchExact = async () => {
+    if (!pickNom.trim() || !pickPrenom.trim()) {
+      setPickMsg({ type: 'err', text: 'Saisissez le nom ET le prénom exacts.' });
       return;
     }
-    setLoad(true); setMsg(null); setList([]);
+    setPickLoading(true); setPickMsg(null); setPickResults([]);
     try {
-      const d = await api({ function: 'listUsers', search: term.trim(), limit: 20 });
-      const users: UserProfile[] = d.users || [];
-      setList(users);
+      const d = await api({ function: 'searchUserExact', nom: pickNom.trim(), prenom: pickPrenom.trim() });
+      const users: UserProfile[] = d.users ?? [];
+      setPickResults(users);
       if (users.length === 0)
-        setMsg({ type: 'err', text: `Aucun résultat pour "${term.trim()}".` });
+        setPickMsg({ type: 'err', text: `Aucun profil "${pickPrenom.trim()} ${pickNom.trim()}" trouvé.` });
       else
-        setMsg({ type: 'ok', text: `${users.length} résultat${users.length > 1 ? 's' : ''} trouvé${users.length > 1 ? 's' : ''}.` });
+        setPickMsg({ type: 'ok', text: `${users.length} profil(s) trouvé(s).` });
     } catch (e: any) {
-      setMsg({ type: 'err', text: e.message });
+      setPickMsg({ type: 'err', text: e.message });
     } finally {
-      setLoad(false);
+      setPickLoading(false);
     }
   };
 
@@ -278,8 +273,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
   // ── Actions TROPHÉES ───────────────────────────────────────────────────────
   const selectTrophyUser = async (u: UserProfile) => {
-    setTrophyUser(u); setTrophySearch(''); setTrophySearchResult([]); setTrophySearchMsg(null);
-    setTrophyTitle(''); setTrophyDesc('');
+    setTrophyUser(u); setTrophyTitle(''); setTrophyDesc('');
+    resetPicker();
     await loadUserTrophies(u);
   };
   const awardTrophy = async () => {
@@ -323,16 +318,91 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
   const fmtDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  // ── Composant message feedback ─────────────────────────────────────────────
-  const FeedbackMsg = ({ msg }: { msg: { type: 'ok' | 'err'; text: string } | null }) => {
-    if (!msg) return null;
-    return (
-      <View style={[S.feedbackRow, msg.type === 'ok' ? S.feedbackOk : S.feedbackErr]}>
-        <Ionicons name={msg.type === 'ok' ? 'checkmark-circle' : 'alert-circle'} size={15} color={msg.type === 'ok' ? C.green : C.danger} />
-        <Text style={[S.feedbackTxt, { color: msg.type === 'ok' ? C.green : C.danger }]}>{msg.text}</Text>
+  // ── Composant picker : recherche exacte nom + prénom ────────────────────────
+  const UserSearchExact = ({
+    onSelect, showTrophies, actionLoading: al,
+  }: {
+    onSelect: (u: UserProfile) => void;
+    showTrophies?: boolean;
+    actionLoading?: string | null;
+  }) => (
+    <View>
+      {/* Champs nom + prénom */}
+      <View style={S.pickFieldRow}>
+        <View style={[S.searchBar, { flex: 1 }]}>
+          <TextInput
+            style={{ flex: 1, fontSize: 14, color: C.text }}
+            placeholder="Prénom exact"
+            placeholderTextColor={C.muted}
+            value={pickPrenom}
+            onChangeText={t => { setPickPrenom(t); setPickMsg(null); setPickResults([]); }}
+            autoCapitalize="words"
+          />
+        </View>
+        <View style={[S.searchBar, { flex: 1 }]}>
+          <TextInput
+            style={{ flex: 1, fontSize: 14, color: C.text }}
+            placeholder="Nom exact"
+            placeholderTextColor={C.muted}
+            value={pickNom}
+            onChangeText={t => { setPickNom(t); setPickMsg(null); setPickResults([]); }}
+            autoCapitalize="words"
+          />
+        </View>
       </View>
-    );
-  };
+
+      {/* Bouton Rechercher */}
+      <TouchableOpacity
+        style={[S.btnSearch, { marginTop: 8, alignSelf: 'flex-end' }, pickLoading && S.btnDisabled]}
+        onPress={searchExact}
+        disabled={pickLoading}
+      >
+        {pickLoading
+          ? <ActivityIndicator size="small" color="#FFF" />
+          : <><Ionicons name="search" size={14} color="#FFF" /><Text style={S.btnSearchTxt}> Rechercher</Text></>}
+      </TouchableOpacity>
+
+      {/* Message retour */}
+      {pickMsg && (
+        <View style={[S.feedbackRow, { marginTop: 8 }]}>
+          <Ionicons
+            name={pickMsg.type === 'ok' ? 'checkmark-circle' : 'alert-circle'}
+            size={15}
+            color={pickMsg.type === 'ok' ? C.green : C.danger}
+          />
+          <Text style={[S.feedbackTxt, { color: pickMsg.type === 'ok' ? C.green : C.danger }]}>
+            {pickMsg.text}
+          </Text>
+        </View>
+      )}
+
+      {/* Résultats */}
+      {pickResults.length > 0 && (
+        <View style={[S.pickList, { marginTop: 10 }]}>
+          {pickResults.map(u => (
+            <TouchableOpacity
+              key={u.id} style={S.pickItem}
+              onPress={() => onSelect(u)}
+              disabled={al === `add-${u.id}`}
+            >
+              <View style={S.pickAvatar}>
+                <Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={S.pickName}>{u.prenom} {u.nom}</Text>
+                <Text style={S.pickMeta}>
+                  {u.role}{showTrophies ? ` · 🏆 ${u.trophies_count}` : ''}
+                </Text>
+              </View>
+              {al === `add-${u.id}`
+                ? <ActivityIndicator size="small" color={C.purple} />
+                : <Ionicons name="chevron-forward" size={16} color={C.muted} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDU
@@ -432,7 +502,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                 <Text style={S.secTitle}>{selGroup.name}</Text>
                 {selGroup.description ? <Text style={S.cardSub}>{selGroup.description}</Text> : null}
               </View>
-              <TouchableOpacity style={S.btnPrimary} onPress={() => { setMemberSearch(''); setMemberList([]); setMemberMsg(null); setShowAddMember(true); }}>
+              <TouchableOpacity style={S.btnPrimary} onPress={() => { resetPicker(); setShowAddMember(true); }}>
                 <Ionicons name="person-add-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Ajouter</Text>
               </TouchableOpacity>
             </View>
@@ -494,48 +564,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
             {!trophyUser && (
               <View style={{ marginTop: 12 }}>
-                {/* Champ + bouton sur la même ligne */}
-                <View style={S.searchRow}>
-                  <View style={[S.searchBar, { flex: 1 }]}>
-                    <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-                    <TextInput
-                      style={{ flex: 1, fontSize: 14, color: C.text }}
-                      placeholder="Nom ou prénom…"
-                      placeholderTextColor={C.muted}
-                      value={trophySearch}
-                      onChangeText={t => { setTrophySearch(t); setTrophySearchMsg(null); setTrophySearchResult([]); }}
-                      returnKeyType="search"
-                      onSubmitEditing={() => doSearchUsers(trophySearch, setTrophySearchResult, setTrophySearchLoad, setTrophySearchMsg)}
-                    />
-                    {trophySearchLoad && <ActivityIndicator size="small" color={C.purple} />}
-                  </View>
-                  {trophySearch.trim().length > 0 && (
-                    <TouchableOpacity
-                      style={[S.btnSearch, trophySearchLoad && S.btnDisabled]}
-                      onPress={() => doSearchUsers(trophySearch, setTrophySearchResult, setTrophySearchLoad, setTrophySearchMsg)}
-                      disabled={trophySearchLoad}
-                    >
-                      <Text style={S.btnSearchTxt}>Rechercher</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                <FeedbackMsg msg={trophySearchMsg} />
-
-                {trophySearchResult.length > 0 && (
-                  <View style={S.pickList}>
-                    {trophySearchResult.map(u => (
-                      <TouchableOpacity key={u.id} style={S.pickItem} onPress={() => selectTrophyUser(u)}>
-                        <View style={S.pickAvatar}><Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={S.pickName}>{u.prenom} {u.nom}</Text>
-                          <Text style={S.pickMeta}>{u.role} · 🏆 {u.trophies_count}</Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color={C.muted} />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
+                <UserSearchExact onSelect={selectTrophyUser} showTrophies />
               </View>
             )}
 
@@ -685,41 +714,10 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Ajouter un membre</Text>
-            <View style={S.searchRow}>
-              <View style={[S.searchBar, { flex: 1 }]}>
-                <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-                <TextInput
-                  style={{ flex: 1, fontSize: 14, color: C.text }}
-                  placeholder="Nom ou prénom…"
-                  placeholderTextColor={C.muted}
-                  value={memberSearch}
-                  onChangeText={t => { setMemberSearch(t); setMemberMsg(null); setMemberList([]); }}
-                  returnKeyType="search"
-                  onSubmitEditing={() => doSearchUsers(memberSearch, setMemberList, setMemberLoading, setMemberMsg)}
-                  autoFocus
-                />
-                {memberLoading && <ActivityIndicator size="small" color={C.purple} />}
-              </View>
-              {memberSearch.trim().length > 0 && (
-                <TouchableOpacity
-                  style={[S.btnSearch, memberLoading && S.btnDisabled]}
-                  onPress={() => doSearchUsers(memberSearch, setMemberList, setMemberLoading, setMemberMsg)}
-                  disabled={memberLoading}
-                >
-                  <Text style={S.btnSearchTxt}>Rechercher</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <FeedbackMsg msg={memberMsg} />
-            <ScrollView style={{ maxHeight: 260, marginTop: 8 }}>
-              {memberList.map(u => (
-                <TouchableOpacity key={u.id} style={S.pickItem} onPress={() => addMember(u)} disabled={actionLoading === `add-${u.id}`}>
-                  <View style={S.pickAvatar}><Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text></View>
-                  <View style={{ flex: 1 }}><Text style={S.pickName}>{u.prenom} {u.nom}</Text><Text style={S.pickMeta}>{u.role}</Text></View>
-                  {actionLoading === `add-${u.id}` && <ActivityIndicator size="small" color={C.purple} />}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <UserSearchExact
+              onSelect={u => addMember(u)}
+              actionLoading={actionLoading}
+            />
             <TouchableOpacity style={[S.btnSecondary, { marginTop: 12 }]} onPress={() => setShowAddMember(false)}>
               <Text style={S.btnSecondaryTxt}>Fermer</Text>
             </TouchableOpacity>
@@ -741,7 +739,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
               </TouchableOpacity>
             </View>
             {notifType === 'targeted' && (
-              <TouchableOpacity style={S.targetSel} onPress={() => { setTargetSearch(''); setTargetList([]); setTargetMsg(null); setShowTargetPicker(true); }}>
+              <TouchableOpacity style={S.targetSel} onPress={() => { resetPicker(); setShowTargetPicker(true); }}>
                 <Ionicons name="person-outline" size={16} color={notifTarget ? C.purple : C.muted} />
                 <Text style={[S.targetSelTxt, notifTarget ? { color: C.purple } : undefined]}>
                   {notifTarget ? `${notifTarget.prenom} ${notifTarget.nom}` : 'Sélectionner un utilisateur…'}
@@ -771,40 +769,9 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Sélectionner la cible</Text>
-            <View style={S.searchRow}>
-              <View style={[S.searchBar, { flex: 1 }]}>
-                <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-                <TextInput
-                  style={{ flex: 1, fontSize: 14, color: C.text }}
-                  placeholder="Nom ou prénom…"
-                  placeholderTextColor={C.muted}
-                  value={targetSearch}
-                  onChangeText={t => { setTargetSearch(t); setTargetMsg(null); setTargetList([]); }}
-                  returnKeyType="search"
-                  onSubmitEditing={() => doSearchUsers(targetSearch, setTargetList, setTargetLoading, setTargetMsg)}
-                  autoFocus
-                />
-                {targetLoading && <ActivityIndicator size="small" color={C.purple} />}
-              </View>
-              {targetSearch.trim().length > 0 && (
-                <TouchableOpacity
-                  style={[S.btnSearch, targetLoading && S.btnDisabled]}
-                  onPress={() => doSearchUsers(targetSearch, setTargetList, setTargetLoading, setTargetMsg)}
-                  disabled={targetLoading}
-                >
-                  <Text style={S.btnSearchTxt}>Rechercher</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <FeedbackMsg msg={targetMsg} />
-            <ScrollView style={{ maxHeight: 250, marginTop: 8 }}>
-              {targetList.map(u => (
-                <TouchableOpacity key={u.id} style={S.pickItem} onPress={() => { setNotifTarget(u); setShowTargetPicker(false); }}>
-                  <View style={S.pickAvatar}><Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text></View>
-                  <View style={{ flex: 1 }}><Text style={S.pickName}>{u.prenom} {u.nom}</Text><Text style={S.pickMeta}>{u.role}</Text></View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <UserSearchExact
+              onSelect={u => { setNotifTarget(u); setShowTargetPicker(false); }}
+            />
             <TouchableOpacity style={[S.btnSecondary, { marginTop: 12 }]} onPress={() => setShowTargetPicker(false)}>
               <Text style={S.btnSecondaryTxt}>Fermer</Text>
             </TouchableOpacity>
@@ -897,7 +864,8 @@ const S = StyleSheet.create({
 
   searchRow:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
   searchBar:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3EEFF', borderRadius: 10, paddingHorizontal: 12, height: 44, borderWidth: 1, borderColor: C.border },
-  btnSearch:    { backgroundColor: C.purple, borderRadius: 10, paddingHorizontal: 14, height: 44, justifyContent: 'center', alignItems: 'center' },
+  pickFieldRow: { flexDirection: 'row', gap: 8 },
+  btnSearch:    { flexDirection: 'row', alignItems: 'center', backgroundColor: C.purple, borderRadius: 10, paddingHorizontal: 14, height: 44, justifyContent: 'center' },
   btnSearchTxt: { color: '#FFF', fontSize: 13, fontWeight: '700' },
 
   pickList:     { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginTop: 8, overflow: 'hidden' },
