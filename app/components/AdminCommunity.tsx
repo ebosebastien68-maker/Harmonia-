@@ -1,13 +1,11 @@
 /**
- * AdminCommunity.tsx — v5
+ * AdminCommunity.tsx — v6
  *
- * CORRECTIFS v5 :
- *   • [BUG CRITIQUE] UserSearchExact extrait HORS de AdminCommunity
- *     → Avant : défini à l'intérieur → nouveau type à chaque render → démontage/remontage
- *       → TextInput perdait le focus à chaque frappe → recherche impossible
- *   • UserSearchExact reçoit tout son état en props (pickNom, pickPrenom, etc.)
- *   • setPickMsg + setPickResults ajoutés aux props (utilisés dans onChangeText)
- *   • animationType conditionné Platform.OS (web = 'none')
+ * CORRECTIFS v6 :
+ *   • searchExact → validation champ par champ avec message précis
+ *   • api() → remonte error + details du backend dans tous les Alert
+ *   • pickMsg → affiche le champ "debug" retourné par le backend si présent
+ *   • Erreur réseau pure (serveur injoignable) gérée séparément
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -47,28 +45,26 @@ interface Trophy {
   reason: string | null; awarded_at: string;
   awarder: { nom: string; prenom: string } | null;
 }
-interface GameSession  { id: string; title: string; description?: string | null; is_paid: boolean; price_cfa: number; is_open: boolean; created_at: string }
+interface GameSession      { id: string; title: string; description?: string | null; is_paid: boolean; price_cfa: number; is_open: boolean; created_at: string }
 interface GameWithSessions { id: string; key_name: string; title: string; sessions: GameSession[] }
-interface AppSettings  { registrations_open: boolean; registrations_message: string; updated_at: string }
+interface AppSettings      { registrations_open: boolean; registrations_message: string; updated_at: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UserSearchExact — COMPOSANT EXTRAIT (hors de AdminCommunity)
-// CORRECTIF : était défini à l'intérieur → chaque setState du parent recréait
-// un nouveau type de composant → React démontait/remontait → focus perdu à chaque frappe
 // ─────────────────────────────────────────────────────────────────────────────
 interface UserSearchExactProps {
-  pickNom:       string;
-  setPickNom:    (v: string) => void;
-  pickPrenom:    string;
-  setPickPrenom: (v: string) => void;
-  pickResults:   UserProfile[];
-  setPickResults:(v: UserProfile[]) => void;
-  pickLoading:   boolean;
-  pickMsg:       { type: 'ok' | 'err'; text: string } | null;
-  setPickMsg:    (v: { type: 'ok' | 'err'; text: string } | null) => void;
-  onSearch:      () => void;
-  onSelect:      (u: UserProfile) => void;
-  showTrophies?: boolean;
+  pickNom:        string;
+  setPickNom:     (v: string) => void;
+  pickPrenom:     string;
+  setPickPrenom:  (v: string) => void;
+  pickResults:    UserProfile[];
+  setPickResults: (v: UserProfile[]) => void;
+  pickLoading:    boolean;
+  pickMsg:        { type: 'ok' | 'err'; text: string } | null;
+  setPickMsg:     (v: { type: 'ok' | 'err'; text: string } | null) => void;
+  onSearch:       () => void;
+  onSelect:       (u: UserProfile) => void;
+  showTrophies?:  boolean;
   actionLoading?: string | null;
 }
 
@@ -83,7 +79,7 @@ function UserSearchExact({
         <View style={[S.searchBar, { flex: 1 }]}>
           <TextInput
             style={{ flex: 1, fontSize: 14, color: C.text }}
-            placeholder="Prénom exact"
+            placeholder="Prénom"
             placeholderTextColor={C.muted}
             value={pickPrenom}
             onChangeText={t => { setPickPrenom(t); setPickMsg(null); setPickResults([]); }}
@@ -93,7 +89,7 @@ function UserSearchExact({
         <View style={[S.searchBar, { flex: 1 }]}>
           <TextInput
             style={{ flex: 1, fontSize: 14, color: C.text }}
-            placeholder="Nom exact"
+            placeholder="Nom"
             placeholderTextColor={C.muted}
             value={pickNom}
             onChangeText={t => { setPickNom(t); setPickMsg(null); setPickResults([]); }}
@@ -183,7 +179,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [grpDesc,       setGrpDesc]       = useState('');
   const [showAddMember, setShowAddMember] = useState(false);
 
-  // ── Picker partagé — état remonté ici, passé en props à UserSearchExact ──
+  // ── Picker partagé ────────────────────────────────────────────────────────
   const [pickNom,     setPickNom]     = useState('');
   const [pickPrenom,  setPickPrenom]  = useState('');
   const [pickResults, setPickResults] = useState<UserProfile[]>([]);
@@ -224,13 +220,25 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
   // ── API ───────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
-    const res  = await fetch(`${BACKEND_URL}/admin-community`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: adminEmail, password: adminPassword, ...body }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${BACKEND_URL}/admin-community`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: adminEmail, password: adminPassword, ...body }),
+      });
+    } catch (networkErr: any) {
+      throw new Error(`Impossible de joindre le serveur. Vérifiez votre connexion. (${networkErr.message})`);
+    }
+
     const data = await res.json();
-    if (!res.ok) throw new Error(data?.details ? `${data.error} — ${data.details}` : (data?.error || `Erreur ${res.status}`));
+
+    if (!res.ok) {
+      const msg = data?.details
+        ? `${data.error} — ${data.details}`
+        : (data?.error || `Erreur HTTP ${res.status}`);
+      throw new Error(msg);
+    }
     return data;
   }, [adminEmail, adminPassword]);
 
@@ -282,7 +290,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const loadUserTrophies = useCallback(async (u: UserProfile) => {
     setTrophiesLoading(true);
     try { const d = await api({ function: 'listTrophies', user_id: u.id }); setUserTrophies(d.trophies || []); }
-    catch {}
+    catch (e: any) { console.warn('[loadUserTrophies]', e.message); }
     finally { setTrophiesLoading(false); }
   }, [api]);
 
@@ -292,27 +300,50 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   };
 
   const searchExact = useCallback(async () => {
-    if (!pickNom.trim() || !pickPrenom.trim()) {
-      setPickMsg({ type: 'err', text: 'Saisissez le nom ET le prénom exacts.' });
+    const nomV    = pickNom.trim();
+    const prenomV = pickPrenom.trim();
+
+    if (!prenomV && !nomV) {
+      setPickMsg({ type: 'err', text: 'Remplissez le prénom et le nom avant de rechercher.' });
       return;
     }
-    setPickLoading(true); setPickMsg(null); setPickResults([]);
+    if (!prenomV) {
+      setPickMsg({ type: 'err', text: 'Le prénom est manquant.' });
+      return;
+    }
+    if (!nomV) {
+      setPickMsg({ type: 'err', text: 'Le nom est manquant.' });
+      return;
+    }
+
+    setPickLoading(true);
+    setPickMsg(null);
+    setPickResults([]);
+
     try {
-      const d = await api({ function: 'searchUserExact', nom: pickNom.trim(), prenom: pickPrenom.trim() });
+      const d = await api({ function: 'searchUserExact', nom: nomV, prenom: prenomV });
       const users: UserProfile[] = d.users ?? [];
       setPickResults(users);
-      if (users.length === 0)
-        setPickMsg({ type: 'err', text: `Aucun profil "${pickPrenom.trim()} ${pickNom.trim()}" trouvé.` });
-      else
-        setPickMsg({ type: 'ok', text: `${users.length} profil(s) trouvé(s).` });
+
+      if (users.length === 0) {
+        // Affiche le message debug du backend s'il est présent
+        setPickMsg({
+          type: 'err',
+          text: d.debug ?? `Aucun profil trouvé pour "${prenomV} ${nomV}". Vérifiez l'orthographe.`,
+        });
+      } else {
+        setPickMsg({
+          type: 'ok',
+          text: `${users.length} profil${users.length > 1 ? 's' : ''} trouvé${users.length > 1 ? 's' : ''}. Sélectionnez-en un.`,
+        });
+      }
     } catch (e: any) {
-      setPickMsg({ type: 'err', text: e.message });
+      setPickMsg({ type: 'err', text: e.message ?? 'Erreur inconnue lors de la recherche.' });
     } finally {
       setPickLoading(false);
     }
   }, [api, pickNom, pickPrenom]);
 
-  // Props partagés pour UserSearchExact — évite de les répéter à chaque usage
   const pickerProps = {
     pickNom, setPickNom,
     pickPrenom, setPickPrenom,
@@ -368,7 +399,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     setActionLoading(`add-${u.id}`);
     try {
       const d = await api({ function: 'addGroupMember', group_id: selGroup!.id, user_id: u.id });
-      if (d.already_member) Alert.alert('Info', `${u.prenom} ${u.nom} est déjà membre`);
+      if (d.already_member) Alert.alert('Info', `${u.prenom} ${u.nom} est déjà membre de ce groupe.`);
       await loadMembers(selGroup!.id);
       await loadGroups();
     } catch (e: any) { Alert.alert('Erreur', e.message); }
@@ -377,15 +408,17 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
   // ── Actions NOTIFICATIONS ─────────────────────────────────────────────────
   const sendNotification = async () => {
-    if (!notifTitle.trim() || !notifContent.trim()) return;
-    if (notifType === 'targeted' && !notifTarget) return Alert.alert('Requis', 'Sélectionnez un utilisateur cible');
+    if (!notifTitle.trim())   return Alert.alert('Requis', 'Le titre est obligatoire');
+    if (!notifContent.trim()) return Alert.alert('Requis', 'Le contenu est obligatoire');
+    if (notifType === 'targeted' && !notifTarget)
+      return Alert.alert('Requis', 'Sélectionnez un utilisateur cible pour une notification ciblée');
     setActionLoading('notif-send');
     try {
       await api({
-        function: 'createNotification',
-        type: notifType,
-        title: notifTitle,
-        content: notifContent,
+        function:       'createNotification',
+        type:           notifType,
+        title:          notifTitle,
+        content:        notifContent,
         target_user_id: notifType === 'targeted' ? notifTarget!.id : undefined,
       });
       setShowNotifForm(false);
@@ -395,7 +428,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setActionLoading(null); }
   };
   const confirmDeleteNotif = (n: Notification) => {
-    askConfirm('Supprimer la notification', 'Supprimer cette notification ?', async () => {
+    askConfirm('Supprimer la notification', 'Supprimer définitivement cette notification ?', async () => {
       closeConfirm();
       setActionLoading(`del-notif-${n.id}`);
       try { await api({ function: 'deleteNotification', notification_id: n.id }); await loadNotifications(); }
@@ -411,20 +444,21 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     await loadUserTrophies(u);
   };
   const awardTrophy = async () => {
-    if (!trophyUser || !trophyTitle.trim()) { Alert.alert('Requis', 'Le titre du trophée est obligatoire'); return; }
+    if (!trophyUser)          { Alert.alert('Requis', 'Sélectionnez d\'abord un utilisateur'); return; }
+    if (!trophyTitle.trim())  { Alert.alert('Requis', 'Le titre du trophée est obligatoire'); return; }
     setActionLoading('trophy-award');
     try {
       const d = await api({
-        function: 'awardTrophy',
+        function:    'awardTrophy',
         user_id:     trophyUser.id,
         title:       trophyTitle,
         description: trophyDesc || undefined,
       });
-      Alert.alert('🏆 Trophée attribué !', `${d.awarded_to} — ${d.new_count} trophée(s)`);
+      Alert.alert('🏆 Trophée attribué !', `${d.awarded_to} — ${d.new_count} trophée(s) au total`);
       setTrophyTitle(''); setTrophyDesc('');
       setTrophyUser(prev => prev ? { ...prev, trophies_count: d.new_count } : prev);
       await loadUserTrophies(trophyUser);
-    } catch (e: any) { Alert.alert('Erreur', e.message); }
+    } catch (e: any) { Alert.alert('Erreur attribution trophée', e.message); }
     finally { setActionLoading(null); }
   };
 
@@ -657,7 +691,6 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
             {!trophyUser && (
               <View style={{ marginTop: 12 }}>
-                {/* UserSearchExact reçoit maintenant tout son état en props */}
                 <UserSearchExact
                   {...pickerProps}
                   onSelect={selectTrophyUser}
@@ -715,7 +748,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                   {trophiesLoading
                     ? <ActivityIndicator color={C.purple} style={{ marginTop: 10 }} />
                     : userTrophies.length === 0
-                      ? <Text style={[S.emptyTxt, { marginTop: 10 }]}>Aucun trophée attribué</Text>
+                      ? <Text style={[S.emptyTxt, { marginTop: 10 }]}>Aucun trophée attribué pour l'instant</Text>
                       : userTrophies.map(t => (
                         <View key={t.id} style={S.trophyRow}>
                           <Text style={S.trophyEmoji}>🏆</Text>
@@ -1028,12 +1061,12 @@ const S = StyleSheet.create({
   btnSearch:    { flexDirection: 'row', alignItems: 'center', backgroundColor: C.purple, borderRadius: 10, paddingHorizontal: 14, height: 44, justifyContent: 'center' },
   btnSearchTxt: { color: '#FFF', fontSize: 13, fontWeight: '700' },
 
-  pickList:     { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginTop: 8, overflow: 'hidden' },
-  pickItem:     { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  pickAvatar:   { width: 36, height: 36, borderRadius: 18, backgroundColor: C.purple, justifyContent: 'center', alignItems: 'center' },
-  pickAvatarTxt:{ color: '#FFF', fontWeight: '700', fontSize: 13 },
-  pickName:     { fontSize: 14, fontWeight: '600', color: C.text },
-  pickMeta:     { fontSize: 11, color: C.muted, marginTop: 2 },
+  pickList:      { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginTop: 8, overflow: 'hidden' },
+  pickItem:      { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  pickAvatar:    { width: 36, height: 36, borderRadius: 18, backgroundColor: C.purple, justifyContent: 'center', alignItems: 'center' },
+  pickAvatarTxt: { color: '#FFF', fontWeight: '700', fontSize: 13 },
+  pickName:      { fontSize: 14, fontWeight: '600', color: C.text },
+  pickMeta:      { fontSize: 11, color: C.muted, marginTop: 2 },
 
   fieldLabel: { fontSize: 11, fontWeight: '700', color: C.soft, marginBottom: 5, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
   input:      { backgroundColor: '#F9F6FF', borderRadius: 10, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: C.text },
