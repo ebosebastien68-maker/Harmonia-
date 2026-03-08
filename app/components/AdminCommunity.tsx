@@ -1,9 +1,13 @@
 /**
- * AdminCommunity.tsx — v4
- * • Bouton "Rechercher" explicite (trophées, ajout membre, cible notif)
- * • Message succès / erreur après recherche
- * • animationType conditionné Platform.OS (web = 'none')
- * • Pas de useNativeDriver
+ * AdminCommunity.tsx — v5
+ *
+ * CORRECTIFS v5 :
+ *   • [BUG CRITIQUE] UserSearchExact extrait HORS de AdminCommunity
+ *     → Avant : défini à l'intérieur → nouveau type à chaque render → démontage/remontage
+ *       → TextInput perdait le focus à chaque frappe → recherche impossible
+ *   • UserSearchExact reçoit tout son état en props (pickNom, pickPrenom, etc.)
+ *   • setPickMsg + setPickResults ajoutés aux props (utilisés dans onChangeText)
+ *   • animationType conditionné Platform.OS (web = 'none')
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -16,7 +20,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
-// Platform helpers
 const SLIDE = Platform.OS === 'web' ? 'none' : 'slide';
 const FADE  = Platform.OS === 'web' ? 'none' : 'fade';
 
@@ -44,11 +47,113 @@ interface Trophy {
   reason: string | null; awarded_at: string;
   awarder: { nom: string; prenom: string } | null;
 }
-interface GameSession { id: string; title: string; description?: string | null; is_paid: boolean; price_cfa: number; is_open: boolean; created_at: string }
+interface GameSession  { id: string; title: string; description?: string | null; is_paid: boolean; price_cfa: number; is_open: boolean; created_at: string }
 interface GameWithSessions { id: string; key_name: string; title: string; sessions: GameSession[] }
-interface AppSettings   { registrations_open: boolean; registrations_message: string; updated_at: string }
+interface AppSettings  { registrations_open: boolean; registrations_message: string; updated_at: string }
 
-interface Props { adminEmail: string; adminPassword: string; onBack: () => void }
+// ─────────────────────────────────────────────────────────────────────────────
+// UserSearchExact — COMPOSANT EXTRAIT (hors de AdminCommunity)
+// CORRECTIF : était défini à l'intérieur → chaque setState du parent recréait
+// un nouveau type de composant → React démontait/remontait → focus perdu à chaque frappe
+// ─────────────────────────────────────────────────────────────────────────────
+interface UserSearchExactProps {
+  pickNom:       string;
+  setPickNom:    (v: string) => void;
+  pickPrenom:    string;
+  setPickPrenom: (v: string) => void;
+  pickResults:   UserProfile[];
+  setPickResults:(v: UserProfile[]) => void;
+  pickLoading:   boolean;
+  pickMsg:       { type: 'ok' | 'err'; text: string } | null;
+  setPickMsg:    (v: { type: 'ok' | 'err'; text: string } | null) => void;
+  onSearch:      () => void;
+  onSelect:      (u: UserProfile) => void;
+  showTrophies?: boolean;
+  actionLoading?: string | null;
+}
+
+function UserSearchExact({
+  pickNom, setPickNom, pickPrenom, setPickPrenom,
+  pickResults, setPickResults, pickLoading, pickMsg, setPickMsg,
+  onSearch, onSelect, showTrophies, actionLoading: al,
+}: UserSearchExactProps) {
+  return (
+    <View>
+      <View style={S.pickFieldRow}>
+        <View style={[S.searchBar, { flex: 1 }]}>
+          <TextInput
+            style={{ flex: 1, fontSize: 14, color: C.text }}
+            placeholder="Prénom exact"
+            placeholderTextColor={C.muted}
+            value={pickPrenom}
+            onChangeText={t => { setPickPrenom(t); setPickMsg(null); setPickResults([]); }}
+            autoCapitalize="words"
+          />
+        </View>
+        <View style={[S.searchBar, { flex: 1 }]}>
+          <TextInput
+            style={{ flex: 1, fontSize: 14, color: C.text }}
+            placeholder="Nom exact"
+            placeholderTextColor={C.muted}
+            value={pickNom}
+            onChangeText={t => { setPickNom(t); setPickMsg(null); setPickResults([]); }}
+            autoCapitalize="words"
+          />
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={[S.btnSearch, { marginTop: 8, alignSelf: 'flex-end' }, pickLoading && S.btnDisabled]}
+        onPress={onSearch}
+        disabled={pickLoading}
+      >
+        {pickLoading
+          ? <ActivityIndicator size="small" color="#FFF" />
+          : <><Ionicons name="search" size={14} color="#FFF" /><Text style={S.btnSearchTxt}> Rechercher</Text></>}
+      </TouchableOpacity>
+
+      {pickMsg && (
+        <View style={[S.feedbackRow, { marginTop: 8 }]}>
+          <Ionicons
+            name={pickMsg.type === 'ok' ? 'checkmark-circle' : 'alert-circle'}
+            size={15}
+            color={pickMsg.type === 'ok' ? C.green : C.danger}
+          />
+          <Text style={[S.feedbackTxt, { color: pickMsg.type === 'ok' ? C.green : C.danger }]}>
+            {pickMsg.text}
+          </Text>
+        </View>
+      )}
+
+      {pickResults.length > 0 && (
+        <View style={[S.pickList, { marginTop: 10 }]}>
+          {pickResults.map(u => (
+            <TouchableOpacity
+              key={u.id} style={S.pickItem}
+              onPress={() => onSelect(u)}
+              disabled={al === `add-${u.id}`}
+            >
+              <View style={S.pickAvatar}>
+                <Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={S.pickName}>{u.prenom} {u.nom}</Text>
+                <Text style={S.pickMeta}>
+                  {u.role}{showTrophies ? ` · 🏆 ${u.trophies_count}` : ''}
+                </Text>
+              </View>
+              {al === `add-${u.id}`
+                ? <ActivityIndicator size="small" color={C.purple} />
+                : <Ionicons name="chevron-forward" size={16} color={C.muted} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const GAME_ICONS: Record<string, { icon: string; colors: [string, string] }> = {
   arts:        { icon: 'color-palette',   colors: ['#EC4899', '#BE185D'] },
@@ -59,6 +164,8 @@ const GAME_ICONS: Record<string, { icon: string; colors: [string, string] }> = {
   dames:       { icon: 'apps',            colors: ['#3B82F6', '#2563EB'] },
   vraioufaux:  { icon: 'help-circle',     colors: ['#F59E0B', '#D97706'] },
 };
+
+interface Props { adminEmail: string; adminPassword: string; onBack: () => void }
 
 export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Props) {
   const [section,       setSection]       = useState<Section>('groups');
@@ -76,14 +183,14 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [grpDesc,       setGrpDesc]       = useState('');
   const [showAddMember, setShowAddMember] = useState(false);
 
-  // ── Picker partagé : champs nom/prenom + résultats (un seul picker actif) ──
-  const [pickNom,      setPickNom]      = useState('');
-  const [pickPrenom,   setPickPrenom]   = useState('');
-  const [pickResults,  setPickResults]  = useState<UserProfile[]>([]);
-  const [pickLoading,  setPickLoading]  = useState(false);
-  const [pickMsg,      setPickMsg]      = useState<{type:'ok'|'err'; text:string}|null>(null);
+  // ── Picker partagé — état remonté ici, passé en props à UserSearchExact ──
+  const [pickNom,     setPickNom]     = useState('');
+  const [pickPrenom,  setPickPrenom]  = useState('');
+  const [pickResults, setPickResults] = useState<UserProfile[]>([]);
+  const [pickLoading, setPickLoading] = useState(false);
+  const [pickMsg,     setPickMsg]     = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  // ── Notifications ──────────────────────────────────────────────────────────
+  // ── Notifications ─────────────────────────────────────────────────────────
   const [notifications,    setNotifications]    = useState<Notification[]>([]);
   const [showNotifForm,    setShowNotifForm]    = useState(false);
   const [notifType,        setNotifType]        = useState<'global' | 'targeted'>('global');
@@ -92,20 +199,20 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [notifTarget,      setNotifTarget]      = useState<UserProfile | null>(null);
   const [showTargetPicker, setShowTargetPicker] = useState(false);
 
-  // ── Trophées ───────────────────────────────────────────────────────────────
+  // ── Trophées ──────────────────────────────────────────────────────────────
   const [trophyUser,      setTrophyUser]      = useState<UserProfile | null>(null);
   const [trophyTitle,     setTrophyTitle]     = useState('');
   const [trophyDesc,      setTrophyDesc]      = useState('');
   const [userTrophies,    setUserTrophies]    = useState<Trophy[]>([]);
   const [trophiesLoading, setTrophiesLoading] = useState(false);
 
-  // ── Réglages ───────────────────────────────────────────────────────────────
+  // ── Réglages ──────────────────────────────────────────────────────────────
   const [settings,   setSettings]   = useState<AppSettings | null>(null);
   const [regMessage, setRegMessage] = useState('');
   const [games,      setGames]      = useState<GameWithSessions[]>([]);
   const [toggling,   setToggling]   = useState<string | null>(null);
 
-  // ── Modale de confirmation ─────────────────────────────────────────────────
+  // ── Modale confirmation ───────────────────────────────────────────────────
   const [confirm, setConfirm] = useState<{
     visible: boolean; title: string; message: string;
     onConfirm: () => void; confirmLabel?: string; danger?: boolean;
@@ -115,7 +222,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     setConfirm({ visible: true, title, message, onConfirm, danger, confirmLabel: 'Confirmer' });
   const closeConfirm = () => setConfirm(c => ({ ...c, visible: false }));
 
-  // ── API ────────────────────────────────────────────────────────────────────
+  // ── API ───────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
     const res  = await fetch(`${BACKEND_URL}/admin-community`, {
       method: 'POST',
@@ -127,7 +234,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     return data;
   }, [adminEmail, adminPassword]);
 
-  // ── Chargements ────────────────────────────────────────────────────────────
+  // ── Chargements ───────────────────────────────────────────────────────────
   useEffect(() => {
     setError('');
     if (section === 'groups')        loadGroups();
@@ -179,12 +286,12 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setTrophiesLoading(false); }
   }, [api]);
 
-  // ── Recherche exacte nom + prenom dans profiles ──────────────────────────
+  // ── Recherche exacte ─────────────────────────────────────────────────────
   const resetPicker = () => {
     setPickNom(''); setPickPrenom(''); setPickResults([]); setPickMsg(null);
   };
 
-  const searchExact = async () => {
+  const searchExact = useCallback(async () => {
     if (!pickNom.trim() || !pickPrenom.trim()) {
       setPickMsg({ type: 'err', text: 'Saisissez le nom ET le prénom exacts.' });
       return;
@@ -203,9 +310,19 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     } finally {
       setPickLoading(false);
     }
+  }, [api, pickNom, pickPrenom]);
+
+  // Props partagés pour UserSearchExact — évite de les répéter à chaque usage
+  const pickerProps = {
+    pickNom, setPickNom,
+    pickPrenom, setPickPrenom,
+    pickResults, setPickResults,
+    pickLoading,
+    pickMsg, setPickMsg,
+    onSearch: searchExact,
   };
 
-  // ── Actions GROUPES ────────────────────────────────────────────────────────
+  // ── Actions GROUPES ───────────────────────────────────────────────────────
   const openGroupForm = (g?: Group) => {
     setEditingGrp(g ?? null); setGrpName(g?.name ?? ''); setGrpDesc(g?.description ?? '');
     setShowGrpForm(true);
@@ -224,7 +341,11 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     askConfirm('Supprimer le groupe', `Supprimer "${g.name}" et tous ses messages ?`, async () => {
       closeConfirm();
       setActionLoading(`del-grp-${g.id}`);
-      try { await api({ function: 'deleteGroup', group_id: g.id }); await loadGroups(); if (selGroup?.id === g.id) setSelGroup(null); }
+      try {
+        await api({ function: 'deleteGroup', group_id: g.id });
+        await loadGroups();
+        if (selGroup?.id === g.id) setSelGroup(null);
+      }
       catch (e: any) { Alert.alert('Erreur', e.message); }
       finally { setActionLoading(null); }
     });
@@ -234,7 +355,11 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     askConfirm('Retirer le membre', `Retirer ${m.prenom} ${m.nom} du groupe ?`, async () => {
       closeConfirm();
       setActionLoading(`rm-${m.user_id}`);
-      try { await api({ function: 'removeGroupMember', group_id: selGroup!.id, user_id: m.user_id }); await loadMembers(selGroup!.id); await loadGroups(); }
+      try {
+        await api({ function: 'removeGroupMember', group_id: selGroup!.id, user_id: m.user_id });
+        await loadMembers(selGroup!.id);
+        await loadGroups();
+      }
       catch (e: any) { Alert.alert('Erreur', e.message); }
       finally { setActionLoading(null); }
     });
@@ -244,19 +369,27 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     try {
       const d = await api({ function: 'addGroupMember', group_id: selGroup!.id, user_id: u.id });
       if (d.already_member) Alert.alert('Info', `${u.prenom} ${u.nom} est déjà membre`);
-      await loadMembers(selGroup!.id); await loadGroups();
+      await loadMembers(selGroup!.id);
+      await loadGroups();
     } catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setActionLoading(null); setShowAddMember(false); }
   };
 
-  // ── Actions NOTIFICATIONS ──────────────────────────────────────────────────
+  // ── Actions NOTIFICATIONS ─────────────────────────────────────────────────
   const sendNotification = async () => {
     if (!notifTitle.trim() || !notifContent.trim()) return;
     if (notifType === 'targeted' && !notifTarget) return Alert.alert('Requis', 'Sélectionnez un utilisateur cible');
     setActionLoading('notif-send');
     try {
-      await api({ function: 'createNotification', type: notifType, title: notifTitle, content: notifContent, target_user_id: notifType === 'targeted' ? notifTarget!.id : undefined });
-      setShowNotifForm(false); setNotifTitle(''); setNotifContent(''); setNotifTarget(null); setNotifType('global');
+      await api({
+        function: 'createNotification',
+        type: notifType,
+        title: notifTitle,
+        content: notifContent,
+        target_user_id: notifType === 'targeted' ? notifTarget!.id : undefined,
+      });
+      setShowNotifForm(false);
+      setNotifTitle(''); setNotifContent(''); setNotifTarget(null); setNotifType('global');
       await loadNotifications();
     } catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setActionLoading(null); }
@@ -271,7 +404,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     });
   };
 
-  // ── Actions TROPHÉES ───────────────────────────────────────────────────────
+  // ── Actions TROPHÉES ──────────────────────────────────────────────────────
   const selectTrophyUser = async (u: UserProfile) => {
     setTrophyUser(u); setTrophyTitle(''); setTrophyDesc('');
     resetPicker();
@@ -281,7 +414,12 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     if (!trophyUser || !trophyTitle.trim()) { Alert.alert('Requis', 'Le titre du trophée est obligatoire'); return; }
     setActionLoading('trophy-award');
     try {
-      const d = await api({ function: 'awardTrophy', user_id: trophyUser.id, title: trophyTitle, description: trophyDesc || undefined });
+      const d = await api({
+        function: 'awardTrophy',
+        user_id:     trophyUser.id,
+        title:       trophyTitle,
+        description: trophyDesc || undefined,
+      });
       Alert.alert('🏆 Trophée attribué !', `${d.awarded_to} — ${d.new_count} trophée(s)`);
       setTrophyTitle(''); setTrophyDesc('');
       setTrophyUser(prev => prev ? { ...prev, trophies_count: d.new_count } : prev);
@@ -290,20 +428,28 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setActionLoading(null); }
   };
 
-  // ── Actions RÉGLAGES ───────────────────────────────────────────────────────
+  // ── Actions RÉGLAGES ──────────────────────────────────────────────────────
   const toggleRegistrations = async (open: boolean) => {
     const title   = open ? 'Ouvrir les inscriptions ?' : 'Fermer les inscriptions ?';
-    const message = open ? 'Les nouveaux utilisateurs pourront créer un compte.' : 'Toute tentative de création de compte sera refusée.';
+    const message = open
+      ? 'Les nouveaux utilisateurs pourront créer un compte.'
+      : 'Toute tentative de création de compte sera refusée.';
     askConfirm(title, message, async () => {
       closeConfirm(); setActionLoading('reg-toggle');
-      try { await api({ function: 'setRegistrationsOpen', open, message: regMessage || undefined }); await loadSettingsAndSessions(); }
+      try {
+        await api({ function: 'setRegistrationsOpen', open, message: regMessage || undefined });
+        await loadSettingsAndSessions();
+      }
       catch (e: any) { Alert.alert('Erreur', e.message); }
       finally { setActionLoading(null); }
     });
   };
   const saveRegMessage = async () => {
     if (!settings) return; setActionLoading('reg-msg');
-    try { await api({ function: 'setRegistrationsOpen', open: settings.registrations_open, message: regMessage }); await loadSettingsAndSessions(); }
+    try {
+      await api({ function: 'setRegistrationsOpen', open: settings.registrations_open, message: regMessage });
+      await loadSettingsAndSessions();
+    }
     catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setActionLoading(null); }
   };
@@ -311,98 +457,14 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     const newVal = !session.is_open; setToggling(session.id);
     try {
       await api({ function: 'toggleSessionOpen', session_id: session.id, is_open: newVal });
-      setGames(prev => prev.map(g => g.id !== game_id ? g : { ...g, sessions: g.sessions.map(s => s.id === session.id ? { ...s, is_open: newVal } : s) }));
+      setGames(prev => prev.map(g =>
+        g.id !== game_id ? g : { ...g, sessions: g.sessions.map(s => s.id === session.id ? { ...s, is_open: newVal } : s) }
+      ));
     } catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setToggling(null); }
   };
 
   const fmtDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
-
-  // ── Composant picker : recherche exacte nom + prénom ────────────────────────
-  const UserSearchExact = ({
-    onSelect, showTrophies, actionLoading: al,
-  }: {
-    onSelect: (u: UserProfile) => void;
-    showTrophies?: boolean;
-    actionLoading?: string | null;
-  }) => (
-    <View>
-      {/* Champs nom + prénom */}
-      <View style={S.pickFieldRow}>
-        <View style={[S.searchBar, { flex: 1 }]}>
-          <TextInput
-            style={{ flex: 1, fontSize: 14, color: C.text }}
-            placeholder="Prénom exact"
-            placeholderTextColor={C.muted}
-            value={pickPrenom}
-            onChangeText={t => { setPickPrenom(t); setPickMsg(null); setPickResults([]); }}
-            autoCapitalize="words"
-          />
-        </View>
-        <View style={[S.searchBar, { flex: 1 }]}>
-          <TextInput
-            style={{ flex: 1, fontSize: 14, color: C.text }}
-            placeholder="Nom exact"
-            placeholderTextColor={C.muted}
-            value={pickNom}
-            onChangeText={t => { setPickNom(t); setPickMsg(null); setPickResults([]); }}
-            autoCapitalize="words"
-          />
-        </View>
-      </View>
-
-      {/* Bouton Rechercher */}
-      <TouchableOpacity
-        style={[S.btnSearch, { marginTop: 8, alignSelf: 'flex-end' }, pickLoading && S.btnDisabled]}
-        onPress={searchExact}
-        disabled={pickLoading}
-      >
-        {pickLoading
-          ? <ActivityIndicator size="small" color="#FFF" />
-          : <><Ionicons name="search" size={14} color="#FFF" /><Text style={S.btnSearchTxt}> Rechercher</Text></>}
-      </TouchableOpacity>
-
-      {/* Message retour */}
-      {pickMsg && (
-        <View style={[S.feedbackRow, { marginTop: 8 }]}>
-          <Ionicons
-            name={pickMsg.type === 'ok' ? 'checkmark-circle' : 'alert-circle'}
-            size={15}
-            color={pickMsg.type === 'ok' ? C.green : C.danger}
-          />
-          <Text style={[S.feedbackTxt, { color: pickMsg.type === 'ok' ? C.green : C.danger }]}>
-            {pickMsg.text}
-          </Text>
-        </View>
-      )}
-
-      {/* Résultats */}
-      {pickResults.length > 0 && (
-        <View style={[S.pickList, { marginTop: 10 }]}>
-          {pickResults.map(u => (
-            <TouchableOpacity
-              key={u.id} style={S.pickItem}
-              onPress={() => onSelect(u)}
-              disabled={al === `add-${u.id}`}
-            >
-              <View style={S.pickAvatar}>
-                <Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={S.pickName}>{u.prenom} {u.nom}</Text>
-                <Text style={S.pickMeta}>
-                  {u.role}{showTrophies ? ` · 🏆 ${u.trophies_count}` : ''}
-                </Text>
-              </View>
-              {al === `add-${u.id}`
-                ? <ActivityIndicator size="small" color={C.purple} />
-                : <Ionicons name="chevron-forward" size={16} color={C.muted} />}
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-    </View>
-  );
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDU
@@ -410,7 +472,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   return (
     <View style={S.container}>
 
-      {/* ── Modale confirmation ── */}
+      {/* Modale confirmation */}
       <Modal transparent animationType={FADE} visible={confirm.visible} onRequestClose={closeConfirm}>
         <View style={S.cmOverlay}>
           <View style={S.cmBox}>
@@ -420,7 +482,10 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
               <TouchableOpacity style={S.cmBtnCancel} onPress={closeConfirm}>
                 <Text style={S.cmBtnCancelTxt}>Annuler</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[S.cmBtnConfirm, confirm.danger ? S.cmBtnDanger : undefined]} onPress={confirm.onConfirm}>
+              <TouchableOpacity
+                style={[S.cmBtnConfirm, confirm.danger ? S.cmBtnDanger : undefined]}
+                onPress={confirm.onConfirm}
+              >
                 <Text style={S.cmBtnConfirmTxt}>{confirm.confirmLabel ?? 'Confirmer'}</Text>
               </TouchableOpacity>
             </View>
@@ -428,14 +493,16 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         </View>
       </Modal>
 
-      {/* ── Header ── */}
+      {/* Header */}
       <LinearGradient colors={['#7C3AED', '#4C1D95']} style={S.header}>
-        <TouchableOpacity onPress={onBack} style={S.backBtn}><Ionicons name="arrow-back" size={22} color="#FFF" /></TouchableOpacity>
+        <TouchableOpacity onPress={onBack} style={S.backBtn}>
+          <Ionicons name="arrow-back" size={22} color="#FFF" />
+        </TouchableOpacity>
         <Text style={S.headerTitle}>🌐 Communauté</Text>
         <View style={{ width: 40 }} />
       </LinearGradient>
 
-      {/* ── Onglets ── */}
+      {/* Onglets */}
       <View style={S.tabs}>
         {([
           { key: 'groups',        icon: 'people-circle-outline', label: 'Groupes'  },
@@ -443,8 +510,11 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           { key: 'trophies',      icon: 'trophy-outline',        label: 'Trophées' },
           { key: 'settings',      icon: 'settings-outline',      label: 'Réglages' },
         ] as { key: Section; icon: string; label: string }[]).map(t => (
-          <TouchableOpacity key={t.key} style={[S.tab, section === t.key && S.tabActive]}
-            onPress={() => { setSection(t.key); setSelGroup(null); setTrophyUser(null); setError(''); }}>
+          <TouchableOpacity
+            key={t.key}
+            style={[S.tab, section === t.key && S.tabActive]}
+            onPress={() => { setSection(t.key); setSelGroup(null); setTrophyUser(null); setError(''); }}
+          >
             <Ionicons name={t.icon as any} size={18} color={section === t.key ? C.purple : C.muted} />
             <Text style={[S.tabTxt, section === t.key && S.tabTxtActive]}>{t.label}</Text>
           </TouchableOpacity>
@@ -461,7 +531,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
             <View style={S.secHeader}>
               <Text style={S.secTitle}>Groupes de discussion</Text>
               <TouchableOpacity style={S.btnPrimary} onPress={() => openGroupForm()}>
-                <Ionicons name="add" size={16} color="#FFF" /><Text style={S.btnPrimaryTxt}>Nouveau</Text>
+                <Ionicons name="add" size={16} color="#FFF" />
+                <Text style={S.btnPrimaryTxt}>Nouveau</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -481,8 +552,14 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                         <TouchableOpacity style={S.iconBtn} onPress={e => { e.stopPropagation?.(); openGroupForm(g); }}>
                           <Ionicons name="pencil-outline" size={16} color={C.purple} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={S.iconBtn} onPress={e => { e.stopPropagation?.(); confirmDeleteGroup(g); }} disabled={actionLoading === `del-grp-${g.id}`}>
-                          {actionLoading === `del-grp-${g.id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="trash-outline" size={16} color={C.danger} />}
+                        <TouchableOpacity
+                          style={S.iconBtn}
+                          onPress={e => { e.stopPropagation?.(); confirmDeleteGroup(g); }}
+                          disabled={actionLoading === `del-grp-${g.id}`}
+                        >
+                          {actionLoading === `del-grp-${g.id}`
+                            ? <ActivityIndicator size="small" color={C.danger} />
+                            : <Ionicons name="trash-outline" size={16} color={C.danger} />}
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -495,7 +572,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         {section === 'groups' && selGroup && (
           <View>
             <TouchableOpacity style={S.backLink} onPress={() => { setSelGroup(null); loadGroups(); }}>
-              <Ionicons name="chevron-back" size={18} color={C.purple} /><Text style={S.backLinkTxt}>Retour aux groupes</Text>
+              <Ionicons name="chevron-back" size={18} color={C.purple} />
+              <Text style={S.backLinkTxt}>Retour aux groupes</Text>
             </TouchableOpacity>
             <View style={S.secHeader}>
               <View style={{ flex: 1 }}>
@@ -503,7 +581,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                 {selGroup.description ? <Text style={S.cardSub}>{selGroup.description}</Text> : null}
               </View>
               <TouchableOpacity style={S.btnPrimary} onPress={() => { resetPicker(); setShowAddMember(true); }}>
-                <Ionicons name="person-add-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Ajouter</Text>
+                <Ionicons name="person-add-outline" size={14} color="#FFF" />
+                <Text style={S.btnPrimaryTxt}>Ajouter</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -512,13 +591,17 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                 ? <View style={S.empty}><Ionicons name="person-outline" size={44} color={C.muted} /><Text style={S.emptyTxt}>Aucun membre</Text></View>
                 : members.map(m => (
                   <View key={m.user_id} style={S.memberRow}>
-                    <View style={S.memberAvatar}><Text style={S.memberAvatarTxt}>{m.prenom.charAt(0)}{m.nom.charAt(0)}</Text></View>
+                    <View style={S.memberAvatar}>
+                      <Text style={S.memberAvatarTxt}>{m.prenom.charAt(0)}{m.nom.charAt(0)}</Text>
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={S.memberName}>{m.prenom} {m.nom}</Text>
                       <Text style={S.memberMeta}>depuis {fmtDate(m.joined_at)}</Text>
                     </View>
                     <TouchableOpacity onPress={() => removeMember(m)} disabled={actionLoading === `rm-${m.user_id}`}>
-                      {actionLoading === `rm-${m.user_id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="remove-circle-outline" size={22} color={C.danger} />}
+                      {actionLoading === `rm-${m.user_id}`
+                        ? <ActivityIndicator size="small" color={C.danger} />
+                        : <Ionicons name="remove-circle-outline" size={22} color={C.danger} />}
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -530,8 +613,12 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           <View>
             <View style={S.secHeader}>
               <Text style={S.secTitle}>Notifications</Text>
-              <TouchableOpacity style={S.btnPrimary} onPress={() => { setNotifTitle(''); setNotifContent(''); setNotifType('global'); setNotifTarget(null); setShowNotifForm(true); }}>
-                <Ionicons name="megaphone-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text>
+              <TouchableOpacity
+                style={S.btnPrimary}
+                onPress={() => { setNotifTitle(''); setNotifContent(''); setNotifType('global'); setNotifTarget(null); setShowNotifForm(true); }}
+              >
+                <Ionicons name="megaphone-outline" size={14} color="#FFF" />
+                <Text style={S.btnPrimaryTxt}>Publier</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -541,14 +628,20 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                 : notifications.map(n => (
                   <View key={n.id} style={S.notifCard}>
                     <View style={[S.notifPill, n.type === 'global' ? S.pillGlobal : S.pillTargeted]}>
-                      <Text style={S.pillTxt}>{n.type === 'global' ? '🌐 Globale' : `🎯 ${n.target ? `${n.target.prenom} ${n.target.nom}` : 'Ciblée'}`}</Text>
+                      <Text style={S.pillTxt}>
+                        {n.type === 'global' ? '🌐 Globale' : `🎯 ${n.target ? `${n.target.prenom} ${n.target.nom}` : 'Ciblée'}`}
+                      </Text>
                     </View>
                     <Text style={S.notifTitle}>{n.title}</Text>
                     <Text style={S.notifContent} numberOfLines={2}>{n.content}</Text>
                     <View style={S.notifFooter}>
-                      <Text style={S.notifMeta}>{n.sender ? `${n.sender.prenom} ${n.sender.nom}` : '?'} · {fmtDate(n.created_at)}</Text>
+                      <Text style={S.notifMeta}>
+                        {n.sender ? `${n.sender.prenom} ${n.sender.nom}` : '?'} · {fmtDate(n.created_at)}
+                      </Text>
                       <TouchableOpacity onPress={() => confirmDeleteNotif(n)} disabled={actionLoading === `del-notif-${n.id}`}>
-                        {actionLoading === `del-notif-${n.id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="trash-outline" size={16} color={C.danger} />}
+                        {actionLoading === `del-notif-${n.id}`
+                          ? <ActivityIndicator size="small" color={C.danger} />
+                          : <Ionicons name="trash-outline" size={16} color={C.danger} />}
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -560,18 +653,25 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         {section === 'trophies' && (
           <View>
             <Text style={S.secTitle}>Attribuer un trophée 🏆</Text>
-            <Text style={S.secSubtitle}>Recherchez un utilisateur par nom ou prénom, puis attribuez un trophée.</Text>
+            <Text style={S.secSubtitle}>Recherchez un utilisateur par nom et prénom, puis attribuez un trophée.</Text>
 
             {!trophyUser && (
               <View style={{ marginTop: 12 }}>
-                <UserSearchExact onSelect={selectTrophyUser} showTrophies />
+                {/* UserSearchExact reçoit maintenant tout son état en props */}
+                <UserSearchExact
+                  {...pickerProps}
+                  onSelect={selectTrophyUser}
+                  showTrophies
+                />
               </View>
             )}
 
             {trophyUser && (
               <View>
                 <View style={S.selectedUser}>
-                  <View style={S.pickAvatar}><Text style={S.pickAvatarTxt}>{trophyUser.prenom.charAt(0)}{trophyUser.nom.charAt(0)}</Text></View>
+                  <View style={S.pickAvatar}>
+                    <Text style={S.pickAvatarTxt}>{trophyUser.prenom.charAt(0)}{trophyUser.nom.charAt(0)}</Text>
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={S.pickName}>{trophyUser.prenom} {trophyUser.nom}</Text>
                     <Text style={S.pickMeta}>{trophyUser.role} · 🏆 {trophyUser.trophies_count} trophée(s)</Text>
@@ -583,12 +683,26 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
                 <View style={S.trophyForm}>
                   <Text style={S.fieldLabel}>Titre du trophée *</Text>
-                  <TextInput style={S.input} placeholder="Ex: Champion Arts – Run #3" placeholderTextColor={C.muted} value={trophyTitle} onChangeText={setTrophyTitle} />
+                  <TextInput
+                    style={S.input}
+                    placeholder="Ex: Champion Arts – Run #3"
+                    placeholderTextColor={C.muted}
+                    value={trophyTitle}
+                    onChangeText={setTrophyTitle}
+                  />
                   <Text style={S.fieldLabel}>Description (optionnel)</Text>
-                  <TextInput style={[S.input, { minHeight: 70 }]} placeholder="Ex: Meilleur score du run avec 142 votes" placeholderTextColor={C.muted} value={trophyDesc} onChangeText={setTrophyDesc} multiline />
+                  <TextInput
+                    style={[S.input, { minHeight: 70 }]}
+                    placeholder="Ex: Meilleur score du run avec 142 votes"
+                    placeholderTextColor={C.muted}
+                    value={trophyDesc}
+                    onChangeText={setTrophyDesc}
+                    multiline
+                  />
                   <TouchableOpacity
                     style={[S.btnGold, (!trophyTitle.trim() || actionLoading === 'trophy-award') && S.btnDisabled]}
-                    onPress={awardTrophy} disabled={!trophyTitle.trim() || actionLoading === 'trophy-award'}
+                    onPress={awardTrophy}
+                    disabled={!trophyTitle.trim() || actionLoading === 'trophy-award'}
                   >
                     {actionLoading === 'trophy-award'
                       ? <ActivityIndicator color="#FFF" />
@@ -608,7 +722,9 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                           <View style={{ flex: 1 }}>
                             <Text style={S.trophyTitleTxt}>{t.title}</Text>
                             {t.description ? <Text style={S.trophyDescTxt}>{t.description}</Text> : null}
-                            <Text style={S.trophyMeta}>{t.awarder ? `${t.awarder.prenom} ${t.awarder.nom}` : '?'} · {fmtDate(t.awarded_at)}</Text>
+                            <Text style={S.trophyMeta}>
+                              {t.awarder ? `${t.awarder.prenom} ${t.awarder.nom}` : '?'} · {fmtDate(t.awarded_at)}
+                            </Text>
                           </View>
                         </View>
                       ))}
@@ -631,17 +747,39 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                       <View style={S.settingRow}>
                         <View style={{ flex: 1 }}>
                           <Text style={S.settingTitle}>{settings.registrations_open ? '✅ Ouvertes' : '🔐 Fermées'}</Text>
-                          <Text style={S.settingSub}>{settings.registrations_open ? `Les nouveaux utilisateurs peuvent créer un compte.` : `Toute tentative de création de compte est bloquée.`}</Text>
+                          <Text style={S.settingSub}>
+                            {settings.registrations_open
+                              ? 'Les nouveaux utilisateurs peuvent créer un compte.'
+                              : 'Toute tentative de création de compte est bloquée.'}
+                          </Text>
                           <Text style={S.settingMeta}>Modifié le {fmtDate(settings.updated_at)}</Text>
                         </View>
                         {actionLoading === 'reg-toggle'
                           ? <ActivityIndicator color={C.purple} />
-                          : <Switch value={settings.registrations_open} onValueChange={toggleRegistrations} trackColor={{ false: '#DDD', true: '#A855F7' }} thumbColor={settings.registrations_open ? C.purple : '#888'} />}
+                          : <Switch
+                              value={settings.registrations_open}
+                              onValueChange={toggleRegistrations}
+                              trackColor={{ false: '#DDD', true: '#A855F7' }}
+                              thumbColor={settings.registrations_open ? C.purple : '#888'}
+                            />}
                       </View>
                       <Text style={[S.fieldLabel, { marginTop: 14 }]}>Message quand inscriptions fermées</Text>
-                      <TextInput style={[S.input, { minHeight: 60 }]} placeholder="Les inscriptions sont terminées. 🔐" placeholderTextColor={C.muted} value={regMessage} onChangeText={setRegMessage} multiline />
-                      <TouchableOpacity style={[S.btnPrimary, { alignSelf: 'flex-start', marginTop: 8 }]} onPress={saveRegMessage} disabled={actionLoading === 'reg-msg'}>
-                        {actionLoading === 'reg-msg' ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={S.btnPrimaryTxt}>Sauvegarder</Text>}
+                      <TextInput
+                        style={[S.input, { minHeight: 60 }]}
+                        placeholder="Les inscriptions sont terminées. 🔐"
+                        placeholderTextColor={C.muted}
+                        value={regMessage}
+                        onChangeText={setRegMessage}
+                        multiline
+                      />
+                      <TouchableOpacity
+                        style={[S.btnPrimary, { alignSelf: 'flex-start', marginTop: 8 }]}
+                        onPress={saveRegMessage}
+                        disabled={actionLoading === 'reg-msg'}
+                      >
+                        {actionLoading === 'reg-msg'
+                          ? <ActivityIndicator color="#FFF" size="small" />
+                          : <Text style={S.btnPrimaryTxt}>Sauvegarder</Text>}
                       </TouchableOpacity>
                     </View>
                   )}
@@ -668,13 +806,23 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                                 <View key={s.id} style={S.sessionRow}>
                                   <View style={{ flex: 1 }}>
                                     <Text style={S.sessionTitle} numberOfLines={1}>{s.title}</Text>
-                                    <Text style={S.sessionMeta}>{s.is_paid ? `💰 ${s.price_cfa} FCFA` : 'Gratuit'}{' · '}{fmtDate(s.created_at)}</Text>
+                                    <Text style={S.sessionMeta}>
+                                      {s.is_paid ? `💰 ${s.price_cfa} FCFA` : 'Gratuit'}{' · '}{fmtDate(s.created_at)}
+                                    </Text>
                                   </View>
                                   <View style={S.sessionToggle}>
-                                    <Text style={[S.sessionState, { color: s.is_open ? C.green : C.danger }]}>{s.is_open ? 'Ouvert' : 'Fermé'}</Text>
+                                    <Text style={[S.sessionState, { color: s.is_open ? C.green : C.danger }]}>
+                                      {s.is_open ? 'Ouvert' : 'Fermé'}
+                                    </Text>
                                     {toggling === s.id
                                       ? <ActivityIndicator size="small" color={C.purple} style={{ marginLeft: 8 }} />
-                                      : <Switch value={s.is_open} onValueChange={() => toggleSession(s, game.id)} trackColor={{ false: '#DDD', true: '#A855F7' }} thumbColor={s.is_open ? C.purple : '#888'} disabled={!!toggling} />}
+                                      : <Switch
+                                          value={s.is_open}
+                                          onValueChange={() => toggleSession(s, game.id)}
+                                          trackColor={{ false: '#DDD', true: '#A855F7' }}
+                                          thumbColor={s.is_open ? C.purple : '#888'}
+                                          disabled={!!toggling}
+                                        />}
                                   </View>
                                 </View>
                               ))}
@@ -700,9 +848,17 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
             <Text style={S.fieldLabel}>Description</Text>
             <TextInput style={[S.input, { minHeight: 70 }]} placeholder="Description…" placeholderTextColor={C.muted} value={grpDesc} onChangeText={setGrpDesc} multiline />
             <View style={S.sheetActions}>
-              <TouchableOpacity style={S.btnSecondary} onPress={() => setShowGrpForm(false)}><Text style={S.btnSecondaryTxt}>Annuler</Text></TouchableOpacity>
-              <TouchableOpacity style={[S.btnPrimary, !grpName.trim() && S.btnDisabled]} onPress={saveGroup} disabled={!grpName.trim() || actionLoading === 'group-save'}>
-                {actionLoading === 'group-save' ? <ActivityIndicator color="#FFF" /> : <Text style={S.btnPrimaryTxt}>{editingGrp ? 'Enregistrer' : 'Créer'}</Text>}
+              <TouchableOpacity style={S.btnSecondary} onPress={() => setShowGrpForm(false)}>
+                <Text style={S.btnSecondaryTxt}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[S.btnPrimary, !grpName.trim() && S.btnDisabled]}
+                onPress={saveGroup}
+                disabled={!grpName.trim() || actionLoading === 'group-save'}
+              >
+                {actionLoading === 'group-save'
+                  ? <ActivityIndicator color="#FFF" />
+                  : <Text style={S.btnPrimaryTxt}>{editingGrp ? 'Enregistrer' : 'Créer'}</Text>}
               </TouchableOpacity>
             </View>
           </View>
@@ -715,6 +871,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Ajouter un membre</Text>
             <UserSearchExact
+              {...pickerProps}
               onSelect={u => addMember(u)}
               actionLoading={actionLoading}
             />
@@ -752,12 +909,17 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
             <Text style={S.fieldLabel}>Contenu *</Text>
             <TextInput style={[S.input, { minHeight: 80 }]} placeholder="Message…" placeholderTextColor={C.muted} value={notifContent} onChangeText={setNotifContent} multiline />
             <View style={S.sheetActions}>
-              <TouchableOpacity style={S.btnSecondary} onPress={() => setShowNotifForm(false)}><Text style={S.btnSecondaryTxt}>Annuler</Text></TouchableOpacity>
+              <TouchableOpacity style={S.btnSecondary} onPress={() => setShowNotifForm(false)}>
+                <Text style={S.btnSecondaryTxt}>Annuler</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[S.btnPrimary, (!notifTitle.trim() || !notifContent.trim()) && S.btnDisabled]}
-                onPress={sendNotification} disabled={!notifTitle.trim() || !notifContent.trim() || actionLoading === 'notif-send'}
+                onPress={sendNotification}
+                disabled={!notifTitle.trim() || !notifContent.trim() || actionLoading === 'notif-send'}
               >
-                {actionLoading === 'notif-send' ? <ActivityIndicator color="#FFF" /> : <><Ionicons name="send-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text></>}
+                {actionLoading === 'notif-send'
+                  ? <ActivityIndicator color="#FFF" />
+                  : <><Ionicons name="send-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text></>}
               </TouchableOpacity>
             </View>
           </View>
@@ -770,6 +932,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Sélectionner la cible</Text>
             <UserSearchExact
+              {...pickerProps}
               onSelect={u => { setNotifTarget(u); setShowTargetPicker(false); }}
             />
             <TouchableOpacity style={[S.btnSecondary, { marginTop: 12 }]} onPress={() => setShowTargetPicker(false)}>
@@ -783,7 +946,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   container:   { flex: 1, backgroundColor: C.bg },
   header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'ios' ? 52 : 38, paddingBottom: 14, paddingHorizontal: 16 },
@@ -800,8 +963,6 @@ const S = StyleSheet.create({
   errTxt:    { color: C.danger, fontSize: 13 },
 
   feedbackRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, paddingHorizontal: 4 },
-  feedbackOk:  {},
-  feedbackErr: {},
   feedbackTxt: { fontSize: 13, fontWeight: '600', flex: 1 },
 
   secHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
@@ -837,13 +998,13 @@ const S = StyleSheet.create({
   notifFooter:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
   notifMeta:    { fontSize: 11, color: C.muted },
 
-  selectedUser:  { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#F3EEFF', borderRadius: 12, padding: 12, marginBottom: 4, borderWidth: 1, borderColor: C.border },
-  trophyForm:    { backgroundColor: C.surface, borderRadius: 14, padding: 16, marginTop: 10, borderWidth: 1, borderColor: C.border },
-  trophyRow:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#FEF3C7' },
-  trophyEmoji:   { fontSize: 20, marginTop: 2 },
-  trophyTitleTxt:{ fontSize: 14, fontWeight: '700', color: C.text },
-  trophyDescTxt: { fontSize: 12, color: C.soft, marginTop: 2 },
-  trophyMeta:    { fontSize: 11, color: C.muted, marginTop: 4 },
+  selectedUser:   { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#F3EEFF', borderRadius: 12, padding: 12, marginBottom: 4, borderWidth: 1, borderColor: C.border },
+  trophyForm:     { backgroundColor: C.surface, borderRadius: 14, padding: 16, marginTop: 10, borderWidth: 1, borderColor: C.border },
+  trophyRow:      { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#FEF3C7' },
+  trophyEmoji:    { fontSize: 20, marginTop: 2 },
+  trophyTitleTxt: { fontSize: 14, fontWeight: '700', color: C.text },
+  trophyDescTxt:  { fontSize: 12, color: C.soft, marginTop: 2 },
+  trophyMeta:     { fontSize: 11, color: C.muted, marginTop: 4 },
 
   settingCard:  { backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border, marginBottom: 8 },
   settingRow:   { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
@@ -862,7 +1023,6 @@ const S = StyleSheet.create({
   sessionToggle:{ flexDirection: 'row', alignItems: 'center', gap: 6 },
   sessionState: { fontSize: 12, fontWeight: '700' },
 
-  searchRow:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
   searchBar:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3EEFF', borderRadius: 10, paddingHorizontal: 12, height: 44, borderWidth: 1, borderColor: C.border },
   pickFieldRow: { flexDirection: 'row', gap: 8 },
   btnSearch:    { flexDirection: 'row', alignItems: 'center', backgroundColor: C.purple, borderRadius: 10, paddingHorizontal: 14, height: 44, justifyContent: 'center' },
