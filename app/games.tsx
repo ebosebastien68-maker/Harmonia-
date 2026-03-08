@@ -13,9 +13,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import HarmoniaLogo from '../components/HarmoniaLogo';
 
 // =====================================================
-// IMPORTS DES COMPOSANTS
+// IMPORTS DES COMPOSANTS DE JEUX
 // =====================================================
 import VraiFaux from './games/vrai-faux';
 import Awale from './games/awale';
@@ -28,16 +29,21 @@ import Djing from './games/djing';
 const { width } = Dimensions.get('window');
 
 // =====================================================
-// PALETTE & THÈME PREMIUM
+// PALETTE HARMONIA
 // =====================================================
-const THEME = {
-  bg: '#0D0D14',
-  surface: '#16161F',
-  card: '#1E1E2E',
-  border: '#2A2A3D',
-  text: '#F0EEF8',
-  textMuted: '#7B7A9A',
-  accent: '#C084FC',
+const BRAND = {
+  purple:      '#8A2BE2',
+  purpleDark:  '#4B0082',
+  purpleMid:   '#6A1BB2',
+  orange:      '#FF8C00',
+  orangeLight: '#FFA500',
+  gold:        '#FFD700',
+  bg:          '#0E0017',
+  surface:     '#160020',
+  card:        '#1C0030',
+  border:      '#2E1050',
+  text:        '#F5F0FF',
+  textMuted:   '#9B82C4',
 };
 
 // =====================================================
@@ -47,30 +53,25 @@ const CATEGORIES = [
   {
     id: 'strategie',
     title: 'Jeux Stratégiques',
-    icon: 'chess-board' as const,
-    ionIcon: 'extension-puzzle',
-    gradient: ['#1A1033', '#2D1B69'],
-    accentColor: '#7C3AED',
-    glowColor: '#7C3AED40',
-    badge: '♟',
+    ionIcon: 'extension-puzzle-outline' as const,
+    gradient: ['#1A0840', '#2D1469'] as const,
+    accentColor: '#A78BFA',
     description: 'Réflexion & tactique',
     items: [
       {
         id: 's1',
         title: 'Awalé',
-        icon: 'ellipse' as const,
-        emoji: '🔵',
+        accentIcon: 'ellipse' as const,
         color: '#7C3AED',
-        gradientColors: ['#7C3AED', '#5B21B6'] as const,
+        gradientColors: ['#4C1D95', '#6D28D9'] as const,
         component: Awale,
       },
       {
         id: 's2',
         title: 'Dames',
-        icon: 'grid' as const,
-        emoji: '⬜',
-        color: '#6D28D9',
-        gradientColors: ['#6D28D9', '#4C1D95'] as const,
+        accentIcon: 'grid' as const,
+        color: '#8B5CF6',
+        gradientColors: ['#3B0764', '#6D28D9'] as const,
         component: Dames,
       },
     ],
@@ -78,21 +79,17 @@ const CATEGORIES = [
   {
     id: 'connaissance',
     title: 'Jeux de Connaissances',
-    icon: 'bulb',
-    ionIcon: 'bulb',
-    gradient: ['#0A2540', '#0E3A5C'],
-    accentColor: '#0EA5E9',
-    glowColor: '#0EA5E940',
-    badge: '🧠',
+    ionIcon: 'bulb-outline' as const,
+    gradient: ['#001830', '#002D50'] as const,
+    accentColor: '#38BDF8',
     description: 'Testez votre savoir',
     items: [
       {
         id: 'c1',
         title: 'Vrai ou Faux',
-        icon: 'checkmark-circle' as const,
-        emoji: '✅',
+        accentIcon: 'checkmark-circle' as const,
         color: '#0EA5E9',
-        gradientColors: ['#0EA5E9', '#0284C7'] as const,
+        gradientColors: ['#0C4A6E', '#0369A1'] as const,
         component: VraiFaux,
       },
     ],
@@ -100,177 +97,151 @@ const CATEGORIES = [
   {
     id: 'arts',
     title: 'Arts',
-    icon: 'color-palette',
-    ionIcon: 'color-palette',
-    gradient: ['#2D0A3A', '#4A1259'],
-    accentColor: '#EC4899',
-    glowColor: '#EC489940',
-    badge: '🎨',
+    ionIcon: 'color-palette-outline' as const,
+    gradient: ['#2D0A3A', '#4A1259'] as const,
+    accentColor: '#F472B6',
     description: 'Créativité & expression',
     items: [
       {
         id: 'a1',
         title: 'Photo',
-        icon: 'camera' as const,
-        emoji: '📸',
+        accentIcon: 'camera' as const,
         color: '#EC4899',
-        gradientColors: ['#EC4899', '#BE185D'] as const,
+        gradientColors: ['#831843', '#BE185D'] as const,
         component: Photo,
       },
       {
         id: 'a2',
         title: 'Dessin',
-        icon: 'pencil' as const,
-        emoji: '✏️',
+        accentIcon: 'pencil' as const,
         color: '#F97316',
-        gradientColors: ['#F97316', '#EA580C'] as const,
-        component: Photo, // ouvre Photo
+        gradientColors: ['#7C2D12', '#C2410C'] as const,
+        component: Photo,
       },
       {
         id: 'a3',
         title: 'Design',
-        icon: 'shapes' as const,
-        emoji: '🖌️',
+        accentIcon: 'shapes' as const,
         color: '#A855F7',
-        gradientColors: ['#A855F7', '#7C3AED'] as const,
-        component: Photo, // ouvre Photo
+        gradientColors: ['#4C1D95', '#7E22CE'] as const,
+        component: Photo,
       },
     ],
   },
   {
     id: 'performance',
     title: 'Performance',
-    icon: 'mic',
-    ionIcon: 'mic',
-    gradient: ['#1A0A00', '#3D1500'],
-    accentColor: '#F59E0B',
-    glowColor: '#F59E0B40',
-    badge: '🎭',
+    ionIcon: 'mic-outline' as const,
+    gradient: ['#1A0800', '#351200'] as const,
+    accentColor: '#FBBF24',
     description: 'Montez sur scène',
     items: [
       {
         id: 'p1',
         title: 'Comédie',
-        icon: 'happy' as const,
-        emoji: '😄',
+        accentIcon: 'happy' as const,
         color: '#F59E0B',
-        gradientColors: ['#F59E0B', '#D97706'] as const,
+        gradientColors: ['#78350F', '#B45309'] as const,
         component: Comedie,
       },
       {
         id: 'p2',
         title: 'Danse',
-        icon: 'body' as const,
-        emoji: '💃',
-        color: '#EF4444',
-        gradientColors: ['#EF4444', '#DC2626'] as const,
-        component: Comedie, // ouvre Comedie
+        accentIcon: 'body' as const,
+        color: '#F43F5E',
+        gradientColors: ['#881337', '#BE123C'] as const,
+        component: Comedie,
       },
       {
         id: 'p3',
         title: 'Théâtre',
-        icon: 'film' as const,
-        emoji: '🎭',
-        color: '#8B5CF6',
-        gradientColors: ['#8B5CF6', '#7C3AED'] as const,
-        component: Comedie, // ouvre Comedie
+        accentIcon: 'film' as const,
+        color: '#818CF8',
+        gradientColors: ['#1E1B4B', '#3730A3'] as const,
+        component: Comedie,
       },
     ],
   },
   {
     id: 'musique',
     title: 'Musique',
-    icon: 'musical-notes',
-    ionIcon: 'musical-notes',
-    gradient: ['#001A1A', '#003333'],
-    accentColor: '#14B8A6',
-    glowColor: '#14B8A640',
-    badge: '🎵',
+    ionIcon: 'musical-notes-outline' as const,
+    gradient: ['#001A1A', '#003030'] as const,
+    accentColor: '#2DD4BF',
     description: 'Faites vibrer la scène',
     items: [
       {
         id: 'm1',
         title: 'Chant',
-        icon: 'mic' as const,
-        emoji: '🎤',
+        accentIcon: 'mic' as const,
         color: '#14B8A6',
-        gradientColors: ['#14B8A6', '#0D9488'] as const,
+        gradientColors: ['#134E4A', '#0F766E'] as const,
         component: Music,
       },
       {
         id: 'm2',
         title: 'Piano',
-        icon: 'musical-note' as const,
-        emoji: '🎹',
+        accentIcon: 'musical-note' as const,
         color: '#06B6D4',
-        gradientColors: ['#06B6D4', '#0891B2'] as const,
-        component: Music, // ouvre Music (Chant)
+        gradientColors: ['#164E63', '#0E7490'] as const,
+        component: Music,
       },
       {
         id: 'm3',
         title: 'Guitare',
-        icon: 'radio' as const,
-        emoji: '🎸',
+        accentIcon: 'radio' as const,
         color: '#3B82F6',
-        gradientColors: ['#3B82F6', '#2563EB'] as const,
-        component: Music, // ouvre Music (Chant)
+        gradientColors: ['#1E3A8A', '#1D4ED8'] as const,
+        component: Music,
       },
     ],
   },
   {
     id: 'artisanat',
     title: 'Artisanat',
-    icon: 'construct',
-    ionIcon: 'construct',
-    gradient: ['#1A0D00', '#2D1A00'],
-    accentColor: '#D97706',
-    glowColor: '#D9770640',
-    badge: '🛠',
+    ionIcon: 'construct-outline' as const,
+    gradient: ['#1A0C00', '#2E1800'] as const,
+    accentColor: '#F59E0B',
     description: 'Savoir-faire & métiers',
     items: [
       {
         id: 'ar1',
         title: 'Couture',
-        icon: 'cut' as const,
-        emoji: '🧵',
+        accentIcon: 'cut' as const,
         color: '#D97706',
-        gradientColors: ['#D97706', '#B45309'] as const,
+        gradientColors: ['#78350F', '#92400E'] as const,
         component: Djing,
       },
       {
         id: 'ar2',
         title: 'Menuiserie',
-        icon: 'hammer' as const,
-        emoji: '🪚',
-        color: '#92400E',
-        gradientColors: ['#92400E', '#78350F'] as const,
+        accentIcon: 'hammer' as const,
+        color: '#A16207',
+        gradientColors: ['#422006', '#713F12'] as const,
         component: Djing,
       },
       {
         id: 'ar3',
         title: 'Coiffure',
-        icon: 'sparkles' as const,
-        emoji: '✂️',
-        color: '#BE185D',
-        gradientColors: ['#BE185D', '#9D174D'] as const,
+        accentIcon: 'sparkles' as const,
+        color: '#DB2777',
+        gradientColors: ['#831843', '#9D174D'] as const,
         component: Djing,
       },
       {
         id: 'ar4',
         title: 'Soudure',
-        icon: 'flame' as const,
-        emoji: '🔥',
+        accentIcon: 'flame' as const,
         color: '#DC2626',
-        gradientColors: ['#DC2626', '#B91C1C'] as const,
+        gradientColors: ['#7F1D1D', '#991B1B'] as const,
         component: Djing,
       },
       {
         id: 'ar5',
         title: 'Mécanique',
-        icon: 'settings' as const,
-        emoji: '⚙️',
-        color: '#374151',
-        gradientColors: ['#6B7280', '#374151'] as const,
+        accentIcon: 'settings' as const,
+        color: '#64748B',
+        gradientColors: ['#1E293B', '#334155'] as const,
         component: Djing,
       },
     ],
@@ -278,7 +249,7 @@ const CATEGORIES = [
 ];
 
 // =====================================================
-// COMPOSANT ITEM CARD
+// ITEM CARD
 // =====================================================
 const ItemCard = ({
   item,
@@ -289,21 +260,11 @@ const ItemCard = ({
 }) => {
   const scale = useRef(new Animated.Value(1)).current;
 
-  const handlePressIn = () => {
-    Animated.spring(scale, {
-      toValue: 0.93,
-      useNativeDriver: true,
-      speed: 50,
-    }).start();
-  };
+  const handlePressIn = () =>
+    Animated.spring(scale, { toValue: 0.91, useNativeDriver: true, speed: 60 }).start();
 
-  const handlePressOut = () => {
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 30,
-    }).start();
-  };
+  const handlePressOut = () =>
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 35 }).start();
 
   return (
     <TouchableOpacity
@@ -312,14 +273,24 @@ const ItemCard = ({
       onPressOut={handlePressOut}
       activeOpacity={1}
     >
-      <Animated.View style={[styles.itemCard, { transform: [{ scale }] }]}>
+      <Animated.View
+        style={[
+          styles.itemCard,
+          {
+            transform: [{ scale }],
+            shadowColor: item.color,
+          },
+        ]}
+      >
         <LinearGradient
           colors={item.gradientColors}
-          style={styles.itemCardGradient}
+          style={styles.itemCardInner}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
         >
-          <Text style={styles.itemEmoji}>{item.emoji}</Text>
+          <View style={styles.itemIconCircle}>
+            <Ionicons name={item.accentIcon} size={24} color="#FFFFFF" />
+          </View>
           <Text style={styles.itemTitle}>{item.title}</Text>
         </LinearGradient>
       </Animated.View>
@@ -328,7 +299,7 @@ const ItemCard = ({
 };
 
 // =====================================================
-// COMPOSANT CATÉGORIE
+// CATEGORY SECTION
 // =====================================================
 const CategorySection = ({
   category,
@@ -336,49 +307,42 @@ const CategorySection = ({
 }: {
   category: (typeof CATEGORIES)[0];
   onItemPress: (item: any) => void;
-}) => {
-  return (
-    <View style={styles.categoryWrapper}>
-      <LinearGradient
-        colors={category.gradient as any}
-        style={styles.categoryCard}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        {/* Header catégorie */}
-        <View style={styles.catHeader}>
-          <View style={[styles.catBadgeContainer, { borderColor: category.accentColor + '60' }]}>
-            <Text style={styles.catBadgeEmoji}>{category.badge}</Text>
-          </View>
-          <View style={styles.catInfo}>
-            <Text style={styles.catTitle}>{category.title}</Text>
-            <Text style={[styles.catDesc, { color: category.accentColor }]}>
-              {category.description}
-            </Text>
-          </View>
-          <View style={[styles.catDot, { backgroundColor: category.accentColor }]} />
+}) => (
+  <View style={styles.categoryWrapper}>
+    <LinearGradient
+      colors={category.gradient}
+      style={styles.categoryCard}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
+      {/* Header */}
+      <View style={styles.catHeader}>
+        <View style={[styles.catIconWrap, { borderColor: category.accentColor + '50' }]}>
+          <Ionicons name={category.ionIcon} size={22} color={category.accentColor} />
         </View>
-
-        {/* Séparateur lumineux */}
-        <View style={[styles.catDivider, { backgroundColor: category.accentColor + '30' }]} />
-
-        {/* Grille d'items */}
-        <View style={styles.itemsRow}>
-          {category.items.map((item) => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              onPress={() => onItemPress(item)}
-            />
-          ))}
+        <View style={styles.catInfo}>
+          <Text style={styles.catTitle}>{category.title}</Text>
+          <Text style={[styles.catDesc, { color: category.accentColor }]}>
+            {category.description}
+          </Text>
         </View>
-      </LinearGradient>
-    </View>
-  );
-};
+      </View>
+
+      {/* Séparateur */}
+      <View style={[styles.catLine, { backgroundColor: category.accentColor + '25' }]} />
+
+      {/* Items */}
+      <View style={styles.itemsRow}>
+        {category.items.map((item) => (
+          <ItemCard key={item.id} item={item} onPress={() => onItemPress(item)} />
+        ))}
+      </View>
+    </LinearGradient>
+  </View>
+);
 
 // =====================================================
-// COMPOSANT PRINCIPAL
+// ÉCRAN PRINCIPAL
 // =====================================================
 export default function GamesScreen() {
   const [selectedGame, setSelectedGame] = useState<any>(null);
@@ -399,78 +363,77 @@ export default function GamesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* ── HEADER HERO ── */}
+
+      {/* ── HEADER ── */}
       <LinearGradient
-        colors={['#12001F', '#1A0035', '#0D0D14']}
+        colors={[BRAND.purpleDark, BRAND.purple, '#A020F0']}
         style={styles.header}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
-        {/* Orbe décoratif */}
-        <View style={styles.heroOrb} />
+        {/* Orbes décoratifs de fond */}
+        <View style={[styles.orb, { width: 180, height: 180, top: -55, right: -45, backgroundColor: BRAND.orange, opacity: 0.14 }]} />
+        <View style={[styles.orb, { width: 90, height: 90, bottom: -20, left: 15, backgroundColor: BRAND.gold, opacity: 0.10 }]} />
 
-        <View style={styles.heroContent}>
-          <View style={styles.heroPill}>
-            <View style={styles.heroPillDot} />
-            <Text style={styles.heroPillText}>Harmonia · Centre des Talents</Text>
+        <View style={styles.headerContent}>
+          {/* Logo Harmonia */}
+          <HarmoniaLogo size={50} showText={true} theme="light" />
+
+          {/* Pill "Centre des Talents" */}
+          <View style={styles.taglinePill}>
+            <Ionicons name="star" size={11} color={BRAND.gold} />
+            <Text style={styles.taglineText}>Centre des Talents</Text>
+            <Ionicons name="star" size={11} color={BRAND.gold} />
           </View>
 
-          <Text style={styles.heroTitle}>Révélez votre{'\n'}Talent</Text>
-          <Text style={styles.heroSubtitle}>
-            Compétitions, créations & savoir-faire
-          </Text>
+          {/* Titre */}
+          <Text style={styles.heroTitle}>Révélez votre Talent</Text>
 
-          <View style={styles.heroStats}>
+          {/* Badges */}
+          <View style={styles.badgesRow}>
             {[
-              { icon: '🏆', label: 'Trophées' },
-              { icon: '⚡', label: 'Live' },
-              { icon: '🌍', label: 'Communauté' },
-            ].map((s) => (
-              <View key={s.label} style={styles.heroStatItem}>
-                <Text style={styles.heroStatIcon}>{s.icon}</Text>
-                <Text style={styles.heroStatLabel}>{s.label}</Text>
+              { icon: 'trophy'  as const, label: 'Trophées'   },
+              { icon: 'flash'   as const, label: 'Live'        },
+              { icon: 'earth'   as const, label: 'Communauté' },
+            ].map((b) => (
+              <View key={b.label} style={styles.badge}>
+                <Ionicons name={b.icon} size={13} color={BRAND.gold} />
+                <Text style={styles.badgeText}>{b.label}</Text>
               </View>
             ))}
           </View>
         </View>
       </LinearGradient>
 
-      {/* ── CONTENU ── */}
+      {/* ── SCROLL ── */}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.sectionIntro}>Choisissez votre discipline</Text>
-
-        {CATEGORIES.map((cat) => (
-          <CategorySection
-            key={cat.id}
-            category={cat}
-            onItemPress={handleItemPress}
-          />
-        ))}
-
-        {/* CTA */}
-        <View style={styles.cta}>
-          <LinearGradient
-            colors={['#7C3AED', '#C026D3', '#EC4899']}
-            style={styles.ctaGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <Text style={styles.ctaEmoji}>🚀</Text>
-            <Text style={styles.ctaTitle}>Prêt à dominer ?</Text>
-            <Text style={styles.ctaText}>
-              Nouveau contenu chaque semaine. Revenez souvent !
-            </Text>
-          </LinearGradient>
+        {/* Label section */}
+        <View style={styles.sectionLabelRow}>
+          <View style={styles.sectionDot} />
+          <Text style={styles.sectionLabel}>CHOISISSEZ VOTRE DISCIPLINE</Text>
+          <View style={styles.sectionDot} />
         </View>
 
-        <View style={{ height: 40 }} />
+        {CATEGORIES.map((cat) => (
+          <CategorySection key={cat.id} category={cat} onItemPress={handleItemPress} />
+        ))}
+
+        {/* Note bas de page */}
+        <View style={styles.footerNote}>
+          <Ionicons name="information-circle-outline" size={15} color={BRAND.textMuted} />
+          <Text style={styles.footerNoteText}>
+            Nouveau contenu ajouté chaque semaine — restez connecté !
+          </Text>
+        </View>
+
+        <View style={{ height: 60 }} />
       </ScrollView>
 
-      {/* ── MODAL JEU ── */}
+      {/* ── MODAL ── */}
       <Modal
         visible={modalVisible}
         animationType="slide"
@@ -481,7 +444,7 @@ export default function GamesScreen() {
           {selectedGame?.component && (
             <selectedGame.component
               title={selectedGame.title}
-              icon={selectedGame.icon}
+              icon={selectedGame.accentIcon}
               color={selectedGame.color}
               onClose={handleCloseGame}
             />
@@ -495,122 +458,108 @@ export default function GamesScreen() {
 // =====================================================
 // STYLES
 // =====================================================
-const CARD_RADIUS = 20;
-const ITEM_SIZE = (width - 64) / 4;
+const ITEM_SIZE = (width - 72) / 4;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.bg,
+    backgroundColor: BRAND.bg,
   },
 
-  // ── HEADER ──
+  // Header
   header: {
-    paddingTop: Platform.OS === 'ios' ? 56 : 36,
-    paddingBottom: 36,
+    paddingTop: Platform.OS === 'ios' ? 54 : 32,
+    paddingBottom: 26,
     overflow: 'hidden',
   },
-  heroOrb: {
+  orb: {
     position: 'absolute',
-    top: -40,
-    right: -40,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: '#7C3AED',
-    opacity: 0.15,
+    borderRadius: 9999,
   },
-  heroContent: {
-    paddingHorizontal: 24,
-    alignItems: 'flex-start',
+  headerContent: {
+    paddingHorizontal: 22,
+    alignItems: 'center',
+    gap: 12,
   },
-  heroPill: {
+  taglinePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(196, 132, 252, 0.15)',
+    gap: 7,
+    backgroundColor: 'rgba(0,0,0,0.28)',
     borderWidth: 1,
-    borderColor: 'rgba(196, 132, 252, 0.3)',
+    borderColor: 'rgba(255,215,0,0.32)',
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 100,
-    marginBottom: 18,
-    gap: 8,
   },
-  heroPillDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#C084FC',
-  },
-  heroPillText: {
-    color: '#C084FC',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+  taglineText: {
+    color: BRAND.gold,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
   },
   heroTitle: {
-    fontSize: 36,
+    fontSize: 26,
     fontWeight: '900',
     color: '#FFFFFF',
-    lineHeight: 42,
-    letterSpacing: -0.5,
-    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: -0.3,
   },
-  heroSubtitle: {
-    fontSize: 15,
-    color: '#9D8FBB',
-    marginBottom: 28,
-    letterSpacing: 0.2,
-  },
-  heroStats: {
+  badgesRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 8,
   },
-  heroStatItem: {
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.3)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.13)',
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 10,
   },
-  heroStatIcon: {
-    fontSize: 14,
-  },
-  heroStatLabel: {
-    color: '#E0D8F5',
-    fontSize: 12,
+  badgeText: {
+    color: '#EDE9FE',
+    fontSize: 11,
     fontWeight: '600',
   },
 
-  // ── SCROLL ──
+  // Scroll
   scroll: { flex: 1 },
-  scrollContent: {
-    paddingTop: 8,
-    paddingBottom: 100,
-  },
-  sectionIntro: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: THEME.textMuted,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    paddingHorizontal: 20,
-    marginTop: 24,
+  scrollContent: { paddingTop: 4, paddingBottom: 20 },
+
+  sectionLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 20,
     marginBottom: 12,
   },
+  sectionDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: BRAND.orange,
+  },
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: BRAND.textMuted,
+    letterSpacing: 2.5,
+  },
 
-  // ── CATEGORY CARD ──
+  // Category
   categoryWrapper: {
-    paddingHorizontal: 16,
-    marginBottom: 14,
+    paddingHorizontal: 14,
+    marginBottom: 11,
   },
   categoryCard: {
-    borderRadius: CARD_RADIUS,
-    padding: 18,
+    borderRadius: 22,
+    padding: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
     overflow: 'hidden',
@@ -618,119 +567,100 @@ const styles = StyleSheet.create({
   catHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 14,
+    gap: 11,
+    marginBottom: 12,
   },
-  catBadgeContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  catIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     borderWidth: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.07)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  catBadgeEmoji: {
-    fontSize: 22,
-  },
-  catInfo: {
-    flex: 1,
-  },
+  catInfo: { flex: 1 },
   catTitle: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: -0.2,
-    marginBottom: 2,
+    marginBottom: 1,
   },
   catDesc: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
-  catDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    opacity: 0.8,
-  },
-  catDivider: {
+  catLine: {
     height: 1,
     borderRadius: 1,
-    marginBottom: 16,
+    marginBottom: 12,
   },
 
-  // ── ITEMS ROW ──
+  // Items
   itemsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 9,
   },
   itemCard: {
     width: ITEM_SIZE,
     borderRadius: 16,
     overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-      },
-      android: { elevation: 6 },
-    }),
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  itemCardGradient: {
+  itemCardInner: {
     paddingVertical: 14,
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 80,
+    minHeight: 82,
+    gap: 7,
   },
-  itemEmoji: {
-    fontSize: 26,
-    marginBottom: 6,
+  itemIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.13)',
   },
   itemTitle: {
     fontSize: 11,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.95)',
     textAlign: 'center',
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
   },
 
-  // ── CTA ──
-  cta: {
-    marginHorizontal: 16,
-    marginTop: 28,
-    borderRadius: CARD_RADIUS,
-    overflow: 'hidden',
-  },
-  ctaGradient: {
-    padding: 28,
+  // Footer note
+  footerNote: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 7,
+    justifyContent: 'center',
+    marginTop: 20,
+    marginHorizontal: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(138,43,226,0.1)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(138,43,226,0.22)',
   },
-  ctaEmoji: {
-    fontSize: 40,
-    marginBottom: 10,
-  },
-  ctaTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#FFF',
-    marginBottom: 8,
-    letterSpacing: -0.3,
-  },
-  ctaText: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.85)',
-    textAlign: 'center',
-    lineHeight: 20,
+  footerNoteText: {
+    fontSize: 12,
+    color: BRAND.textMuted,
+    fontStyle: 'italic',
   },
 
-  // ── MODAL ──
+  // Modal
   modalContainer: {
     flex: 1,
-    backgroundColor: THEME.bg,
+    backgroundColor: BRAND.bg,
   },
 });
