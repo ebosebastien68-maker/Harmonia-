@@ -1,6 +1,9 @@
 /**
- * AdminCommunity.tsx — v3
- * Corrections : ConfirmModal JSX (web+mobile), db.rpc → supabaseAdmin, apostrophes JSX
+ * AdminCommunity.tsx — v4
+ * • Bouton "Rechercher" explicite (trophées, ajout membre, cible notif)
+ * • Message succès / erreur après recherche
+ * • animationType conditionné Platform.OS (web = 'none')
+ * • Pas de useNativeDriver
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -13,12 +16,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
+// Platform helpers
+const SLIDE = Platform.OS === 'web' ? 'none' : 'slide';
+const FADE  = Platform.OS === 'web' ? 'none' : 'fade';
+
 const C = {
   bg: '#F5F0FA', surface: '#FFFFFF', border: '#E0D5F0',
   purple: '#7C3AED', purpleL: '#A855F7', gold: '#D97706',
   danger: '#DC2626', muted: '#6B7280', text: '#111827',
   soft: '#374151', green: '#059669', blue: '#2563EB',
-  orange: '#EA580C',
 };
 
 type Section = 'groups' | 'notifications' | 'trophies' | 'settings';
@@ -60,7 +66,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error,         setError]         = useState('');
 
-  // ── Groupes ──────────────────────────────────────────────────────────────
+  // ── Groupes ───────────────────────────────────────────────────────────────
   const [groups,        setGroups]        = useState<Group[]>([]);
   const [selGroup,      setSelGroup]      = useState<Group | null>(null);
   const [members,       setMembers]       = useState<GroupMember[]>([]);
@@ -69,11 +75,12 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [grpName,       setGrpName]       = useState('');
   const [grpDesc,       setGrpDesc]       = useState('');
   const [showAddMember, setShowAddMember] = useState(false);
-  const [userSearch,    setUserSearch]    = useState('');
-  const [userList,      setUserList]      = useState<UserProfile[]>([]);
-  const [userLoading,   setUserLoading]   = useState(false);
+  const [memberSearch,  setMemberSearch]  = useState('');
+  const [memberList,    setMemberList]    = useState<UserProfile[]>([]);
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [memberMsg,     setMemberMsg]     = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  // ── Notifications ─────────────────────────────────────────────────────────
+  // ── Notifications ──────────────────────────────────────────────────────────
   const [notifications,    setNotifications]    = useState<Notification[]>([]);
   const [showNotifForm,    setShowNotifForm]    = useState(false);
   const [notifType,        setNotifType]        = useState<'global' | 'targeted'>('global');
@@ -83,35 +90,37 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   const [showTargetPicker, setShowTargetPicker] = useState(false);
   const [targetSearch,     setTargetSearch]     = useState('');
   const [targetList,       setTargetList]       = useState<UserProfile[]>([]);
+  const [targetLoading,    setTargetLoading]    = useState(false);
+  const [targetMsg,        setTargetMsg]        = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  // ── Trophées ──────────────────────────────────────────────────────────────
+  // ── Trophées ───────────────────────────────────────────────────────────────
   const [trophySearch,       setTrophySearch]       = useState('');
   const [trophySearchResult, setTrophySearchResult] = useState<UserProfile[]>([]);
   const [trophySearchLoad,   setTrophySearchLoad]   = useState(false);
+  const [trophySearchMsg,    setTrophySearchMsg]    = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [trophyUser,         setTrophyUser]         = useState<UserProfile | null>(null);
   const [trophyTitle,        setTrophyTitle]        = useState('');
   const [trophyDesc,         setTrophyDesc]         = useState('');
   const [userTrophies,       setUserTrophies]       = useState<Trophy[]>([]);
   const [trophiesLoading,    setTrophiesLoading]    = useState(false);
 
-  // ── Réglages ──────────────────────────────────────────────────────────────
+  // ── Réglages ───────────────────────────────────────────────────────────────
   const [settings,   setSettings]   = useState<AppSettings | null>(null);
   const [regMessage, setRegMessage] = useState('');
   const [games,      setGames]      = useState<GameWithSessions[]>([]);
   const [toggling,   setToggling]   = useState<string | null>(null);
 
-  // ── Modale de confirmation (web + mobile) ─────────────────────────────────
+  // ── Modale de confirmation ─────────────────────────────────────────────────
   const [confirm, setConfirm] = useState<{
     visible: boolean; title: string; message: string;
     onConfirm: () => void; confirmLabel?: string; danger?: boolean;
   }>({ visible: false, title: '', message: '', onConfirm: () => {} });
 
-  const askConfirm = (title: string, message: string, onConfirm: () => void, danger = true) => {
+  const askConfirm = (title: string, message: string, onConfirm: () => void, danger = true) =>
     setConfirm({ visible: true, title, message, onConfirm, danger, confirmLabel: 'Confirmer' });
-  };
   const closeConfirm = () => setConfirm(c => ({ ...c, visible: false }));
 
-  // ── API ───────────────────────────────────────────────────────────────────
+  // ── API ────────────────────────────────────────────────────────────────────
   const api = useCallback(async (body: Record<string, any>) => {
     const res  = await fetch(`${BACKEND_URL}/admin-community`, {
       method: 'POST',
@@ -123,7 +132,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     return data;
   }, [adminEmail, adminPassword]);
 
-  // ── Chargements ───────────────────────────────────────────────────────────
+  // ── Chargements ────────────────────────────────────────────────────────────
   useEffect(() => {
     setError('');
     if (section === 'groups')        loadGroups();
@@ -174,20 +183,34 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setTrophiesLoading(false); }
   }, [api]);
 
-  // ── Recherche utilisateurs ────────────────────────────────────────────────
-  const searchUsers = useCallback(async (
-    q: string,
+  // ── Recherche utilisateurs — avec bouton ───────────────────────────────────
+  const doSearchUsers = async (
+    term: string,
     setList: (u: UserProfile[]) => void,
-    setLoad: (b: boolean) => void
+    setLoad: (b: boolean) => void,
+    setMsg:  (m: { type: 'ok' | 'err'; text: string } | null) => void
   ) => {
-    if (q.length < 2) { setList([]); return; }
-    setLoad(true);
-    try { const d = await api({ function: 'listUsers', search: q, limit: 20 }); setList(d.users || []); }
-    catch {}
-    finally { setLoad(false); }
-  }, [api]);
+    if (!term.trim()) {
+      setMsg({ type: 'err', text: 'Saisissez un nom ou prénom.' });
+      return;
+    }
+    setLoad(true); setMsg(null); setList([]);
+    try {
+      const d = await api({ function: 'listUsers', search: term.trim(), limit: 20 });
+      const users: UserProfile[] = d.users || [];
+      setList(users);
+      if (users.length === 0)
+        setMsg({ type: 'err', text: `Aucun résultat pour "${term.trim()}".` });
+      else
+        setMsg({ type: 'ok', text: `${users.length} résultat${users.length > 1 ? 's' : ''} trouvé${users.length > 1 ? 's' : ''}.` });
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message });
+    } finally {
+      setLoad(false);
+    }
+  };
 
-  // ── Actions GROUPES ───────────────────────────────────────────────────────
+  // ── Actions GROUPES ────────────────────────────────────────────────────────
   const openGroupForm = (g?: Group) => {
     setEditingGrp(g ?? null); setGrpName(g?.name ?? ''); setGrpDesc(g?.description ?? '');
     setShowGrpForm(true);
@@ -231,18 +254,13 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setActionLoading(null); setShowAddMember(false); }
   };
 
-  // ── Actions NOTIFICATIONS ─────────────────────────────────────────────────
+  // ── Actions NOTIFICATIONS ──────────────────────────────────────────────────
   const sendNotification = async () => {
     if (!notifTitle.trim() || !notifContent.trim()) return;
-    if (notifType === 'targeted' && !notifTarget)
-      return Alert.alert('Requis', 'Sélectionnez un utilisateur cible');
+    if (notifType === 'targeted' && !notifTarget) return Alert.alert('Requis', 'Sélectionnez un utilisateur cible');
     setActionLoading('notif-send');
     try {
-      await api({
-        function: 'createNotification', type: notifType,
-        title: notifTitle, content: notifContent,
-        target_user_id: notifType === 'targeted' ? notifTarget!.id : undefined,
-      });
+      await api({ function: 'createNotification', type: notifType, title: notifTitle, content: notifContent, target_user_id: notifType === 'targeted' ? notifTarget!.id : undefined });
       setShowNotifForm(false); setNotifTitle(''); setNotifContent(''); setNotifTarget(null); setNotifType('global');
       await loadNotifications();
     } catch (e: any) { Alert.alert('Erreur', e.message); }
@@ -258,22 +276,17 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     });
   };
 
-  // ── Actions TROPHÉES ──────────────────────────────────────────────────────
+  // ── Actions TROPHÉES ───────────────────────────────────────────────────────
   const selectTrophyUser = async (u: UserProfile) => {
-    setTrophyUser(u); setTrophySearch(''); setTrophySearchResult([]);
+    setTrophyUser(u); setTrophySearch(''); setTrophySearchResult([]); setTrophySearchMsg(null);
     setTrophyTitle(''); setTrophyDesc('');
     await loadUserTrophies(u);
   };
   const awardTrophy = async () => {
-    if (!trophyUser || !trophyTitle.trim()) {
-      Alert.alert('Requis', 'Le titre du trophée est obligatoire'); return;
-    }
+    if (!trophyUser || !trophyTitle.trim()) { Alert.alert('Requis', 'Le titre du trophée est obligatoire'); return; }
     setActionLoading('trophy-award');
     try {
-      const d = await api({
-        function: 'awardTrophy', user_id: trophyUser.id,
-        title: trophyTitle, description: trophyDesc || undefined,
-      });
+      const d = await api({ function: 'awardTrophy', user_id: trophyUser.id, title: trophyTitle, description: trophyDesc || undefined });
       Alert.alert('🏆 Trophée attribué !', `${d.awarded_to} — ${d.new_count} trophée(s)`);
       setTrophyTitle(''); setTrophyDesc('');
       setTrophyUser(prev => prev ? { ...prev, trophies_count: d.new_count } : prev);
@@ -282,44 +295,44 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
     finally { setActionLoading(null); }
   };
 
-  // ── Actions RÉGLAGES ──────────────────────────────────────────────────────
+  // ── Actions RÉGLAGES ───────────────────────────────────────────────────────
   const toggleRegistrations = async (open: boolean) => {
     const title   = open ? 'Ouvrir les inscriptions ?' : 'Fermer les inscriptions ?';
-    const message = open
-      ? 'Les nouveaux utilisateurs pourront créer un compte.'
-      : 'Toute tentative de création de compte sera refusée.';
+    const message = open ? 'Les nouveaux utilisateurs pourront créer un compte.' : 'Toute tentative de création de compte sera refusée.';
     askConfirm(title, message, async () => {
-      closeConfirm();
-      setActionLoading('reg-toggle');
+      closeConfirm(); setActionLoading('reg-toggle');
       try { await api({ function: 'setRegistrationsOpen', open, message: regMessage || undefined }); await loadSettingsAndSessions(); }
       catch (e: any) { Alert.alert('Erreur', e.message); }
       finally { setActionLoading(null); }
     });
   };
   const saveRegMessage = async () => {
-    if (!settings) return;
-    setActionLoading('reg-msg');
+    if (!settings) return; setActionLoading('reg-msg');
     try { await api({ function: 'setRegistrationsOpen', open: settings.registrations_open, message: regMessage }); await loadSettingsAndSessions(); }
     catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setActionLoading(null); }
   };
   const toggleSession = async (session: GameSession, game_id: string) => {
-    const newVal = !session.is_open;
-    setToggling(session.id);
+    const newVal = !session.is_open; setToggling(session.id);
     try {
       await api({ function: 'toggleSessionOpen', session_id: session.id, is_open: newVal });
-      setGames(prev => prev.map(g =>
-        g.id !== game_id ? g : {
-          ...g,
-          sessions: g.sessions.map(s => s.id === session.id ? { ...s, is_open: newVal } : s),
-        }
-      ));
+      setGames(prev => prev.map(g => g.id !== game_id ? g : { ...g, sessions: g.sessions.map(s => s.id === session.id ? { ...s, is_open: newVal } : s) }));
     } catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setToggling(null); }
   };
 
-  const fmtDate = (d: string) =>
-    new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+  const fmtDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // ── Composant message feedback ─────────────────────────────────────────────
+  const FeedbackMsg = ({ msg }: { msg: { type: 'ok' | 'err'; text: string } | null }) => {
+    if (!msg) return null;
+    return (
+      <View style={[S.feedbackRow, msg.type === 'ok' ? S.feedbackOk : S.feedbackErr]}>
+        <Ionicons name={msg.type === 'ok' ? 'checkmark-circle' : 'alert-circle'} size={15} color={msg.type === 'ok' ? C.green : C.danger} />
+        <Text style={[S.feedbackTxt, { color: msg.type === 'ok' ? C.green : C.danger }]}>{msg.text}</Text>
+      </View>
+    );
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDU
@@ -327,13 +340,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   return (
     <View style={S.container}>
 
-      {/* ── Modale de confirmation ── */}
-      <Modal
-        transparent
-        animationType="fade"
-        visible={confirm.visible}
-        onRequestClose={closeConfirm}
-      >
+      {/* ── Modale confirmation ── */}
+      <Modal transparent animationType={FADE} visible={confirm.visible} onRequestClose={closeConfirm}>
         <View style={S.cmOverlay}>
           <View style={S.cmBox}>
             <Text style={S.cmTitle}>{confirm.title}</Text>
@@ -342,10 +350,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
               <TouchableOpacity style={S.cmBtnCancel} onPress={closeConfirm}>
                 <Text style={S.cmBtnCancelTxt}>Annuler</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[S.cmBtnConfirm, confirm.danger ? S.cmBtnDanger : undefined]}
-                onPress={confirm.onConfirm}
-              >
+              <TouchableOpacity style={[S.cmBtnConfirm, confirm.danger ? S.cmBtnDanger : undefined]} onPress={confirm.onConfirm}>
                 <Text style={S.cmBtnConfirmTxt}>{confirm.confirmLabel ?? 'Confirmer'}</Text>
               </TouchableOpacity>
             </View>
@@ -355,9 +360,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
       {/* ── Header ── */}
       <LinearGradient colors={['#7C3AED', '#4C1D95']} style={S.header}>
-        <TouchableOpacity onPress={onBack} style={S.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#FFF" />
-        </TouchableOpacity>
+        <TouchableOpacity onPress={onBack} style={S.backBtn}><Ionicons name="arrow-back" size={22} color="#FFF" /></TouchableOpacity>
         <Text style={S.headerTitle}>🌐 Communauté</Text>
         <View style={{ width: 40 }} />
       </LinearGradient>
@@ -370,11 +373,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           { key: 'trophies',      icon: 'trophy-outline',        label: 'Trophées' },
           { key: 'settings',      icon: 'settings-outline',      label: 'Réglages' },
         ] as { key: Section; icon: string; label: string }[]).map(t => (
-          <TouchableOpacity
-            key={t.key}
-            style={[S.tab, section === t.key && S.tabActive]}
-            onPress={() => { setSection(t.key); setSelGroup(null); setTrophyUser(null); setError(''); }}
-          >
+          <TouchableOpacity key={t.key} style={[S.tab, section === t.key && S.tabActive]}
+            onPress={() => { setSection(t.key); setSelGroup(null); setTrophyUser(null); setError(''); }}>
             <Ionicons name={t.icon as any} size={18} color={section === t.key ? C.purple : C.muted} />
             <Text style={[S.tabTxt, section === t.key && S.tabTxtActive]}>{t.label}</Text>
           </TouchableOpacity>
@@ -391,8 +391,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
             <View style={S.secHeader}>
               <Text style={S.secTitle}>Groupes de discussion</Text>
               <TouchableOpacity style={S.btnPrimary} onPress={() => openGroupForm()}>
-                <Ionicons name="add" size={16} color="#FFF" />
-                <Text style={S.btnPrimaryTxt}>Nouveau</Text>
+                <Ionicons name="add" size={16} color="#FFF" /><Text style={S.btnPrimaryTxt}>Nouveau</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -412,11 +411,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                         <TouchableOpacity style={S.iconBtn} onPress={e => { e.stopPropagation?.(); openGroupForm(g); }}>
                           <Ionicons name="pencil-outline" size={16} color={C.purple} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={S.iconBtn} onPress={e => { e.stopPropagation?.(); confirmDeleteGroup(g); }}
-                          disabled={actionLoading === `del-grp-${g.id}`}>
-                          {actionLoading === `del-grp-${g.id}`
-                            ? <ActivityIndicator size="small" color={C.danger} />
-                            : <Ionicons name="trash-outline" size={16} color={C.danger} />}
+                        <TouchableOpacity style={S.iconBtn} onPress={e => { e.stopPropagation?.(); confirmDeleteGroup(g); }} disabled={actionLoading === `del-grp-${g.id}`}>
+                          {actionLoading === `del-grp-${g.id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="trash-outline" size={16} color={C.danger} />}
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -429,17 +425,15 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         {section === 'groups' && selGroup && (
           <View>
             <TouchableOpacity style={S.backLink} onPress={() => { setSelGroup(null); loadGroups(); }}>
-              <Ionicons name="chevron-back" size={18} color={C.purple} />
-              <Text style={S.backLinkTxt}>Retour aux groupes</Text>
+              <Ionicons name="chevron-back" size={18} color={C.purple} /><Text style={S.backLinkTxt}>Retour aux groupes</Text>
             </TouchableOpacity>
             <View style={S.secHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={S.secTitle}>{selGroup.name}</Text>
                 {selGroup.description ? <Text style={S.cardSub}>{selGroup.description}</Text> : null}
               </View>
-              <TouchableOpacity style={S.btnPrimary} onPress={() => { setUserSearch(''); setUserList([]); setShowAddMember(true); }}>
-                <Ionicons name="person-add-outline" size={14} color="#FFF" />
-                <Text style={S.btnPrimaryTxt}>Ajouter</Text>
+              <TouchableOpacity style={S.btnPrimary} onPress={() => { setMemberSearch(''); setMemberList([]); setMemberMsg(null); setShowAddMember(true); }}>
+                <Ionicons name="person-add-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Ajouter</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -454,9 +448,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                       <Text style={S.memberMeta}>depuis {fmtDate(m.joined_at)}</Text>
                     </View>
                     <TouchableOpacity onPress={() => removeMember(m)} disabled={actionLoading === `rm-${m.user_id}`}>
-                      {actionLoading === `rm-${m.user_id}`
-                        ? <ActivityIndicator size="small" color={C.danger} />
-                        : <Ionicons name="remove-circle-outline" size={22} color={C.danger} />}
+                      {actionLoading === `rm-${m.user_id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="remove-circle-outline" size={22} color={C.danger} />}
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -468,11 +460,8 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
           <View>
             <View style={S.secHeader}>
               <Text style={S.secTitle}>Notifications</Text>
-              <TouchableOpacity style={S.btnPrimary} onPress={() => {
-                setNotifTitle(''); setNotifContent(''); setNotifType('global'); setNotifTarget(null); setShowNotifForm(true);
-              }}>
-                <Ionicons name="megaphone-outline" size={14} color="#FFF" />
-                <Text style={S.btnPrimaryTxt}>Publier</Text>
+              <TouchableOpacity style={S.btnPrimary} onPress={() => { setNotifTitle(''); setNotifContent(''); setNotifType('global'); setNotifTarget(null); setShowNotifForm(true); }}>
+                <Ionicons name="megaphone-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text>
               </TouchableOpacity>
             </View>
             {loading
@@ -482,20 +471,14 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                 : notifications.map(n => (
                   <View key={n.id} style={S.notifCard}>
                     <View style={[S.notifPill, n.type === 'global' ? S.pillGlobal : S.pillTargeted]}>
-                      <Text style={S.pillTxt}>
-                        {n.type === 'global'
-                          ? '🌐 Globale'
-                          : `🎯 ${n.target ? `${n.target.prenom} ${n.target.nom}` : 'Ciblée'}`}
-                      </Text>
+                      <Text style={S.pillTxt}>{n.type === 'global' ? '🌐 Globale' : `🎯 ${n.target ? `${n.target.prenom} ${n.target.nom}` : 'Ciblée'}`}</Text>
                     </View>
                     <Text style={S.notifTitle}>{n.title}</Text>
                     <Text style={S.notifContent} numberOfLines={2}>{n.content}</Text>
                     <View style={S.notifFooter}>
                       <Text style={S.notifMeta}>{n.sender ? `${n.sender.prenom} ${n.sender.nom}` : '?'} · {fmtDate(n.created_at)}</Text>
                       <TouchableOpacity onPress={() => confirmDeleteNotif(n)} disabled={actionLoading === `del-notif-${n.id}`}>
-                        {actionLoading === `del-notif-${n.id}`
-                          ? <ActivityIndicator size="small" color={C.danger} />
-                          : <Ionicons name="trash-outline" size={16} color={C.danger} />}
+                        {actionLoading === `del-notif-${n.id}` ? <ActivityIndicator size="small" color={C.danger} /> : <Ionicons name="trash-outline" size={16} color={C.danger} />}
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -507,21 +490,38 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
         {section === 'trophies' && (
           <View>
             <Text style={S.secTitle}>Attribuer un trophée 🏆</Text>
-            <Text style={S.secSubtitle}>Recherchez un utilisateur, remplissez le titre et attribuez.</Text>
+            <Text style={S.secSubtitle}>Recherchez un utilisateur par nom ou prénom, puis attribuez un trophée.</Text>
 
             {!trophyUser && (
-              <View>
-                <View style={[S.searchBar, { marginTop: 12 }]}>
-                  <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={{ flex: 1, fontSize: 14, color: C.text }}
-                    placeholder="Nom ou prénom de l'utilisateur…"
-                    placeholderTextColor={C.muted}
-                    value={trophySearch}
-                    onChangeText={t => { setTrophySearch(t); searchUsers(t, setTrophySearchResult, setTrophySearchLoad); }}
-                  />
-                  {trophySearchLoad && <ActivityIndicator size="small" color={C.purple} />}
+              <View style={{ marginTop: 12 }}>
+                {/* Champ + bouton sur la même ligne */}
+                <View style={S.searchRow}>
+                  <View style={[S.searchBar, { flex: 1 }]}>
+                    <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
+                    <TextInput
+                      style={{ flex: 1, fontSize: 14, color: C.text }}
+                      placeholder="Nom ou prénom…"
+                      placeholderTextColor={C.muted}
+                      value={trophySearch}
+                      onChangeText={t => { setTrophySearch(t); setTrophySearchMsg(null); setTrophySearchResult([]); }}
+                      returnKeyType="search"
+                      onSubmitEditing={() => doSearchUsers(trophySearch, setTrophySearchResult, setTrophySearchLoad, setTrophySearchMsg)}
+                    />
+                    {trophySearchLoad && <ActivityIndicator size="small" color={C.purple} />}
+                  </View>
+                  {trophySearch.trim().length > 0 && (
+                    <TouchableOpacity
+                      style={[S.btnSearch, trophySearchLoad && S.btnDisabled]}
+                      onPress={() => doSearchUsers(trophySearch, setTrophySearchResult, setTrophySearchLoad, setTrophySearchMsg)}
+                      disabled={trophySearchLoad}
+                    >
+                      <Text style={S.btnSearchTxt}>Rechercher</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
+
+                <FeedbackMsg msg={trophySearchMsg} />
+
                 {trophySearchResult.length > 0 && (
                   <View style={S.pickList}>
                     {trophySearchResult.map(u => (
@@ -535,9 +535,6 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                       </TouchableOpacity>
                     ))}
                   </View>
-                )}
-                {trophySearch.length >= 2 && trophySearchResult.length === 0 && !trophySearchLoad && (
-                  <Text style={[S.emptyTxt, { marginTop: 16, textAlign: 'center' }]}>Aucun résultat</Text>
                 )}
               </View>
             )}
@@ -557,26 +554,12 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
 
                 <View style={S.trophyForm}>
                   <Text style={S.fieldLabel}>Titre du trophée *</Text>
-                  <TextInput
-                    style={S.input}
-                    placeholder="Ex: Champion Arts – Run #3"
-                    placeholderTextColor={C.muted}
-                    value={trophyTitle}
-                    onChangeText={setTrophyTitle}
-                  />
+                  <TextInput style={S.input} placeholder="Ex: Champion Arts – Run #3" placeholderTextColor={C.muted} value={trophyTitle} onChangeText={setTrophyTitle} />
                   <Text style={S.fieldLabel}>Description (optionnel)</Text>
-                  <TextInput
-                    style={[S.input, { minHeight: 70 }]}
-                    placeholder="Ex: Meilleur score du run avec 142 votes"
-                    placeholderTextColor={C.muted}
-                    value={trophyDesc}
-                    onChangeText={setTrophyDesc}
-                    multiline
-                  />
+                  <TextInput style={[S.input, { minHeight: 70 }]} placeholder="Ex: Meilleur score du run avec 142 votes" placeholderTextColor={C.muted} value={trophyDesc} onChangeText={setTrophyDesc} multiline />
                   <TouchableOpacity
                     style={[S.btnGold, (!trophyTitle.trim() || actionLoading === 'trophy-award') && S.btnDisabled]}
-                    onPress={awardTrophy}
-                    disabled={!trophyTitle.trim() || actionLoading === 'trophy-award'}
+                    onPress={awardTrophy} disabled={!trophyTitle.trim() || actionLoading === 'trophy-award'}
                   >
                     {actionLoading === 'trophy-award'
                       ? <ActivityIndicator color="#FFF" />
@@ -596,9 +579,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                           <View style={{ flex: 1 }}>
                             <Text style={S.trophyTitleTxt}>{t.title}</Text>
                             {t.description ? <Text style={S.trophyDescTxt}>{t.description}</Text> : null}
-                            <Text style={S.trophyMeta}>
-                              {t.awarder ? `${t.awarder.prenom} ${t.awarder.nom}` : '?'} · {fmtDate(t.awarded_at)}
-                            </Text>
+                            <Text style={S.trophyMeta}>{t.awarder ? `${t.awarder.prenom} ${t.awarder.nom}` : '?'} · {fmtDate(t.awarded_at)}</Text>
                           </View>
                         </View>
                       ))}
@@ -620,42 +601,18 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                     <View style={S.settingCard}>
                       <View style={S.settingRow}>
                         <View style={{ flex: 1 }}>
-                          <Text style={S.settingTitle}>
-                            {settings.registrations_open ? '✅ Ouvertes' : '🔐 Fermées'}
-                          </Text>
-                          <Text style={S.settingSub}>
-                            {settings.registrations_open
-                              ? `Les nouveaux utilisateurs peuvent créer un compte.`
-                              : `Toute tentative de création de compte est bloquée.`}
-                          </Text>
+                          <Text style={S.settingTitle}>{settings.registrations_open ? '✅ Ouvertes' : '🔐 Fermées'}</Text>
+                          <Text style={S.settingSub}>{settings.registrations_open ? `Les nouveaux utilisateurs peuvent créer un compte.` : `Toute tentative de création de compte est bloquée.`}</Text>
                           <Text style={S.settingMeta}>Modifié le {fmtDate(settings.updated_at)}</Text>
                         </View>
                         {actionLoading === 'reg-toggle'
                           ? <ActivityIndicator color={C.purple} />
-                          : <Switch
-                              value={settings.registrations_open}
-                              onValueChange={toggleRegistrations}
-                              trackColor={{ false: '#DDD', true: '#A855F7' }}
-                              thumbColor={settings.registrations_open ? C.purple : '#888'}
-                            />}
+                          : <Switch value={settings.registrations_open} onValueChange={toggleRegistrations} trackColor={{ false: '#DDD', true: '#A855F7' }} thumbColor={settings.registrations_open ? C.purple : '#888'} />}
                       </View>
                       <Text style={[S.fieldLabel, { marginTop: 14 }]}>Message quand inscriptions fermées</Text>
-                      <TextInput
-                        style={[S.input, { minHeight: 60 }]}
-                        placeholder="Les inscriptions sont terminées. 🔐"
-                        placeholderTextColor={C.muted}
-                        value={regMessage}
-                        onChangeText={setRegMessage}
-                        multiline
-                      />
-                      <TouchableOpacity
-                        style={[S.btnPrimary, { alignSelf: 'flex-start', marginTop: 8 }]}
-                        onPress={saveRegMessage}
-                        disabled={actionLoading === 'reg-msg'}
-                      >
-                        {actionLoading === 'reg-msg'
-                          ? <ActivityIndicator color="#FFF" size="small" />
-                          : <Text style={S.btnPrimaryTxt}>Sauvegarder</Text>}
+                      <TextInput style={[S.input, { minHeight: 60 }]} placeholder="Les inscriptions sont terminées. 🔐" placeholderTextColor={C.muted} value={regMessage} onChangeText={setRegMessage} multiline />
+                      <TouchableOpacity style={[S.btnPrimary, { alignSelf: 'flex-start', marginTop: 8 }]} onPress={saveRegMessage} disabled={actionLoading === 'reg-msg'}>
+                        {actionLoading === 'reg-msg' ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={S.btnPrimaryTxt}>Sauvegarder</Text>}
                       </TouchableOpacity>
                     </View>
                   )}
@@ -682,24 +639,13 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
                                 <View key={s.id} style={S.sessionRow}>
                                   <View style={{ flex: 1 }}>
                                     <Text style={S.sessionTitle} numberOfLines={1}>{s.title}</Text>
-                                    <Text style={S.sessionMeta}>
-                                      {s.is_paid ? `💰 ${s.price_cfa} FCFA` : 'Gratuit'}
-                                      {' · '}{fmtDate(s.created_at)}
-                                    </Text>
+                                    <Text style={S.sessionMeta}>{s.is_paid ? `💰 ${s.price_cfa} FCFA` : 'Gratuit'}{' · '}{fmtDate(s.created_at)}</Text>
                                   </View>
                                   <View style={S.sessionToggle}>
-                                    <Text style={[S.sessionState, { color: s.is_open ? C.green : C.danger }]}>
-                                      {s.is_open ? 'Ouvert' : 'Fermé'}
-                                    </Text>
+                                    <Text style={[S.sessionState, { color: s.is_open ? C.green : C.danger }]}>{s.is_open ? 'Ouvert' : 'Fermé'}</Text>
                                     {toggling === s.id
                                       ? <ActivityIndicator size="small" color={C.purple} style={{ marginLeft: 8 }} />
-                                      : <Switch
-                                          value={s.is_open}
-                                          onValueChange={() => toggleSession(s, game.id)}
-                                          trackColor={{ false: '#DDD', true: '#A855F7' }}
-                                          thumbColor={s.is_open ? C.purple : '#888'}
-                                          disabled={!!toggling}
-                                        />}
+                                      : <Switch value={s.is_open} onValueChange={() => toggleSession(s, game.id)} trackColor={{ false: '#DDD', true: '#A855F7' }} thumbColor={s.is_open ? C.purple : '#888'} disabled={!!toggling} />}
                                   </View>
                                 </View>
                               ))}
@@ -716,7 +662,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
       {/* ══════════════ MODALES ══════════════ */}
 
       {/* Créer / modifier groupe */}
-      <Modal visible={showGrpForm} animationType="slide" transparent onRequestClose={() => setShowGrpForm(false)}>
+      <Modal visible={showGrpForm} animationType={SLIDE} transparent onRequestClose={() => setShowGrpForm(false)}>
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>{editingGrp ? 'Modifier le groupe' : 'Nouveau groupe'}</Text>
@@ -735,24 +681,38 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
       </Modal>
 
       {/* Ajouter membre */}
-      <Modal visible={showAddMember} animationType="slide" transparent onRequestClose={() => setShowAddMember(false)}>
+      <Modal visible={showAddMember} animationType={SLIDE} transparent onRequestClose={() => setShowAddMember(false)}>
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Ajouter un membre</Text>
-            <View style={S.searchBar}>
-              <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-              <TextInput
-                style={{ flex: 1, fontSize: 14, color: C.text }}
-                placeholder="Nom de l'utilisateur…"
-                placeholderTextColor={C.muted}
-                value={userSearch}
-                onChangeText={t => { setUserSearch(t); searchUsers(t, setUserList, setUserLoading); }}
-                autoFocus
-              />
-              {userLoading && <ActivityIndicator size="small" color={C.purple} />}
+            <View style={S.searchRow}>
+              <View style={[S.searchBar, { flex: 1 }]}>
+                <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 14, color: C.text }}
+                  placeholder="Nom ou prénom…"
+                  placeholderTextColor={C.muted}
+                  value={memberSearch}
+                  onChangeText={t => { setMemberSearch(t); setMemberMsg(null); setMemberList([]); }}
+                  returnKeyType="search"
+                  onSubmitEditing={() => doSearchUsers(memberSearch, setMemberList, setMemberLoading, setMemberMsg)}
+                  autoFocus
+                />
+                {memberLoading && <ActivityIndicator size="small" color={C.purple} />}
+              </View>
+              {memberSearch.trim().length > 0 && (
+                <TouchableOpacity
+                  style={[S.btnSearch, memberLoading && S.btnDisabled]}
+                  onPress={() => doSearchUsers(memberSearch, setMemberList, setMemberLoading, setMemberMsg)}
+                  disabled={memberLoading}
+                >
+                  <Text style={S.btnSearchTxt}>Rechercher</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <ScrollView style={{ maxHeight: 280, marginTop: 8 }}>
-              {userList.map(u => (
+            <FeedbackMsg msg={memberMsg} />
+            <ScrollView style={{ maxHeight: 260, marginTop: 8 }}>
+              {memberList.map(u => (
                 <TouchableOpacity key={u.id} style={S.pickItem} onPress={() => addMember(u)} disabled={actionLoading === `add-${u.id}`}>
                   <View style={S.pickAvatar}><Text style={S.pickAvatarTxt}>{u.prenom.charAt(0)}{u.nom.charAt(0)}</Text></View>
                   <View style={{ flex: 1 }}><Text style={S.pickName}>{u.prenom} {u.nom}</Text><Text style={S.pickMeta}>{u.role}</Text></View>
@@ -768,7 +728,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
       </Modal>
 
       {/* Créer notification */}
-      <Modal visible={showNotifForm} animationType="slide" transparent onRequestClose={() => setShowNotifForm(false)}>
+      <Modal visible={showNotifForm} animationType={SLIDE} transparent onRequestClose={() => setShowNotifForm(false)}>
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Publier une notification</Text>
@@ -781,7 +741,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
               </TouchableOpacity>
             </View>
             {notifType === 'targeted' && (
-              <TouchableOpacity style={S.targetSel} onPress={() => { setTargetSearch(''); setTargetList([]); setShowTargetPicker(true); }}>
+              <TouchableOpacity style={S.targetSel} onPress={() => { setTargetSearch(''); setTargetList([]); setTargetMsg(null); setShowTargetPicker(true); }}>
                 <Ionicons name="person-outline" size={16} color={notifTarget ? C.purple : C.muted} />
                 <Text style={[S.targetSelTxt, notifTarget ? { color: C.purple } : undefined]}>
                   {notifTarget ? `${notifTarget.prenom} ${notifTarget.nom}` : 'Sélectionner un utilisateur…'}
@@ -797,12 +757,9 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
               <TouchableOpacity style={S.btnSecondary} onPress={() => setShowNotifForm(false)}><Text style={S.btnSecondaryTxt}>Annuler</Text></TouchableOpacity>
               <TouchableOpacity
                 style={[S.btnPrimary, (!notifTitle.trim() || !notifContent.trim()) && S.btnDisabled]}
-                onPress={sendNotification}
-                disabled={!notifTitle.trim() || !notifContent.trim() || actionLoading === 'notif-send'}
+                onPress={sendNotification} disabled={!notifTitle.trim() || !notifContent.trim() || actionLoading === 'notif-send'}
               >
-                {actionLoading === 'notif-send'
-                  ? <ActivityIndicator color="#FFF" />
-                  : <><Ionicons name="send-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text></>}
+                {actionLoading === 'notif-send' ? <ActivityIndicator color="#FFF" /> : <><Ionicons name="send-outline" size={14} color="#FFF" /><Text style={S.btnPrimaryTxt}>Publier</Text></>}
               </TouchableOpacity>
             </View>
           </View>
@@ -810,21 +767,36 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
       </Modal>
 
       {/* Sélecteur cible notif */}
-      <Modal visible={showTargetPicker} animationType="fade" transparent onRequestClose={() => setShowTargetPicker(false)}>
+      <Modal visible={showTargetPicker} animationType={FADE} transparent onRequestClose={() => setShowTargetPicker(false)}>
         <View style={S.overlay}>
           <View style={S.sheet}>
             <Text style={S.sheetTitle}>Sélectionner la cible</Text>
-            <View style={S.searchBar}>
-              <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
-              <TextInput
-                style={{ flex: 1, fontSize: 14, color: C.text }}
-                placeholder="Nom…"
-                placeholderTextColor={C.muted}
-                value={targetSearch}
-                onChangeText={t => { setTargetSearch(t); searchUsers(t, setTargetList, () => {}); }}
-                autoFocus
-              />
+            <View style={S.searchRow}>
+              <View style={[S.searchBar, { flex: 1 }]}>
+                <Ionicons name="search-outline" size={16} color={C.muted} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 14, color: C.text }}
+                  placeholder="Nom ou prénom…"
+                  placeholderTextColor={C.muted}
+                  value={targetSearch}
+                  onChangeText={t => { setTargetSearch(t); setTargetMsg(null); setTargetList([]); }}
+                  returnKeyType="search"
+                  onSubmitEditing={() => doSearchUsers(targetSearch, setTargetList, setTargetLoading, setTargetMsg)}
+                  autoFocus
+                />
+                {targetLoading && <ActivityIndicator size="small" color={C.purple} />}
+              </View>
+              {targetSearch.trim().length > 0 && (
+                <TouchableOpacity
+                  style={[S.btnSearch, targetLoading && S.btnDisabled]}
+                  onPress={() => doSearchUsers(targetSearch, setTargetList, setTargetLoading, setTargetMsg)}
+                  disabled={targetLoading}
+                >
+                  <Text style={S.btnSearchTxt}>Rechercher</Text>
+                </TouchableOpacity>
+              )}
             </View>
+            <FeedbackMsg msg={targetMsg} />
             <ScrollView style={{ maxHeight: 250, marginTop: 8 }}>
               {targetList.map(u => (
                 <TouchableOpacity key={u.id} style={S.pickItem} onPress={() => { setNotifTarget(u); setShowTargetPicker(false); }}>
@@ -844,7 +816,7 @@ export default function AdminCommunity({ adminEmail, adminPassword, onBack }: Pr
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ─────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   container:   { flex: 1, backgroundColor: C.bg },
   header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'ios' ? 52 : 38, paddingBottom: 14, paddingHorizontal: 16 },
@@ -859,6 +831,11 @@ const S = StyleSheet.create({
 
   errBanner: { backgroundColor: '#FEF2F2', padding: 10, borderLeftWidth: 4, borderLeftColor: C.danger, marginHorizontal: 16, marginTop: 8, borderRadius: 8 },
   errTxt:    { color: C.danger, fontSize: 13 },
+
+  feedbackRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, paddingHorizontal: 4 },
+  feedbackOk:  {},
+  feedbackErr: {},
+  feedbackTxt: { fontSize: 13, fontWeight: '600', flex: 1 },
 
   secHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   secTitle:    { fontSize: 17, fontWeight: '700', color: C.text, marginBottom: 2 },
@@ -918,8 +895,12 @@ const S = StyleSheet.create({
   sessionToggle:{ flexDirection: 'row', alignItems: 'center', gap: 6 },
   sessionState: { fontSize: 12, fontWeight: '700' },
 
-  searchBar:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3EEFF', borderRadius: 10, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: C.border },
-  pickList:     { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginTop: 6, overflow: 'hidden' },
+  searchRow:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  searchBar:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3EEFF', borderRadius: 10, paddingHorizontal: 12, height: 44, borderWidth: 1, borderColor: C.border },
+  btnSearch:    { backgroundColor: C.purple, borderRadius: 10, paddingHorizontal: 14, height: 44, justifyContent: 'center', alignItems: 'center' },
+  btnSearchTxt: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+
+  pickList:     { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginTop: 8, overflow: 'hidden' },
   pickItem:     { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
   pickAvatar:   { width: 36, height: 36, borderRadius: 18, backgroundColor: C.purple, justifyContent: 'center', alignItems: 'center' },
   pickAvatarTxt:{ color: '#FFF', fontWeight: '700', fontSize: 13 },
@@ -953,7 +934,6 @@ const S = StyleSheet.create({
   targetSel:         { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F3EEFF', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
   targetSelTxt:      { flex: 1, fontSize: 14, color: C.muted },
 
-  // Modale de confirmation
   cmOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   cmBox:          { backgroundColor: '#FFF', borderRadius: 18, padding: 24, width: '100%', maxWidth: 340 },
   cmTitle:        { fontSize: 17, fontWeight: '700', color: '#111', marginBottom: 10 },
