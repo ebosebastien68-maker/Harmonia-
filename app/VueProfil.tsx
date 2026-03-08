@@ -42,6 +42,7 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [avatarZoomed, setAvatarZoomed] = useState(false); // ← NOUVEAU
 
   useEffect(() => {
     if (visible && userId) {
@@ -49,7 +50,6 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   }, [visible, userId]);
 
-  // Récupérer le user_id de la session
   const getCurrentUserId = async (): Promise<string | null> => {
     try {
       const session = await AsyncStorage.getItem('harmonia_session');
@@ -63,61 +63,28 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     return null;
   };
 
-  // Charger le profil
   const loadProfile = async () => {
     setLoading(true);
-
     const myUserId = await getCurrentUserId();
-    if (!myUserId) {
-      setLoading(false);
-      return;
-    }
-
+    if (!myUserId) { setLoading(false); return; }
     setCurrentUserId(myUserId);
 
     try {
-      // Récupérer le profil
       const profileResponse = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-user-profile',
-          user_id: myUserId,
-          target_user_id: userId,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: 'get-user-profile', user_id: myUserId, target_user_id: userId }),
       });
-
       const profileData = await profileResponse.json();
+      if (profileData.success && profileData.profile) setProfile(profileData.profile);
 
-      if (profileData.success && profileData.profile) {
-        setProfile(profileData.profile);
-      }
-
-      // Récupérer le statut d'amitié
       const statusResponse = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-friendship-status',
-          user_id: myUserId,
-          target_user_id: userId,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: 'get-friendship-status', user_id: myUserId, target_user_id: userId }),
       });
-
       const statusData = await statusResponse.json();
-
-      if (statusData.success) {
-        setFriendshipStatus({
-          status: statusData.status,
-          requestId: statusData.request_id,
-        });
-      }
+      if (statusData.success) setFriendshipStatus({ status: statusData.status, requestId: statusData.request_id });
     } catch (error) {
       console.error('Error loading profile:', error);
     } finally {
@@ -125,29 +92,16 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   };
 
-  // Envoyer invitation
   const sendRequest = async () => {
     setActionLoading(true);
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'send-request',
-          user_id: currentUserId,
-          target_user_id: userId,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: 'send-request', user_id: currentUserId, target_user_id: userId }),
       });
-
       const data = await response.json();
-
-      if (data.success) {
-        await loadProfile(); // Recharger pour mettre à jour le statut
-      }
+      if (data.success) await loadProfile();
     } catch (error) {
       console.error('Error sending request:', error);
     } finally {
@@ -155,31 +109,17 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   };
 
-  // Annuler demande ou retirer ami
   const cancelOrRemove = async () => {
     if (!friendshipStatus.requestId) return;
-
     setActionLoading(true);
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'cancel-request',
-          user_id: currentUserId,
-          request_id: friendshipStatus.requestId,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: 'cancel-request', user_id: currentUserId, request_id: friendshipStatus.requestId }),
       });
-
       const data = await response.json();
-
-      if (data.success) {
-        await loadProfile();
-      }
+      if (data.success) await loadProfile();
     } catch (error) {
       console.error('Error canceling/removing:', error);
     } finally {
@@ -187,31 +127,17 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   };
 
-  // Accepter invitation (si reçue)
   const acceptRequest = async () => {
     if (!friendshipStatus.requestId) return;
-
     setActionLoading(true);
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'accept-request',
-          user_id: currentUserId,
-          request_id: friendshipStatus.requestId,
-        }),
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+        body: JSON.stringify({ action: 'accept-request', user_id: currentUserId, request_id: friendshipStatus.requestId }),
       });
-
       const data = await response.json();
-
-      if (data.success) {
-        await loadProfile();
-      }
+      if (data.success) await loadProfile();
     } catch (error) {
       console.error('Error accepting request:', error);
     } finally {
@@ -219,7 +145,6 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   };
 
-  // Rendu du bouton d'action
   const renderActionButton = () => {
     if (actionLoading) {
       return (
@@ -233,18 +158,12 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
       case 'none':
         return (
           <TouchableOpacity onPress={sendRequest} activeOpacity={0.8}>
-            <LinearGradient
-              colors={['#8A2BE2', '#DA70D6']}
-              style={styles.actionButton}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
+            <LinearGradient colors={['#8A2BE2', '#DA70D6']} style={styles.actionButton} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
               <Ionicons name="person-add" size={20} color="#fff" style={styles.buttonIcon} />
               <Text style={styles.actionButtonText}>Envoyer invitation</Text>
             </LinearGradient>
           </TouchableOpacity>
         );
-
       case 'sent':
         return (
           <TouchableOpacity onPress={cancelOrRemove} activeOpacity={0.8}>
@@ -254,17 +173,11 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </View>
           </TouchableOpacity>
         );
-
       case 'received':
         return (
           <View style={styles.actionButtonsRow}>
             <TouchableOpacity onPress={acceptRequest} activeOpacity={0.8} style={styles.halfButton}>
-              <LinearGradient
-                colors={['#10B981', '#34D399']}
-                style={styles.actionButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
+              <LinearGradient colors={['#10B981', '#34D399']} style={styles.actionButton} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                 <Ionicons name="checkmark" size={20} color="#fff" />
                 <Text style={styles.actionButtonText}>Accepter</Text>
               </LinearGradient>
@@ -277,7 +190,6 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </TouchableOpacity>
           </View>
         );
-
       case 'friends':
         return (
           <TouchableOpacity onPress={cancelOrRemove} activeOpacity={0.8}>
@@ -287,83 +199,111 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </View>
           </TouchableOpacity>
         );
-
       default:
         return null;
     }
   };
 
+  // Source de l'image (réutilisée pour le zoom)
+  const avatarSource = profile?.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR;
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={28} color="#333" />
-            </TouchableOpacity>
-          </View>
+    <>
+      {/* ── MODAL PRINCIPAL ── */}
+      <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
 
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#8A2BE2" />
-              <Text style={styles.loadingText}>Chargement...</Text>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Ionicons name="close" size={28} color="#333" />
+              </TouchableOpacity>
             </View>
-          ) : profile ? (
-            <>
-              {/* Photo de profil */}
-              <View style={styles.avatarContainer}>
-                <Image
-                  source={profile.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR}
-                  style={styles.avatar}
-                />
+
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#8A2BE2" />
+                <Text style={styles.loadingText}>Chargement...</Text>
               </View>
-
-              {/* Nom complet */}
-              <Text style={styles.name}>
-                {profile.prenom} {profile.nom}
-              </Text>
-
-              {/* Badge Premium (uniquement pour userpro) */}
-              {profile.role === 'userpro' && (
-                <LinearGradient
-                  colors={['#FFD700', '#FFA500']}
-                  style={styles.premiumBadge}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
+            ) : profile ? (
+              <>
+                {/* ── PHOTO DE PROFIL (cliquable) ── */}
+                <TouchableOpacity
+                  style={styles.avatarContainer}
+                  onPress={() => setAvatarZoomed(true)}
+                  activeOpacity={0.85}
                 >
-                  <Ionicons name="diamond" size={16} color="#fff" style={styles.badgeIcon} />
-                  <Text style={styles.premiumText}>Premium</Text>
-                </LinearGradient>
-              )}
+                  <Image source={avatarSource} style={styles.avatar} />
+                  {/* Icône zoom */}
+                  <View style={styles.zoomBadge}>
+                    <Ionicons name="expand" size={14} color="#fff" />
+                  </View>
+                </TouchableOpacity>
 
-              {/* Date d'inscription */}
-              <View style={styles.infoRow}>
-                <Ionicons name="calendar-outline" size={16} color="#999" />
-                <Text style={styles.infoText}>
-                  Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
-                </Text>
-              </View>
+                <Text style={styles.name}>{profile.prenom} {profile.nom}</Text>
 
-              {/* Bouton d'action */}
-              <View style={styles.actionContainer}>
-                {renderActionButton()}
+                {profile.role === 'userpro' && (
+                  <LinearGradient colors={['#FFD700', '#FFA500']} style={styles.premiumBadge} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                    <Ionicons name="diamond" size={16} color="#fff" style={styles.badgeIcon} />
+                    <Text style={styles.premiumText}>Premium</Text>
+                  </LinearGradient>
+                )}
+
+                <View style={styles.infoRow}>
+                  <Ionicons name="calendar-outline" size={16} color="#999" />
+                  <Text style={styles.infoText}>
+                    Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
+                  </Text>
+                </View>
+
+                <View style={styles.actionContainer}>
+                  {renderActionButton()}
+                </View>
+              </>
+            ) : (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle-outline" size={64} color="#EF4444" />
+                <Text style={styles.errorText}>Impossible de charger le profil</Text>
               </View>
-            </>
-          ) : (
-            <View style={styles.errorContainer}>
-              <Ionicons name="alert-circle-outline" size={64} color="#EF4444" />
-              <Text style={styles.errorText}>Impossible de charger le profil</Text>
-            </View>
-          )}
+            )}
+          </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+
+      {/* ── MODAL ZOOM AVATAR ── */}
+      <Modal
+        visible={avatarZoomed}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setAvatarZoomed(false)}
+      >
+        <TouchableOpacity
+          style={styles.zoomOverlay}
+          activeOpacity={1}
+          onPress={() => setAvatarZoomed(false)}
+        >
+          {/* Bouton fermer */}
+          <TouchableOpacity style={styles.zoomCloseBtn} onPress={() => setAvatarZoomed(false)}>
+            <Ionicons name="close" size={26} color="#fff" />
+          </TouchableOpacity>
+
+          {/* Image agrandie */}
+          <Image
+            source={avatarSource}
+            style={styles.zoomedAvatar}
+            resizeMode="contain"
+          />
+
+          {/* Nom sous l'image */}
+          {profile && (
+            <Text style={styles.zoomedName}>
+              {profile.prenom} {profile.nom}
+            </Text>
+          )}
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 }
 
@@ -381,18 +321,9 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 40 : 20,
     minHeight: 400,
     ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -3 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 10,
-      },
-      web: {
-        boxShadow: '0 -3px 10px rgba(0,0,0,0.1)',
-      },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.1, shadowRadius: 10 },
+      android: { elevation: 10 },
+      web: { boxShadow: '0 -3px 10px rgba(0,0,0,0.1)' } as any,
     }),
   },
   header: {
@@ -413,6 +344,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
   },
+
+  // ── AVATAR ──
   avatarContainer: {
     alignItems: 'center',
     marginBottom: 20,
@@ -425,20 +358,26 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderColor: '#fff',
     ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 5,
-      },
-      web: {
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-      },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
+      android: { elevation: 5 },
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.1)' } as any,
     }),
   },
+  zoomBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: '30%',
+    backgroundColor: '#8A2BE2',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+
+  // ── INFOS ──
   name: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -455,28 +394,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 20,
   },
-  badgeIcon: {
-    marginRight: 6,
-  },
-  premiumText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
+  badgeIcon: { marginRight: 6 },
+  premiumText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 30,
   },
-  infoText: {
-    fontSize: 14,
-    color: '#999',
-    marginLeft: 8,
-  },
-  actionContainer: {
-    marginTop: 10,
-  },
+  infoText: { fontSize: 14, color: '#999', marginLeft: 8 },
+
+  // ── ACTIONS ──
+  actionContainer: { marginTop: 10 },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -484,14 +413,8 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
   },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  buttonIcon: { marginRight: 8 },
+  actionButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   actionButtonSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -502,11 +425,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E0E0E0',
   },
-  actionButtonSecondaryText: {
-    color: '#666',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  actionButtonSecondaryText: { color: '#666', fontSize: 16, fontWeight: '600' },
   actionButtonDanger: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -517,27 +436,48 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FCA5A5',
   },
-  actionButtonDangerText: {
-    color: '#EF4444',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  halfButton: {
-    flex: 1,
-  },
+  actionButtonDangerText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
+  actionButtonsRow: { flexDirection: 'row', gap: 12 },
+  halfButton: { flex: 1 },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
   },
-  errorText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#EF4444',
+  errorText: { marginTop: 16, fontSize: 16, color: '#EF4444' },
+
+  // ── ZOOM MODAL ──
+  zoomOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomCloseBtn: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 56 : 36,
+    right: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  zoomedAvatar: {
+    width: 300,
+    height: 300,
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  zoomedName: {
+    marginTop: 20,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.3,
   },
 });
