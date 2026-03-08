@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,88 +8,374 @@ import {
   Platform,
   Dimensions,
   Modal,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
 // =====================================================
-// IMPORTS DES COMPOSANTS DE JEUX
+// IMPORTS DES COMPOSANTS
 // =====================================================
 import VraiFaux from './games/vrai-faux';
 import Awale from './games/awale';
-import Ludo from './games/ludo';
 import Dames from './games/dames';
-import Nombres from './games/nombres';
 import Photo from './games/photo';
-import Dessin from './games/dessin';
-import Design from './games/design';
 import Comedie from './games/comedie';
-import Danse from './games/danse';
-import Theatre from './games/theatre';
 import Music from './games/music';
-import Piano from './games/piano';
-import Guitare from './games/guitare';
 import Djing from './games/djing';
 
 const { width } = Dimensions.get('window');
 
 // =====================================================
-// CONFIGURATION DES ACTIVITÉS
+// PALETTE & THÈME PREMIUM
+// =====================================================
+const THEME = {
+  bg: '#0D0D14',
+  surface: '#16161F',
+  card: '#1E1E2E',
+  border: '#2A2A3D',
+  text: '#F0EEF8',
+  textMuted: '#7B7A9A',
+  accent: '#C084FC',
+};
+
+// =====================================================
+// CONFIGURATION DES CATÉGORIES
 // =====================================================
 const CATEGORIES = [
   {
-    id: 'games',
-    title: 'Jeux',
-    icon: 'game-controller',
-    color: '#8B5CF6',
-    description: 'Affrontez-vous et gagnez',
+    id: 'strategie',
+    title: 'Jeux Stratégiques',
+    icon: 'chess-board' as const,
+    ionIcon: 'extension-puzzle',
+    gradient: ['#1A1033', '#2D1B69'],
+    accentColor: '#7C3AED',
+    glowColor: '#7C3AED40',
+    badge: '♟',
+    description: 'Réflexion & tactique',
     items: [
-      { id: '1', key: 'vrai_faux', title: 'Vrai ou Faux', icon: 'help-circle', color: '#10B981', component: VraiFaux },
-      { id: '2', key: 'awale', title: 'Awalé', icon: 'extension-puzzle', color: '#F59E0B', component: Awale },
-      { id: '3', key: 'ludo', title: 'Ludo', icon: 'dice', color: '#EF4444', component: Ludo },
-      { id: '4', key: 'dames', title: 'Dames', icon: 'grid', color: '#6366F1', component: Dames },
-      { id: '5', key: 'nombres', title: 'Nombres', icon: 'calculator', color: '#8B5CF6', component: Nombres },
+      {
+        id: 's1',
+        title: 'Awalé',
+        icon: 'ellipse' as const,
+        emoji: '🔵',
+        color: '#7C3AED',
+        gradientColors: ['#7C3AED', '#5B21B6'] as const,
+        component: Awale,
+      },
+      {
+        id: 's2',
+        title: 'Dames',
+        icon: 'grid' as const,
+        emoji: '⬜',
+        color: '#6D28D9',
+        gradientColors: ['#6D28D9', '#4C1D95'] as const,
+        component: Dames,
+      },
+    ],
+  },
+  {
+    id: 'connaissance',
+    title: 'Jeux de Connaissances',
+    icon: 'bulb',
+    ionIcon: 'bulb',
+    gradient: ['#0A2540', '#0E3A5C'],
+    accentColor: '#0EA5E9',
+    glowColor: '#0EA5E940',
+    badge: '🧠',
+    description: 'Testez votre savoir',
+    items: [
+      {
+        id: 'c1',
+        title: 'Vrai ou Faux',
+        icon: 'checkmark-circle' as const,
+        emoji: '✅',
+        color: '#0EA5E9',
+        gradientColors: ['#0EA5E9', '#0284C7'] as const,
+        component: VraiFaux,
+      },
     ],
   },
   {
     id: 'arts',
     title: 'Arts',
-    icon: 'brush',
-    color: '#EC4899',
-    description: 'Exprimez votre créativité',
+    icon: 'color-palette',
+    ionIcon: 'color-palette',
+    gradient: ['#2D0A3A', '#4A1259'],
+    accentColor: '#EC4899',
+    glowColor: '#EC489940',
+    badge: '🎨',
+    description: 'Créativité & expression',
     items: [
-      { id: '6', key: 'photo', title: 'Photo', icon: 'camera', color: '#EC4899', component: Photo },
-      { id: '7', key: 'dessin', title: 'Dessin', icon: 'color-palette', color: '#F97316', component: Dessin },
-      { id: '8', key: 'design', title: 'Design', icon: 'shapes', color: '#8B5CF6', component: Design },
+      {
+        id: 'a1',
+        title: 'Photo',
+        icon: 'camera' as const,
+        emoji: '📸',
+        color: '#EC4899',
+        gradientColors: ['#EC4899', '#BE185D'] as const,
+        component: Photo,
+      },
+      {
+        id: 'a2',
+        title: 'Dessin',
+        icon: 'pencil' as const,
+        emoji: '✏️',
+        color: '#F97316',
+        gradientColors: ['#F97316', '#EA580C'] as const,
+        component: Photo, // ouvre Photo
+      },
+      {
+        id: 'a3',
+        title: 'Design',
+        icon: 'shapes' as const,
+        emoji: '🖌️',
+        color: '#A855F7',
+        gradientColors: ['#A855F7', '#7C3AED'] as const,
+        component: Photo, // ouvre Photo
+      },
     ],
   },
   {
-    id: 'performances',
-    title: 'Performances',
+    id: 'performance',
+    title: 'Performance',
     icon: 'mic',
-    color: '#F59E0B',
-    description: 'Montrez vos talents',
+    ionIcon: 'mic',
+    gradient: ['#1A0A00', '#3D1500'],
+    accentColor: '#F59E0B',
+    glowColor: '#F59E0B40',
+    badge: '🎭',
+    description: 'Montez sur scène',
     items: [
-      { id: '9', key: 'comedie', title: 'Comédie', icon: 'happy', color: '#F97316', component: Comedie },
-      { id: '10', key: 'danse', title: 'Danse', icon: 'body', color: '#EC4899', component: Danse },
-      { id: '11', key: 'theatre', title: 'Théâtre', icon: 'people', color: '#8B5CF6', component: Theatre },
+      {
+        id: 'p1',
+        title: 'Comédie',
+        icon: 'happy' as const,
+        emoji: '😄',
+        color: '#F59E0B',
+        gradientColors: ['#F59E0B', '#D97706'] as const,
+        component: Comedie,
+      },
+      {
+        id: 'p2',
+        title: 'Danse',
+        icon: 'body' as const,
+        emoji: '💃',
+        color: '#EF4444',
+        gradientColors: ['#EF4444', '#DC2626'] as const,
+        component: Comedie, // ouvre Comedie
+      },
+      {
+        id: 'p3',
+        title: 'Théâtre',
+        icon: 'film' as const,
+        emoji: '🎭',
+        color: '#8B5CF6',
+        gradientColors: ['#8B5CF6', '#7C3AED'] as const,
+        component: Comedie, // ouvre Comedie
+      },
     ],
   },
   {
-    id: 'music',
+    id: 'musique',
     title: 'Musique',
     icon: 'musical-notes',
-    color: '#14B8A6',
-    description: 'Faites vibrer votre audience',
+    ionIcon: 'musical-notes',
+    gradient: ['#001A1A', '#003333'],
+    accentColor: '#14B8A6',
+    glowColor: '#14B8A640',
+    badge: '🎵',
+    description: 'Faites vibrer la scène',
     items: [
-      { id: '12', key: 'music', title: 'Chant', icon: 'musical-notes', color: '#14B8A6', component: Music },
-      { id: '13', key: 'piano', title: 'Piano', icon: 'musical-note', color: '#06B6D4', component: Piano },
-      { id: '14', key: 'guitare', title: 'Guitare', icon: 'radio', color: '#3B82F6', component: Guitare },
-      { id: '15', key: 'djing', title: 'DJ', icon: 'disc', color: '#8B5CF6', component: Djing },
+      {
+        id: 'm1',
+        title: 'Chant',
+        icon: 'mic' as const,
+        emoji: '🎤',
+        color: '#14B8A6',
+        gradientColors: ['#14B8A6', '#0D9488'] as const,
+        component: Music,
+      },
+      {
+        id: 'm2',
+        title: 'Piano',
+        icon: 'musical-note' as const,
+        emoji: '🎹',
+        color: '#06B6D4',
+        gradientColors: ['#06B6D4', '#0891B2'] as const,
+        component: Music, // ouvre Music (Chant)
+      },
+      {
+        id: 'm3',
+        title: 'Guitare',
+        icon: 'radio' as const,
+        emoji: '🎸',
+        color: '#3B82F6',
+        gradientColors: ['#3B82F6', '#2563EB'] as const,
+        component: Music, // ouvre Music (Chant)
+      },
+    ],
+  },
+  {
+    id: 'artisanat',
+    title: 'Artisanat',
+    icon: 'construct',
+    ionIcon: 'construct',
+    gradient: ['#1A0D00', '#2D1A00'],
+    accentColor: '#D97706',
+    glowColor: '#D9770640',
+    badge: '🛠',
+    description: 'Savoir-faire & métiers',
+    items: [
+      {
+        id: 'ar1',
+        title: 'Couture',
+        icon: 'cut' as const,
+        emoji: '🧵',
+        color: '#D97706',
+        gradientColors: ['#D97706', '#B45309'] as const,
+        component: Djing,
+      },
+      {
+        id: 'ar2',
+        title: 'Menuiserie',
+        icon: 'hammer' as const,
+        emoji: '🪚',
+        color: '#92400E',
+        gradientColors: ['#92400E', '#78350F'] as const,
+        component: Djing,
+      },
+      {
+        id: 'ar3',
+        title: 'Coiffure',
+        icon: 'sparkles' as const,
+        emoji: '✂️',
+        color: '#BE185D',
+        gradientColors: ['#BE185D', '#9D174D'] as const,
+        component: Djing,
+      },
+      {
+        id: 'ar4',
+        title: 'Soudure',
+        icon: 'flame' as const,
+        emoji: '🔥',
+        color: '#DC2626',
+        gradientColors: ['#DC2626', '#B91C1C'] as const,
+        component: Djing,
+      },
+      {
+        id: 'ar5',
+        title: 'Mécanique',
+        icon: 'settings' as const,
+        emoji: '⚙️',
+        color: '#374151',
+        gradientColors: ['#6B7280', '#374151'] as const,
+        component: Djing,
+      },
     ],
   },
 ];
+
+// =====================================================
+// COMPOSANT ITEM CARD
+// =====================================================
+const ItemCard = ({
+  item,
+  onPress,
+}: {
+  item: (typeof CATEGORIES)[0]['items'][0];
+  onPress: () => void;
+}) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.93,
+      useNativeDriver: true,
+      speed: 50,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 30,
+    }).start();
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      activeOpacity={1}
+    >
+      <Animated.View style={[styles.itemCard, { transform: [{ scale }] }]}>
+        <LinearGradient
+          colors={item.gradientColors}
+          style={styles.itemCardGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Text style={styles.itemEmoji}>{item.emoji}</Text>
+          <Text style={styles.itemTitle}>{item.title}</Text>
+        </LinearGradient>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// =====================================================
+// COMPOSANT CATÉGORIE
+// =====================================================
+const CategorySection = ({
+  category,
+  onItemPress,
+}: {
+  category: (typeof CATEGORIES)[0];
+  onItemPress: (item: any) => void;
+}) => {
+  return (
+    <View style={styles.categoryWrapper}>
+      <LinearGradient
+        colors={category.gradient as any}
+        style={styles.categoryCard}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        {/* Header catégorie */}
+        <View style={styles.catHeader}>
+          <View style={[styles.catBadgeContainer, { borderColor: category.accentColor + '60' }]}>
+            <Text style={styles.catBadgeEmoji}>{category.badge}</Text>
+          </View>
+          <View style={styles.catInfo}>
+            <Text style={styles.catTitle}>{category.title}</Text>
+            <Text style={[styles.catDesc, { color: category.accentColor }]}>
+              {category.description}
+            </Text>
+          </View>
+          <View style={[styles.catDot, { backgroundColor: category.accentColor }]} />
+        </View>
+
+        {/* Séparateur lumineux */}
+        <View style={[styles.catDivider, { backgroundColor: category.accentColor + '30' }]} />
+
+        {/* Grille d'items */}
+        <View style={styles.itemsRow}>
+          {category.items.map((item) => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              onPress={() => onItemPress(item)}
+            />
+          ))}
+        </View>
+      </LinearGradient>
+    </View>
+  );
+};
 
 // =====================================================
 // COMPOSANT PRINCIPAL
@@ -111,98 +397,80 @@ export default function GamesScreen() {
     setTimeout(() => setSelectedGame(null), 300);
   };
 
-  const CategorySection = ({ category }: { category: typeof CATEGORIES[0] }) => {
-    return (
-      <View style={styles.categorySection}>
-        <View style={styles.categoryHeader}>
-          <View style={[styles.categoryIconContainer, { backgroundColor: category.color }]}>
-            <Ionicons name={category.icon as any} size={24} color="#FFF" />
-          </View>
-          <View style={styles.categoryInfo}>
-            <Text style={styles.categoryTitle}>{category.title}</Text>
-            <Text style={styles.categoryDescription}>{category.description}</Text>
-          </View>
-        </View>
-
-        <View style={styles.itemsGrid}>
-          {category.items.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.itemIcon}
-              onPress={() => handleItemPress(item)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.iconCircle, { backgroundColor: item.color }]}>
-                <Ionicons name={item.icon as any} size={28} color="#FFF" />
-              </View>
-              <Text style={styles.itemLabel} numberOfLines={2}>
-                {item.title}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-    );
-  };
-
   return (
     <View style={styles.container}>
-      {/* Header avec Hero */}
-      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        <View style={styles.heroSection}>
-          <Text style={styles.heroEmoji}>🎮</Text>
-          <Text style={styles.heroTitle}>Centre de Divertissement</Text>
-          <Text style={styles.heroSubtitle}>Révélez votre talent au monde</Text>
-          
-          <View style={styles.heroBadges}>
-            <View style={styles.heroBadge}>
-              <Ionicons name="trophy" size={16} color="#FFD700" />
-              <Text style={styles.heroBadgeText}>Compétitions</Text>
-            </View>
-            <View style={styles.heroBadge}>
-              <Ionicons name="star" size={16} color="#FFD700" />
-              <Text style={styles.heroBadgeText}>Talents</Text>
-            </View>
-            <View style={styles.heroBadge}>
-              <Ionicons name="people" size={16} color="#FFD700" />
-              <Text style={styles.heroBadgeText}>Communauté</Text>
-            </View>
+      {/* ── HEADER HERO ── */}
+      <LinearGradient
+        colors={['#12001F', '#1A0035', '#0D0D14']}
+        style={styles.header}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        {/* Orbe décoratif */}
+        <View style={styles.heroOrb} />
+
+        <View style={styles.heroContent}>
+          <View style={styles.heroPill}>
+            <View style={styles.heroPillDot} />
+            <Text style={styles.heroPillText}>Harmonia · Centre des Talents</Text>
+          </View>
+
+          <Text style={styles.heroTitle}>Révélez votre{'\n'}Talent</Text>
+          <Text style={styles.heroSubtitle}>
+            Compétitions, créations & savoir-faire
+          </Text>
+
+          <View style={styles.heroStats}>
+            {[
+              { icon: '🏆', label: 'Trophées' },
+              { icon: '⚡', label: 'Live' },
+              { icon: '🌍', label: 'Communauté' },
+            ].map((s) => (
+              <View key={s.label} style={styles.heroStatItem}>
+                <Text style={styles.heroStatIcon}>{s.icon}</Text>
+                <Text style={styles.heroStatLabel}>{s.label}</Text>
+              </View>
+            ))}
           </View>
         </View>
       </LinearGradient>
 
-      {/* Content */}
+      {/* ── CONTENU ── */}
       <ScrollView
-        style={styles.scrollView}
+        style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Categories */}
-        {CATEGORIES.map((category) => (
-          <CategorySection key={category.id} category={category} />
+        <Text style={styles.sectionIntro}>Choisissez votre discipline</Text>
+
+        {CATEGORIES.map((cat) => (
+          <CategorySection
+            key={cat.id}
+            category={cat}
+            onItemPress={handleItemPress}
+          />
         ))}
 
-        {/* Call to Action */}
-        <View style={styles.ctaSection}>
-          <LinearGradient colors={['#FFD700', '#FF0080']} style={styles.ctaGradient}>
-            <Ionicons name="rocket" size={40} color="#FFF" />
-            <Text style={styles.ctaTitle}>Révélez votre talent !</Text>
+        {/* CTA */}
+        <View style={styles.cta}>
+          <LinearGradient
+            colors={['#7C3AED', '#C026D3', '#EC4899']}
+            style={styles.ctaGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <Text style={styles.ctaEmoji}>🚀</Text>
+            <Text style={styles.ctaTitle}>Prêt à dominer ?</Text>
             <Text style={styles.ctaText}>
-              Participez aux compétitions, gagnez des trophées et devenez une star Harmonia
+              Nouveau contenu chaque semaine. Revenez souvent !
             </Text>
           </LinearGradient>
         </View>
 
-        {/* Info Footer */}
-        <View style={styles.infoFooter}>
-          <Ionicons name="information-circle" size={20} color="#8A2BE2" />
-          <Text style={styles.infoText}>
-            Nouveau contenu ajouté chaque semaine. Restez connecté !
-          </Text>
-        </View>
+        <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Modal pour afficher le jeu sélectionné */}
+      {/* ── MODAL JEU ── */}
       <Modal
         visible={modalVisible}
         animationType="slide"
@@ -210,9 +478,8 @@ export default function GamesScreen() {
         onRequestClose={handleCloseGame}
       >
         <View style={styles.modalContainer}>
-          {/* Affichage du composant de jeu avec ses props */}
-          {selectedGame && selectedGame.component && (
-            <selectedGame.component 
+          {selectedGame?.component && (
+            <selectedGame.component
               title={selectedGame.title}
               icon={selectedGame.icon}
               color={selectedGame.color}
@@ -225,171 +492,245 @@ export default function GamesScreen() {
   );
 }
 
+// =====================================================
+// STYLES
+// =====================================================
+const CARD_RADIUS = 20;
+const ITEM_SIZE = (width - 64) / 4;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: THEME.bg,
   },
+
+  // ── HEADER ──
   header: {
-    paddingTop: Platform.OS === 'ios' ? 50 : 30,
-    paddingBottom: 30,
+    paddingTop: Platform.OS === 'ios' ? 56 : 36,
+    paddingBottom: 36,
+    overflow: 'hidden',
   },
-  heroSection: {
+  heroOrb: {
+    position: 'absolute',
+    top: -40,
+    right: -40,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#7C3AED',
+    opacity: 0.15,
+  },
+  heroContent: {
+    paddingHorizontal: 24,
+    alignItems: 'flex-start',
+  },
+  heroPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    backgroundColor: 'rgba(196, 132, 252, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(196, 132, 252, 0.3)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 100,
+    marginBottom: 18,
+    gap: 8,
   },
-  heroEmoji: {
-    fontSize: 60,
-    marginBottom: 12,
+  heroPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#C084FC',
+  },
+  heroPillText: {
+    color: '#C084FC',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   heroTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 8,
-    textAlign: 'center',
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    lineHeight: 42,
+    letterSpacing: -0.5,
+    marginBottom: 10,
   },
   heroSubtitle: {
-    fontSize: 16,
-    color: '#E0D0FF',
-    textAlign: 'center',
-    marginBottom: 20,
+    fontSize: 15,
+    color: '#9D8FBB',
+    marginBottom: 28,
+    letterSpacing: 0.2,
   },
-  heroBadges: {
+  heroStats: {
     flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap',
-    justifyContent: 'center',
+    gap: 16,
   },
-  heroBadge: {
+  heroStatItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
     gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  heroBadgeText: {
-    color: '#FFF',
-    fontSize: 13,
+  heroStatIcon: {
+    fontSize: 14,
+  },
+  heroStatLabel: {
+    color: '#E0D8F5',
+    fontSize: 12,
     fontWeight: '600',
   },
-  scrollView: {
-    flex: 1,
-  },
+
+  // ── SCROLL ──
+  scroll: { flex: 1 },
   scrollContent: {
-    paddingBottom: 120,
+    paddingTop: 8,
+    paddingBottom: 100,
   },
-  categorySection: {
+  sectionIntro: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
     marginTop: 24,
-    paddingHorizontal: 16,
+    marginBottom: 12,
   },
-  categoryHeader: {
+
+  // ── CATEGORY CARD ──
+  categoryWrapper: {
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  categoryCard: {
+    borderRadius: CARD_RADIUS,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    overflow: 'hidden',
+  },
+  catHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
     gap: 12,
+    marginBottom: 14,
   },
-  categoryIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  catBadgeContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  categoryInfo: {
+  catBadgeEmoji: {
+    fontSize: 22,
+  },
+  catInfo: {
     flex: 1,
   },
-  categoryTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
+  catTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
     marginBottom: 2,
   },
-  categoryDescription: {
-    fontSize: 13,
-    color: '#666',
+  catDesc: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.3,
   },
-  itemsGrid: {
+  catDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    opacity: 0.8,
+  },
+  catDivider: {
+    height: 1,
+    borderRadius: 1,
+    marginBottom: 16,
+  },
+
+  // ── ITEMS ROW ──
+  itemsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginLeft: -8,
+    gap: 10,
   },
-  itemIcon: {
-    width: (width - 64) / 4,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  iconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 6,
+  itemCard: {
+    width: ITEM_SIZE,
+    borderRadius: 16,
+    overflow: 'hidden',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
       },
-      android: {
-        elevation: 4,
-      },
+      android: { elevation: 6 },
     }),
   },
-  itemLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
-    lineHeight: 14,
+  itemCardGradient: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 80,
   },
-  ctaSection: {
+  itemEmoji: {
+    fontSize: 26,
+    marginBottom: 6,
+  },
+  itemTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.95)',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+
+  // ── CTA ──
+  cta: {
     marginHorizontal: 16,
-    marginTop: 32,
-    borderRadius: 20,
+    marginTop: 28,
+    borderRadius: CARD_RADIUS,
     overflow: 'hidden',
   },
   ctaGradient: {
-    padding: 24,
+    padding: 28,
     alignItems: 'center',
+  },
+  ctaEmoji: {
+    fontSize: 40,
+    marginBottom: 10,
   },
   ctaTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '900',
     color: '#FFF',
-    marginTop: 12,
     marginBottom: 8,
-    textAlign: 'center',
+    letterSpacing: -0.3,
   },
   ctaText: {
-    fontSize: 14,
-    color: '#FFF',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.85)',
     textAlign: 'center',
     lineHeight: 20,
-    opacity: 0.95,
   },
-  infoFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0E6FF',
-    marginHorizontal: 16,
-    marginTop: 24,
-    padding: 14,
-    borderRadius: 12,
-    gap: 10,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#8A2BE2',
-    lineHeight: 18,
-  },
+
+  // ── MODAL ──
   modalContainer: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: THEME.bg,
   },
 });
