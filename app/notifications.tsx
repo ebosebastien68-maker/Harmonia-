@@ -97,15 +97,33 @@ export default function NotificationsPage() {
   const [nextOffset,  setNextOffset]  = useState(0);
   const [error,       setError]       = useState('');
 
-  // ── Auth depuis AsyncStorage ─────────────────────────────────────────────────
+  // ── Auth depuis AsyncStorage (harmonia_session) + refresh auto ──────────────
   const getAuth = async (): Promise<{ user_id: string; access_token: string } | null> => {
     try {
-      const [uid, tok] = await Promise.all([
-        AsyncStorage.getItem('user_id'),
-        AsyncStorage.getItem('access_token'),
-      ]);
-      if (!uid || !tok) return null;
-      return { user_id: uid, access_token: tok };
+      const raw = await AsyncStorage.getItem('harmonia_session');
+      if (!raw) return null;
+      let session = JSON.parse(raw);
+      if (!session?.access_token || !session?.user?.id) return null;
+
+      // Refresh si expiré (expires_at en secondes Unix)
+      const expiresAt = session.expires_at ?? 0;
+      const nowSec    = Math.floor(Date.now() / 1000);
+      if (expiresAt - nowSec < 60 && session.refresh_token) {
+        try {
+          const r = await fetch(`${BACKEND_URL}/refresh-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: session.refresh_token }),
+          });
+          if (r.ok) {
+            const fresh = await r.json();
+            session = { ...session, ...fresh };
+            await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
+          }
+        } catch {}
+      }
+
+      return { user_id: session.user.id, access_token: session.access_token };
     } catch { return null; }
   };
 
