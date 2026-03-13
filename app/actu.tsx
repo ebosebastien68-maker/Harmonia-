@@ -1,16 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   Image, RefreshControl, Modal, Dimensions, Platform,
-  Animated, FlatList, StatusBar, SafeAreaView, ActivityIndicator,
-  PanResponder,
+  Animated, FlatList, StatusBar, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { Video, Audio, ResizeMode } from 'expo-av';
+import { Video, ResizeMode, Audio } from 'expo-av';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 import CreatePostModal from '../components/CreatePostModal';
 import CommentsModal from '../components/CommentsModal';
@@ -19,6 +18,8 @@ import EditPostModal from '../components/EditPostModal';
 import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
+import { initPushMobile } from './pushMobile';
+import { initPushWeb }    from './pushWeb';
 
 const { width, height } = Dimensions.get('window');
 const BACKEND_URL    = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
@@ -27,8 +28,15 @@ const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/po
 const HEADER_HEIGHT  = 75;
 const NATIVE         = Platform.OS !== 'web';
 
+// ─── Platform constants (hors StyleSheet) ─────────────────────────────────────
+const FILTER_OVERLAY_TOP = Platform.OS === 'ios' ? 110 : 90;
+const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50  : 30;
+const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
+const AUD_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
-type FilterMode = 'all' | 'posts' | 'images' | 'videos' | 'audios' | 'artisanat';
+type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
+type GameType    = 'arts' | 'performance' | 'music';
 
 interface Post {
   item_type: 'post';
@@ -45,13 +53,13 @@ interface Post {
 
 interface SubmissionMedia {
   id: string;
-  url: string;               // image_url (Arts) ou video_url (Performance)
+  url: string;               // image_url (Arts) | video_url (Performance) | audio_url (Music)
   description?: string | null;
 }
 
 interface Submission {
   item_type:   'submission';
-  game_type:   'arts' | 'performance' | 'music' | 'artisanat';
+  game_type:   GameType;
   badge:       string;       // '🎨 Arts' | '🎭 Performance' | '🎵 Music'
   id:          string;
   run_id:      string;
@@ -69,7 +77,7 @@ interface Submission {
 type FeedItem = Post | Submission;
 interface UserProfile { solde_cfa: number; trophies_count: number }
 
-// Item aplati pour le modal TikTok
+// Item aplati pour le modal TikTok (Performance)
 interface VideoFeedItem {
   mediaId:     string;
   videoUrl:    string;
@@ -80,7 +88,23 @@ interface VideoFeedItem {
   session_id:  string;
   total_votes: number;
   user_voted:  boolean;
-  game_type:   'performance';  // TikTok modal uniquement pour les vidéos
+  game_type:   GameType;
+  run_id:      string;
+  user_id:     string;
+}
+
+// Item aplati pour le modal Audio (Music)
+interface AudioFeedItem {
+  mediaId:     string;
+  audioUrl:    string;
+  description: string | null;
+  author:      { nom: string; prenom: string; avatar_url: string | null };
+  run_number:  number;
+  run_title:   string;
+  session_id:  string;
+  total_votes: number;
+  user_voted:  boolean;
+  game_type:   GameType;
   run_id:      string;
   user_id:     string;
 }
@@ -97,8 +121,7 @@ const formatTimeAgo = (dateString: string) => {
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
-// ─── getValidToken — même logique que arts.tsx ────────────────────────────────
-// Vérifie expires_at AVANT la requête. Si le token expire dans < 60s → refresh préventif.
+// ─── getValidToken ────────────────────────────────────────────────────────────
 async function getValidToken(): Promise<{
   uid: string;
   token: string;
@@ -119,12 +142,10 @@ async function getValidToken(): Promise<{
 
     const now = Math.floor(Date.now() / 1000);
 
-    // Token encore valide (> 60s restantes) → on le retourne directement
     if (expiresAt - now > 60) {
       return { uid, token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
     }
 
-    // Token expiré ou bientôt expiré → refresh préventif
     if (!refreshToken) return null;
 
     console.log('[ActuScreen] Token expiré, rafraîchissement…');
@@ -161,9 +182,6 @@ async function getValidToken(): Promise<{
   }
 }
 
-// ─── MemoLogo — stable, ne re-render jamais ──────────────────────────────────
-const MemoLogo = React.memo(() => <HarmoniaLogo size={26} showText={true} />, () => true);
-
 // ─── Props types ──────────────────────────────────────────────────────────────
 interface PostCardProps {
   post: Post;
@@ -180,8 +198,10 @@ interface PostCardProps {
 interface SubmissionCardProps {
   sub:             Submission;
   allVideoItems:   VideoFeedItem[];
-  onVote:          (gameType: 'arts' | 'performance' | 'music' | 'artisanat', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  allAudioItems:   AudioFeedItem[];
+  onVote:          (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
   openVideoModal:  (items: VideoFeedItem[], startIndex: number) => void;
+  openAudioModal:  (items: AudioFeedItem[], startIndex: number) => void;
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
@@ -298,170 +318,10 @@ const PostCard = React.memo(({
   );
 });
 
-// ─── AudioTrackCard ──────────────────────────────────────────────────────────
-// Lecteur audio avec seekbar tactile + boutons -10s / +10s
-function AudioTrackCard({ item, index, total }: { item: SubmissionMedia; index: number; total: number }) {
-  const [sound,      setSound]      = useState<Audio.Sound | null>(null);
-  const [isPlaying,  setIsPlaying]  = useState(false);
-  const [isLoading,  setIsLoading]  = useState(false);
-  const [positionMs, setPositionMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
-
-  const soundRef    = useRef<Audio.Sound | null>(null);
-  const barWidthRef = useRef(0);
-
-  useEffect(() => {
-    return () => { soundRef.current?.unloadAsync().catch(() => {}); };
-  }, []);
-
-  const formatMs = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  };
-
-  // Seek à une position ratio 0–1
-  const seekToRatio = useCallback(async (ratio: number) => {
-    const s = soundRef.current;
-    if (!s) return;
-    const status = await s.getStatusAsync();
-    if (!status.isLoaded || !status.durationMillis) return;
-    const newPos = Math.max(0, Math.min(Math.floor(ratio * status.durationMillis), status.durationMillis));
-    await s.setPositionAsync(newPos);
-    setPositionMs(newPos);
-  }, []);
-
-  // Skip ±10 secondes
-  const skip = useCallback(async (deltaMs: number) => {
-    const s = soundRef.current;
-    if (!s) return;
-    const status = await s.getStatusAsync();
-    if (!status.isLoaded) return;
-    const dur = status.durationMillis ?? 0;
-    const newPos = Math.max(0, Math.min((status.positionMillis ?? 0) + deltaMs, dur));
-    await s.setPositionAsync(newPos);
-    setPositionMs(newPos);
-  }, []);
-
-  // PanResponder sur la seekbar
-  const seekPan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder:  () => true,
-      onPanResponderGrant: (e) => {
-        const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
-        seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
-      },
-      onPanResponderMove: (e) => {
-        const x = Math.max(0, Math.min(e.nativeEvent.locationX, barWidthRef.current));
-        seekToRatio(barWidthRef.current > 0 ? x / barWidthRef.current : 0);
-      },
-    })
-  ).current;
-
-  const togglePlay = async () => {
-    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      if (!soundRef.current) {
-        setIsLoading(true);
-        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          { uri: item.url },
-          { shouldPlay: true },
-          (status) => {
-            if (!status.isLoaded) return;
-            setPositionMs(status.positionMillis ?? 0);
-            setDurationMs(status.durationMillis ?? 0);
-            setIsPlaying(status.isPlaying);
-            if (status.didJustFinish) { setIsPlaying(false); setPositionMs(0); }
-          }
-        );
-        soundRef.current = newSound;
-        setSound(newSound);
-        setIsPlaying(true);
-        setIsLoading(false);
-      } else {
-        const status = await soundRef.current.getStatusAsync();
-        if (!status.isLoaded) return;
-        if (status.isPlaying) {
-          await soundRef.current.pauseAsync();
-          setIsPlaying(false);
-        } else {
-          if ((status.positionMillis ?? 0) >= (status.durationMillis ?? 0) - 200) {
-            await soundRef.current.setPositionAsync(0);
-          }
-          await soundRef.current.playAsync();
-          setIsPlaying(true);
-        }
-      }
-    } catch (err) {
-      console.warn('[AudioTrackCard] Erreur lecture:', err);
-      setIsLoading(false);
-    }
-  };
-
-  const progress = durationMs > 0 ? positionMs / durationMs : 0;
-
-  return (
-    <View style={styles.audioTrack}>
-      {total > 1 && (
-        <Text style={styles.audioTrackNum}>Piste {index + 1}/{total}</Text>
-      )}
-      {item.description ? (
-        <Text style={styles.audioTrackDesc} numberOfLines={1}>{item.description}</Text>
-      ) : null}
-
-      {/* Seekbar tactile */}
-      <View
-        style={styles.audioSeekBar}
-        onLayout={e => { barWidthRef.current = e.nativeEvent.layout.width; }}
-        {...seekPan.panHandlers}
-      >
-        <View style={styles.audioSeekTrack} />
-        <View style={[styles.audioSeekFill, { width: `${Math.round(progress * 100)}%` }]} />
-        {/* Thumb */}
-        <View style={[styles.audioSeekThumb, { left: `${Math.round(progress * 100)}%` as any }]} />
-      </View>
-
-      {/* Temps */}
-      <View style={styles.audioTimings}>
-        <Text style={styles.audioTime}>{formatMs(positionMs)}</Text>
-        {durationMs > 0 && <Text style={styles.audioTime}>{formatMs(durationMs)}</Text>}
-      </View>
-
-      {/* Contrôles : -10s | play/pause | +10s */}
-      <View style={styles.audioControls}>
-        <TouchableOpacity style={styles.audioSkipBtn} onPress={() => skip(-10000)} disabled={!sound}>
-          <Ionicons name="play-back" size={18} color={sound ? '#7C3AED' : '#CCC'} />
-          <Text style={[styles.audioSkipText, !sound && { color: '#CCC' }]}>10</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.audioPlayBtn, isPlaying && styles.audioPlayBtnActive]}
-          onPress={togglePlay}
-          disabled={isLoading}
-          activeOpacity={0.8}
-        >
-          {isLoading
-            ? <ActivityIndicator size="small" color="#7C3AED" />
-            : <Ionicons
-                name={isPlaying ? 'pause' : 'play'}
-                size={22}
-                color={isPlaying ? '#FFF' : '#7C3AED'}
-              />}
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.audioSkipBtn} onPress={() => skip(10000)} disabled={!sound}>
-          <Ionicons name="play-forward" size={18} color={sound ? '#7C3AED' : '#CCC'} />
-          <Text style={[styles.audioSkipText, !sound && { color: '#CCC' }]}>10</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
 // ─── SubmissionCard ───────────────────────────────────────────────────────────
-// Gère Arts (images), Performance (vidéos) et Music (audios) via sub.game_type
-const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal }: SubmissionCardProps) => {
+const SubmissionCard = React.memo(({
+  sub, onVote, allVideoItems, allAudioItems, openVideoModal, openAudioModal,
+}: SubmissionCardProps) => {
   const [totalVotes,  setTotalVotes]  = useState(sub.total_votes);
   const [userVoted,   setUserVoted]   = useState(sub.user_voted);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -472,7 +332,7 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
     setUserVoted(sub.user_voted);
   }, [sub]);
 
-  const isPerformance = sub.game_type === 'performance' || sub.game_type === 'artisanat';
+  const isPerformance = sub.game_type === 'performance';
   const isMusic       = sub.game_type === 'music';
 
   // Fallback : supporte l'ancien format (images[]) pendant la transition backend
@@ -503,16 +363,14 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
   };
 
   // Couleur du badge selon le jeu
-  const isArtisanat   = sub.game_type === 'artisanat';
-  const badgeBg    = isPerformance || isArtisanat ? '#FFF3E0' : isMusic ? '#EDE9FE' : '#F0E6FF';
-  const badgeColor = isPerformance || isArtisanat ? '#E65100' : isMusic ? '#7C3AED' : '#8E44AD';
-  // Badge label : fallback pour l'ancien format sans badge
+  const badgeBg    = isPerformance ? '#FFF3E0' : isMusic ? '#E8F5E9' : '#F0E6FF';
+  const badgeColor = isPerformance ? '#E65100' : isMusic ? '#2E7D32' : '#8E44AD';
   const badgeLabel = sub.badge ?? '🎨 Arts';
 
   return (
     <View style={styles.subCard}>
 
-      {/* Header : badge + auteur + compteur votes */}
+      {/* Header */}
       <View style={styles.subHeader}>
         <View style={[styles.artsBadge, { backgroundColor: badgeBg }]}>
           <Text style={[styles.artsBadgeText, { color: badgeColor }]}>{badgeLabel}</Text>
@@ -534,76 +392,83 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
         </View>
       </View>
 
-      {/* Music : lecteur audio (pas de carrousel) */}
-      {isMusic ? (
-        <View style={styles.musicList}>
-          {media.map((item, index) => (
-            <AudioTrackCard
-              key={item.id}
-              item={item}
-              index={index}
-              total={media.length}
-            />
-          ))}
-        </View>
-      ) : (
-        /* Carrousel — Image (Arts) ou Vidéo (Performance) */
-        <FlatList
-          data={media}
-          keyExtractor={item => item.id}
-          horizontal
-          pagingEnabled={media.length > 1}
-          showsHorizontalScrollIndicator={false}
-          style={styles.imagesList}
-          onMomentumScrollEnd={e => {
-            const idx = Math.round(e.nativeEvent.contentOffset.x / slideWidth);
-            setActiveIndex(idx);
-          }}
-          renderItem={({ item, index }) => (
-            <View style={[styles.imageSlide, { width: slideWidth }]}>
-              {isPerformance ? (
-                /* Performance : lecteur vidéo inline + tap → modal TikTok */
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  style={styles.videoThumb}
-                  onPress={() => {
-                    const startIdx = allVideoItems.findIndex(v => v.mediaId === item.id);
-                    openVideoModal(allVideoItems, startIdx >= 0 ? startIdx : 0);
-                  }}
-                >
-                  <Video
-                    source={{ uri: item.url }}
-                    style={StyleSheet.absoluteFill}
-                    resizeMode={ResizeMode.COVER}
-                    isLooping
-                    isMuted
-                    shouldPlay={activeIndex === index}
-                  />
-                  {/* Overlay play */}
-                  <View style={styles.videoPlayOverlay}>
-                    <Ionicons name="expand-outline" size={22} color="rgba(255,255,255,0.85)" />
-                  </View>
-                  <View style={styles.videoBadge}>
-                    <Ionicons name="videocam" size={12} color="#FFF" />
-                    <Text style={styles.videoBadgeText}>Vidéo</Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                /* Arts : image normale */
-                <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
-              )}
-              {media.length > 1 && (
-                <View style={styles.imageCounter}>
-                  <Text style={styles.imageCounterText}>{index + 1}/{media.length}</Text>
+      {/* Carrousel */}
+      <FlatList
+        data={media}
+        keyExtractor={item => item.id}
+        horizontal
+        pagingEnabled={media.length > 1}
+        showsHorizontalScrollIndicator={false}
+        style={styles.imagesList}
+        onMomentumScrollEnd={e => {
+          const idx = Math.round(e.nativeEvent.contentOffset.x / slideWidth);
+          setActiveIndex(idx);
+        }}
+        renderItem={({ item, index }) => (
+          <View style={[styles.imageSlide, { width: slideWidth }]}>
+            {isMusic ? (
+              /* Music : thumbnail audio → tap → modal Audio */
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={styles.audioThumb}
+                onPress={() => {
+                  const startIdx = allAudioItems.findIndex(a => a.mediaId === item.id);
+                  openAudioModal(allAudioItems, startIdx >= 0 ? startIdx : 0);
+                }}
+              >
+                <LinearGradient colors={['#1E0A3C', '#0D0B1A']} style={StyleSheet.absoluteFill} />
+                <View style={styles.audioWave}>
+                  <Ionicons name="musical-notes" size={52} color="rgba(168,85,247,0.75)" />
                 </View>
-              )}
-              {item.description
-                ? <Text style={styles.imgDesc} numberOfLines={2}>{item.description}</Text>
-                : null}
-            </View>
-          )}
-        />
-      )}
+                <View style={styles.audioPlayIcon}>
+                  <Ionicons name="play" size={18} color="rgba(255,255,255,0.9)" />
+                </View>
+                <View style={styles.audioBadge}>
+                  <Ionicons name="musical-notes" size={12} color="#FFF" />
+                  <Text style={styles.audioBadgeText}>Audio</Text>
+                </View>
+              </TouchableOpacity>
+            ) : isPerformance ? (
+              /* Performance : lecteur vidéo inline + tap → modal TikTok */
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={styles.videoThumb}
+                onPress={() => {
+                  const startIdx = allVideoItems.findIndex(v => v.mediaId === item.id);
+                  openVideoModal(allVideoItems, startIdx >= 0 ? startIdx : 0);
+                }}
+              >
+                <Video
+                  source={{ uri: item.url }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode={ResizeMode.COVER}
+                  isLooping
+                  isMuted
+                  shouldPlay={activeIndex === index}
+                />
+                <View style={styles.videoPlayOverlay}>
+                  <Ionicons name="expand-outline" size={22} color="rgba(255,255,255,0.85)" />
+                </View>
+                <View style={styles.videoBadge}>
+                  <Ionicons name="videocam" size={12} color="#FFF" />
+                  <Text style={styles.videoBadgeText}>Vidéo</Text>
+                </View>
+              </TouchableOpacity>
+            ) : (
+              /* Arts : image normale */
+              <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
+            )}
+            {media.length > 1 && (
+              <View style={styles.imageCounter}>
+                <Text style={styles.imageCounterText}>{index + 1}/{media.length}</Text>
+              </View>
+            )}
+            {item.description
+              ? <Text style={styles.imgDesc} numberOfLines={2}>{item.description}</Text>
+              : null}
+          </View>
+        )}
+      />
 
       {media.length > 1 && (
         <View style={styles.dots}>
@@ -613,7 +478,6 @@ const SubmissionCard = React.memo(({ sub, onVote, allVideoItems, openVideoModal 
         </View>
       )}
 
-      {/* Bouton vote unique au niveau du run */}
       <TouchableOpacity
         style={[styles.voteBtn, userVoted && styles.voteBtnVoted]}
         onPress={handleVoteLocal}
@@ -637,11 +501,11 @@ export default function ActuScreen() {
   const [accessToken, setAccessToken] = useState('');
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  const [posts,       setPosts]       = useState<Post[]>([]);
-  const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [filterMode,  setFilterMode]  = useState<FilterMode>('all');
-  const [showFilter,  setShowFilter]  = useState(false);
-  const [refreshing,  setRefreshing]  = useState(false);
+  const [posts,        setPosts]       = useState<Post[]>([]);
+  const [submissions,  setSubmissions] = useState<Submission[]>([]);
+  const [filterMode,   setFilterMode]  = useState<FilterMode>('all');
+  const [showFilter,   setShowFilter]  = useState(false);
+  const [refreshing,   setRefreshing]  = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
@@ -656,7 +520,7 @@ export default function ActuScreen() {
   const [showSearchModal,         setShowSearchModal]         = useState(false);
   const [showLogoutModal,         setShowLogoutModal]         = useState(false);
 
-  // ─── Modal TikTok vidéo ───────────────────────────────────────────────────
+  // ─── Modal TikTok (Performance) ───────────────────────────────────────────
   const [videoModal,      setVideoModal]      = useState(false);
   const [videoItems,      setVideoItems]      = useState<VideoFeedItem[]>([]);
   const [videoStartIndex, setVideoStartIndex] = useState(0);
@@ -667,10 +531,20 @@ export default function ActuScreen() {
     setVideoModal(true);
   }, []);
 
-  const [headerVisible,  setHeaderVisible]  = useState(true);
-  const headerAnim       = useRef(new Animated.Value(0)).current;
-  const headerHeightRef  = useRef(75);   // mis à jour via onLayout
-  const lastTapRef       = useRef<number | null>(null);
+  // ─── Modal Audio (Music) ──────────────────────────────────────────────────
+  const [audioModal,      setAudioModal]      = useState(false);
+  const [audioItems,      setAudioItems]      = useState<AudioFeedItem[]>([]);
+  const [audioStartIndex, setAudioStartIndex] = useState(0);
+
+  const openAudioModal = useCallback((items: AudioFeedItem[], startIndex: number) => {
+    setAudioItems(items);
+    setAudioStartIndex(startIndex);
+    setAudioModal(true);
+  }, []);
+
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const [lastTap,       setLastTap]       = useState<number | null>(null);
+  const headerAnim = useRef(new Animated.Value(0)).current;
 
   const userIdRef  = useRef('');
   const tokenRef   = useRef('');
@@ -693,16 +567,31 @@ export default function ActuScreen() {
     loadSubmissions();
   }, [userId, accessToken]);
 
-  // ─── loadSubmissions — getValidToken avant chaque appel ───────────────────
+  // ── Push notifications — init une seule fois après connexion ────────────
+  useEffect(() => {
+    if (!userId) return;
+
+    const getAuth = async () => {
+      const t = await getValidToken();
+      if (!t) return null;
+      return { user_id: t.uid, access_token: t.token };
+    };
+
+    if (Platform.OS === 'web') {
+      initPushWeb(getAuth).catch(err =>
+        console.warn('[ActuScreen] initPushWeb error:', err)
+      );
+    } else {
+      initPushMobile(getAuth).catch(err =>
+        console.warn('[ActuScreen] initPushMobile error:', err)
+      );
+    }
+  }, [userId]); // déclenché une seule fois quand userId est connu
+
   const loadSubmissions = useCallback(async () => {
     try {
-      // Récupérer un token valide (refresh préventif si nécessaire)
       const session = await getValidToken();
-      if (!session) {
-        console.warn('[loadSubmissions] Session invalide');
-        return;
-      }
-      // Mettre à jour les refs avec le token potentiellement rafraîchi
+      if (!session) { console.warn('[loadSubmissions] Session invalide'); return; }
       tokenRef.current  = session.token;
       userIdRef.current = session.uid;
 
@@ -730,7 +619,6 @@ export default function ActuScreen() {
     } catch (err) { console.error('Error loading submissions:', err); }
   }, []);
 
-  // ─── loadPosts — Edge Function Supabase (anon key, pas de token user) ─────
   const loadPosts = useCallback(async () => {
     try {
       const res  = await fetch(API_BASE_HOME, {
@@ -747,7 +635,7 @@ export default function ActuScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'audios' && filterMode !== 'artisanat') await loadPosts();
+    if (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'music') await loadPosts();
     if (filterMode !== 'posts') await loadSubmissions();
     setRefreshing(false);
   };
@@ -756,8 +644,8 @@ export default function ActuScreen() {
     if (isRefreshing) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsRefreshing(true);
-    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'audios' && filterRef.current !== 'artisanat') await loadPosts();
-    if (filterRef.current !== 'posts')  await loadSubmissions();
+    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'music') await loadPosts();
+    if (filterRef.current !== 'posts') await loadSubmissions();
     setIsRefreshing(false);
   };
 
@@ -769,8 +657,7 @@ export default function ActuScreen() {
     if (mode === 'posts')  { await loadPosts(); }
     if (mode === 'images') { await loadSubmissions(); }
     if (mode === 'videos') { await loadSubmissions(); }
-    if (mode === 'audios') { await loadSubmissions(); }
-    if (mode === 'artisanat') { await loadSubmissions(); }
+    if (mode === 'music')  { await loadSubmissions(); }
     if (mode === 'all')    { await Promise.all([loadPosts(), loadSubmissions()]); }
   };
 
@@ -778,16 +665,15 @@ export default function ActuScreen() {
     if (filterMode === 'posts')  return posts;
     if (filterMode === 'images') return submissions.filter(s => (s as Submission).game_type === 'arts');
     if (filterMode === 'videos') return submissions.filter(s => (s as Submission).game_type === 'performance');
-    if (filterMode === 'audios') return submissions.filter(s => (s as Submission).game_type === 'music');
-    if (filterMode === 'artisanat') return submissions.filter(s => (s as Submission).game_type === 'artisanat');
+    if (filterMode === 'music')  return submissions.filter(s => (s as Submission).game_type === 'music');
     return [...posts, ...submissions].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   })();
 
-  // Liste aplatie de toutes les vidéos du feed → pour le modal TikTok
+  // Vidéos aplaties (Performance) → modal TikTok
   const allVideoItems: VideoFeedItem[] = displayedItems
-    .filter((item): item is Submission => item.item_type === 'submission' && ((item as Submission).game_type === 'performance' || (item as Submission).game_type === 'artisanat'))
+    .filter((item): item is Submission => item.item_type === 'submission' && (item as Submission).game_type === 'performance')
     .flatMap(sub =>
       (sub.media ?? []).map(m => ({
         mediaId:     m.id,
@@ -805,27 +691,40 @@ export default function ActuScreen() {
       }))
     );
 
-  const toggleHeader = useCallback(() => {
-    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setHeaderVisible(prev => {
-      const nextVisible = !prev;
-      Animated.spring(headerAnim, {
-        toValue: nextVisible ? 0 : -headerHeightRef.current,
-        useNativeDriver: true, tension: 100, friction: 12,
-      }).start();
-      return nextVisible;
-    });
-  }, []);  // stable
+  // Audios aplatis (Music) → modal Audio
+  const allAudioItems: AudioFeedItem[] = displayedItems
+    .filter((item): item is Submission => item.item_type === 'submission' && (item as Submission).game_type === 'music')
+    .flatMap(sub =>
+      (sub.media ?? []).map(m => ({
+        mediaId:     m.id,
+        audioUrl:    m.url,
+        description: m.description ?? null,
+        author:      sub.author,
+        run_number:  sub.run_number,
+        run_title:   sub.run_title,
+        session_id:  sub.session_id,
+        total_votes: sub.total_votes,
+        user_voted:  sub.user_voted,
+        game_type:   sub.game_type,
+        run_id:      sub.run_id,
+        user_id:     sub.user_id,
+      }))
+    );
 
-  const handleDoubleTap = useCallback(() => {
+  const handleDoubleTap = () => {
     const now = Date.now();
-    if (lastTapRef.current && now - lastTapRef.current < 300) {
-      toggleHeader();
-      lastTapRef.current = null;
-    } else {
-      lastTapRef.current = now;
-    }
-  }, []);  // stable — toggleHeader est aussi stable
+    if (lastTap && now - lastTap < 300) toggleHeader();
+    else setLastTap(now);
+  };
+
+  const toggleHeader = () => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.spring(headerAnim, {
+      toValue: headerVisible ? -HEADER_HEIGHT : 0,
+      useNativeDriver: true, tension: 80, friction: 10,
+    }).start();
+    setHeaderVisible(!headerVisible);
+  };
 
   // ─── Post actions ─────────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
@@ -868,8 +767,8 @@ export default function ActuScreen() {
     }
   }, [userId]);
 
-  // ─── Vote — par run, Arts ou Performance ─────────────────────────────────
-  const handleVote = useCallback(async (gameType: 'arts' | 'performance' | 'music' | 'artisanat', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
+  // ─── Vote — par run, Arts / Performance / Music ───────────────────────────
+  const handleVote = useCallback(async (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
     try {
       const session = await getValidToken();
       if (!session) return;
@@ -932,19 +831,19 @@ export default function ActuScreen() {
     setSelectedPost(post);
   }, []);
 
-  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', audios: 'Musique', artisanat: 'Artisanat' };
+  const filterLabel: Record<FilterMode, string> = {
+    all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', music: 'Musique',
+  };
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
 
       <Animated.View style={[styles.headerContainer, { transform: [{ translateY: headerAnim }] }]}>
-        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}
-          onLayout={e => { headerHeightRef.current = e.nativeEvent.layout.height; }}>
+        <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
 
           <View style={styles.headerTop}>
-            {/* Logo mémoïsé — ne re-render pas */}
-            <MemoLogo />
+            <HarmoniaLogo size={26} showText={true} />
             <View style={styles.balanceBox}>
               <Ionicons name="wallet-outline" size={14} color="#FFD700" />
               <Text style={styles.balanceText}>
@@ -1054,24 +953,26 @@ export default function ActuScreen() {
                     sub={item}
                     onVote={handleVote}
                     allVideoItems={allVideoItems}
+                    allAudioItems={allAudioItems}
                     openVideoModal={openVideoModal}
+                    openAudioModal={openAudioModal}
                   />
             )}
           </View>
         )}
       </ScrollView>
 
+      {/* Modal filtre */}
       <Modal visible={showFilter} transparent animationType="fade" onRequestClose={() => setShowFilter(false)}>
         <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setShowFilter(false)}>
           <View style={styles.filterMenu}>
             <Text style={styles.filterMenuTitle}>Afficher</Text>
             {([
-              { key: 'all',    label: 'Tout',         icon: 'apps-outline'          },
-              { key: 'posts',  label: 'Publications', icon: 'document-text-outline'  },
-              { key: 'images', label: 'Images',       icon: 'images-outline'         },
-              { key: 'videos', label: 'Vidéos',       icon: 'videocam-outline'       },
-              { key: 'audios',     label: 'Musique',    icon: 'musical-notes-outline'  },
-              { key: 'artisanat', label: 'Artisanat',  icon: 'hammer-outline'         },
+              { key: 'all',    label: 'Tout',         icon: 'apps-outline'           },
+              { key: 'posts',  label: 'Publications', icon: 'document-text-outline'   },
+              { key: 'images', label: 'Images',       icon: 'images-outline'          },
+              { key: 'videos', label: 'Vidéos',       icon: 'videocam-outline'        },
+              { key: 'music',  label: 'Musique',      icon: 'musical-notes-outline'   },
             ] as { key: FilterMode; label: string; icon: string }[]).map(opt => (
               <TouchableOpacity
                 key={opt.key}
@@ -1087,6 +988,7 @@ export default function ActuScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* Modal détails post */}
       {selectedPost && (
         <Modal visible={!!selectedPost} transparent animationType="fade" onRequestClose={() => setSelectedPost(null)}>
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSelectedPost(null)}>
@@ -1108,15 +1010,24 @@ export default function ActuScreen() {
       <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
       <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(); }} />
       <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
-      <SearchModal visible={showSearchModal} userId={userId} accessToken={accessToken} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
+      <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
       <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
 
-      {/* Modal TikTok — scroll vertical plein écran */}
+      {/* Modal TikTok — Performance */}
       <TikTokVideoModal
         visible={videoModal}
         items={videoItems}
         startIndex={videoStartIndex}
         onClose={() => setVideoModal(false)}
+        onVote={handleVote}
+      />
+
+      {/* Modal Audio — Music */}
+      <AudioFeedModal
+        visible={audioModal}
+        items={audioItems}
+        startIndex={audioStartIndex}
+        onClose={() => setAudioModal(false)}
         onVote={handleVote}
       />
     </View>
@@ -1129,27 +1040,17 @@ interface TikTokVideoModalProps {
   items:      VideoFeedItem[];
   startIndex: number;
   onClose:    () => void;
-  onVote:     (gameType: 'arts' | 'performance', runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  onVote:     (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
 }
 
 function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTokVideoModalProps) {
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const flatRef = useRef<FlatList>(null);
 
-  // viewabilityConfig stable en ref — déclenche l'autoplay dès 80% visible
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    if (viewableItems.length > 0) {
-      setCurrentIndex(viewableItems[0].index ?? 0);
-    }
-  }).current;
-
   useEffect(() => {
     if (visible && flatRef.current && items.length > 0) {
-      setTimeout(() => {
-        flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
-        setCurrentIndex(startIndex);
-      }, 50);
+      flatRef.current.scrollToIndex({ index: startIndex, animated: false });
+      setCurrentIndex(startIndex);
     }
   }, [visible, startIndex]);
 
@@ -1162,7 +1063,6 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
         <TouchableOpacity style={tikStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={28} color="#FFF" />
         </TouchableOpacity>
-
         <FlatList
           ref={flatRef}
           data={items}
@@ -1173,14 +1073,12 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
           decelerationRate="fast"
           getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
           initialScrollIndex={startIndex}
-          viewabilityConfig={viewabilityConfig}
-          onViewableItemsChanged={onViewableItemsChanged}
+          onMomentumScrollEnd={e => {
+            const idx = Math.round(e.nativeEvent.contentOffset.y / height);
+            setCurrentIndex(idx);
+          }}
           renderItem={({ item, index }) => (
-            <TikTokVideoItem
-              item={item}
-              isActive={index === currentIndex}
-              onVote={onVote}
-            />
+            <TikTokVideoItem item={item} isActive={index === currentIndex} onVote={onVote} />
           )}
         />
       </View>
@@ -1226,7 +1124,6 @@ function TikTokVideoItem({
 
   return (
     <View style={tikStyles.item}>
-      {/* Vidéo plein écran */}
       <Video
         source={{ uri: item.videoUrl }}
         style={StyleSheet.absoluteFill}
@@ -1236,14 +1133,7 @@ function TikTokVideoItem({
         shouldPlay={isActive}
         useNativeControls={false}
       />
-
-      {/* Dégradé bas */}
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.75)']}
-        style={tikStyles.gradient}
-      />
-
-      {/* Infos auteur + description */}
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={tikStyles.gradient} />
       <View style={tikStyles.infoRow}>
         {item.author.avatar_url
           ? <Image source={{ uri: item.author.avatar_url }} style={tikStyles.avatar} />
@@ -1260,54 +1150,314 @@ function TikTokVideoItem({
             : null}
         </View>
       </View>
-
-      {/* Bouton vote flottant */}
       <TouchableOpacity
         style={[tikStyles.voteBtn, userVoted && tikStyles.voteBtnVoted]}
         onPress={handleVoteLocal}
         disabled={isVoting}
         activeOpacity={0.85}
       >
-        <Ionicons
-          name={userVoted ? 'heart' : 'heart-outline'}
-          size={26}
-          color={userVoted ? '#FF4D6A' : '#FFF'}
-        />
+        <Ionicons name={userVoted ? 'heart' : 'heart-outline'} size={26} color={userVoted ? '#FF4D6A' : '#FFF'} />
         <Text style={tikStyles.voteCount}>{totalVotes}</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
+// ─── AudioFeedModal ───────────────────────────────────────────────────────────
+interface AudioFeedModalProps {
+  visible:    boolean;
+  items:      AudioFeedItem[];
+  startIndex: number;
+  onClose:    () => void;
+  onVote:     (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+}
+
+function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFeedModalProps) {
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
+  const flatRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    if (visible && flatRef.current && items.length > 0) {
+      flatRef.current.scrollToIndex({ index: startIndex, animated: false });
+      setCurrentIndex(startIndex);
+    }
+  }, [visible, startIndex]);
+
+  if (!visible || items.length === 0) return null;
+
+  return (
+    <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
+      <StatusBar hidden />
+      <View style={audStyles.root}>
+        <TouchableOpacity style={audStyles.closeBtn} onPress={onClose}>
+          <Ionicons name="close" size={28} color="#FFF" />
+        </TouchableOpacity>
+        <FlatList
+          ref={flatRef}
+          data={items}
+          keyExtractor={item => item.mediaId}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={height}
+          decelerationRate="fast"
+          getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
+          initialScrollIndex={startIndex}
+          onMomentumScrollEnd={e => {
+            const idx = Math.round(e.nativeEvent.contentOffset.y / height);
+            setCurrentIndex(idx);
+          }}
+          renderItem={({ item, index }) => (
+            <AudioFeedItem item={item} isActive={index === currentIndex} onVote={onVote} />
+          )}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+// ─── AudioFeedItem ────────────────────────────────────────────────────────────
+function AudioFeedItem({
+  item,
+  isActive,
+  onVote,
+}: {
+  item: AudioFeedItem;
+  isActive: boolean;
+  onVote: AudioFeedModalProps['onVote'];
+}) {
+  const [sound,      setSound]      = useState<Audio.Sound | null>(null);
+  const [isPlaying,  setIsPlaying]  = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+  const [isLoading,  setIsLoading]  = useState(false);
+  const [totalVotes, setTotalVotes] = useState(item.total_votes);
+  const [userVoted,  setUserVoted]  = useState(item.user_voted);
+  const [isVoting,   setIsVoting]   = useState(false);
+
+  useEffect(() => {
+    setTotalVotes(item.total_votes);
+    setUserVoted(item.user_voted);
+  }, [item]);
+
+  useEffect(() => {
+    let snd: Audio.Sound | null = null;
+
+    if (!isActive) {
+      setSound(prev => {
+        if (prev) prev.unloadAsync();
+        return null;
+      });
+      setIsPlaying(false);
+      setPositionMs(0);
+      return;
+    }
+
+    async function loadAndPlay() {
+      setIsLoading(true);
+      try {
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+        const { sound: s } = await Audio.Sound.createAsync(
+          { uri: item.audioUrl },
+          { shouldPlay: true },
+          (status: any) => {
+            if (status.isLoaded) {
+              setIsPlaying(status.isPlaying ?? false);
+              setPositionMs(status.positionMillis   ?? 0);
+              setDurationMs(status.durationMillis   ?? 0);
+            }
+          }
+        );
+        snd = s;
+        setSound(s);
+      } catch (e) {
+        console.warn('[AudioFeedItem] load error:', e);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadAndPlay();
+
+    return () => { snd?.unloadAsync(); };
+  }, [isActive, item.audioUrl]);
+
+  const togglePlay = async () => {
+    if (!sound || isLoading) return;
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      if (isPlaying) {
+        await sound.pauseAsync();
+      } else {
+        if (durationMs > 0 && positionMs >= durationMs) {
+          await sound.replayAsync();
+        } else {
+          await sound.playAsync();
+        }
+      }
+    } catch (e) {
+      console.warn('[AudioFeedItem] toggle error:', e);
+    }
+  };
+
+  const handleVoteLocal = async () => {
+    if (isVoting) return;
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsVoting(true);
+    const newVoted = !userVoted;
+    setUserVoted(newVoted);
+    setTotalVotes(p => newVoted ? p + 1 : p - 1);
+    try {
+      await onVote(item.game_type, item.run_id, item.user_id, item.session_id, userVoted);
+    } catch {
+      setUserVoted(!newVoted);
+      setTotalVotes(p => newVoted ? p - 1 : p + 1);
+    } finally {
+      setIsVoting(false);
+    }
+  };
+
+  const progress  = durationMs > 0 ? positionMs / durationMs : 0;
+  const fmtMs = (ms: number) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  return (
+    <View style={audStyles.item}>
+      <LinearGradient colors={['#1E0A3C', '#080810']} style={StyleSheet.absoluteFill} />
+
+      {/* Album art */}
+      <View style={audStyles.albumArt}>
+        <View style={audStyles.albumCircle}>
+          <Ionicons name="musical-notes" size={64} color="#A855F7" />
+        </View>
+      </View>
+
+      {/* Infos track */}
+      <View style={audStyles.trackInfo}>
+        <Text style={audStyles.trackTitle}>{item.run_title}</Text>
+        <Text style={audStyles.trackSub}>Run #{item.run_number}</Text>
+        {item.description
+          ? <Text style={audStyles.trackDesc} numberOfLines={2}>{item.description}</Text>
+          : null}
+      </View>
+
+      {/* Barre de progression */}
+      <View style={audStyles.progressContainer}>
+        <View style={audStyles.progressBg}>
+          <View style={[audStyles.progressFill, { width: `${Math.round(progress * 100)}%` as any }]} />
+        </View>
+        <View style={audStyles.timeRow}>
+          <Text style={audStyles.timeText}>{fmtMs(positionMs)}</Text>
+          <Text style={audStyles.timeText}>{fmtMs(durationMs)}</Text>
+        </View>
+      </View>
+
+      {/* Bouton Play / Pause */}
+      <TouchableOpacity style={audStyles.playBtn} onPress={togglePlay} disabled={isLoading}>
+        {isLoading
+          ? <ActivityIndicator size="large" color="#A855F7" />
+          : <Ionicons name={isPlaying ? 'pause-circle' : 'play-circle'} size={72} color="#A855F7" />}
+      </TouchableOpacity>
+
+      {/* Dégradé bas */}
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={audStyles.gradient} />
+
+      {/* Auteur */}
+      <View style={audStyles.infoRow}>
+        {item.author.avatar_url
+          ? <Image source={{ uri: item.author.avatar_url }} style={audStyles.avatar} />
+          : <View style={[audStyles.avatar, audStyles.avatarFallback]}>
+              <Text style={audStyles.avatarText}>
+                {item.author.prenom.charAt(0)}{item.author.nom.charAt(0)}
+              </Text>
+            </View>}
+        <View style={audStyles.infoText}>
+          <Text style={audStyles.authorName}>{item.author.prenom} {item.author.nom}</Text>
+          <Text style={audStyles.runLabel}>Run #{item.run_number} — {item.run_title}</Text>
+        </View>
+      </View>
+
+      {/* Vote */}
+      <TouchableOpacity
+        style={[audStyles.voteBtn, userVoted && audStyles.voteBtnVoted]}
+        onPress={handleVoteLocal}
+        disabled={isVoting}
+        activeOpacity={0.85}
+      >
+        <Ionicons name={userVoted ? 'heart' : 'heart-outline'} size={26} color={userVoted ? '#FF4D6A' : '#FFF'} />
+        <Text style={audStyles.voteCount}>{totalVotes}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── tikStyles ────────────────────────────────────────────────────────────────
 const tikStyles = StyleSheet.create({
-  root:         { flex: 1, backgroundColor: '#000' },
-  closeBtn:     { position: 'absolute', top: TIK_CLOSE_TOP, right: 16,
-                  zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
-                  width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  item:         { width, height, backgroundColor: '#000' },
-  gradient:     { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
-  infoRow:      { position: 'absolute', bottom: 60, left: 16, right: 80,
-                  flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
-  avatar:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
+  root:          { flex: 1, backgroundColor: '#000' },
+  closeBtn:      { position: 'absolute', top: TIK_CLOSE_TOP, right: 16,
+                   zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
+                   width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  item:          { width, height, backgroundColor: '#000' },
+  gradient:      { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  infoRow:       { position: 'absolute', bottom: 60, left: 16, right: 80,
+                   flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  avatar:        { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
   avatarFallback:{ backgroundColor: '#E65100', alignItems: 'center', justifyContent: 'center' },
-  avatarText:   { color: '#FFF', fontWeight: '800', fontSize: 14 },
-  infoText:     { flex: 1, gap: 3 },
-  authorName:   { color: '#FFF', fontWeight: '800', fontSize: 15 },
-  runLabel:     { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
-  desc:         { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18, marginTop: 2 },
-  voteBtn:      { position: 'absolute', right: 16, bottom: 80,
-                  alignItems: 'center', gap: 4,
-                  backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30,
-                  paddingHorizontal: 10, paddingVertical: 12 },
-  voteBtnVoted: { backgroundColor: 'rgba(255,77,106,0.2)' },
-  voteCount:    { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  avatarText:    { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  infoText:      { flex: 1, gap: 3 },
+  authorName:    { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  runLabel:      { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  desc:          { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18, marginTop: 2 },
+  voteBtn:       { position: 'absolute', right: 16, bottom: 80,
+                   alignItems: 'center', gap: 4,
+                   backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30,
+                   paddingHorizontal: 10, paddingVertical: 12 },
+  voteBtnVoted:  { backgroundColor: 'rgba(255,77,106,0.2)' },
+  voteCount:     { color: '#FFF', fontSize: 13, fontWeight: '800' },
 });
 
+// ─── audStyles ────────────────────────────────────────────────────────────────
+const audStyles = StyleSheet.create({
+  root:             { flex: 1, backgroundColor: '#080810' },
+  closeBtn:         { position: 'absolute', top: AUD_CLOSE_TOP, right: 16,
+                      zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
+                      width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  item:             { width, height, overflow: 'hidden' },
+  albumArt:         { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                      justifyContent: 'center', alignItems: 'center' },
+  albumCircle:      { width: 180, height: 180, borderRadius: 90,
+                      backgroundColor: 'rgba(168,85,247,0.15)',
+                      borderWidth: 2, borderColor: 'rgba(168,85,247,0.3)',
+                      justifyContent: 'center', alignItems: 'center' },
+  trackInfo:        { position: 'absolute', top: 80, left: 24, right: 24, alignItems: 'center' },
+  trackTitle:       { color: '#FFF', fontWeight: '800', fontSize: 18, textAlign: 'center' },
+  trackSub:         { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginTop: 4 },
+  trackDesc:        { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 6, textAlign: 'center' },
+  progressContainer:{ position: 'absolute', bottom: 230, left: 32, right: 32 },
+  progressBg:       { height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
+  progressFill:     { height: 4, backgroundColor: '#A855F7', borderRadius: 2 },
+  timeRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  timeText:         { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
+  playBtn:          { position: 'absolute', bottom: 160, left: 0, right: 0, alignItems: 'center' },
+  gradient:         { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  infoRow:          { position: 'absolute', bottom: 60, left: 16, right: 80,
+                      flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  avatar:           { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
+  avatarFallback:   { backgroundColor: '#6200EA', alignItems: 'center', justifyContent: 'center' },
+  avatarText:       { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  infoText:         { flex: 1, gap: 3 },
+  authorName:       { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  runLabel:         { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  voteBtn:          { position: 'absolute', right: 16, bottom: 80,
+                      alignItems: 'center', gap: 4,
+                      backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30,
+                      paddingHorizontal: 10, paddingVertical: 12 },
+  voteBtnVoted:     { backgroundColor: 'rgba(255,77,106,0.2)' },
+  voteCount:        { color: '#FFF', fontSize: 13, fontWeight: '800' },
+});
 
-const FILTER_OVERLAY_TOP = Platform.OS === 'ios' ? 110 : 90;
-const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50 : 30;
-const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54 : 30;
-
+// ─── styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
   headerContainer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 },
@@ -1363,15 +1513,26 @@ const styles = StyleSheet.create({
   imagesList:       { flexGrow: 0 },
   imageSlide:       { paddingHorizontal: 12 },
   subImage:         { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#F0F0F0' },
+
   videoThumb:       { width: '100%', height: 280, borderRadius: 12, backgroundColor: '#1A1A2E',
                       justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   videoPlayOverlay: { position: 'absolute', top: 10, right: 10,
-                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 16,
-                      padding: 6 },
+                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 16, padding: 6 },
   videoBadge:       { position: 'absolute', bottom: 12, left: 12, flexDirection: 'row',
                       alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.6)',
                       borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   videoBadgeText:   { color: '#FFF', fontSize: 11, fontWeight: '700' },
+
+  audioThumb:       { width: '100%', height: 280, borderRadius: 12, overflow: 'hidden',
+                      justifyContent: 'center', alignItems: 'center' },
+  audioWave:        { alignItems: 'center', justifyContent: 'center' },
+  audioPlayIcon:    { position: 'absolute', top: 10, right: 10,
+                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 16, padding: 6 },
+  audioBadge:       { position: 'absolute', bottom: 12, left: 12, flexDirection: 'row',
+                      alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.6)',
+                      borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  audioBadgeText:   { color: '#FFF', fontSize: 11, fontWeight: '700' },
+
   imageCounter:     { position: 'absolute', top: 12, right: 20, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   imageCounterText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
   imgDesc:          { fontSize: 13, color: '#555', marginTop: 8, paddingHorizontal: 4 },
@@ -1399,35 +1560,4 @@ const styles = StyleSheet.create({
   modalValue:   { fontSize: 14, color: '#333', fontWeight: '600' },
   modalBtn:     { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   modalBtnText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-
-  // ─── Music / Audio ──────────────────────────────────────────────────────────
-  musicList:         { paddingHorizontal: 12, paddingVertical: 4, gap: 8 },
-  audioTrack:        { backgroundColor: '#F8F5FF', borderRadius: 14, padding: 14,
-                       borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
-  audioTrackNum:     { fontSize: 11, color: '#7C3AED', fontWeight: '700',
-                       textTransform: 'uppercase', letterSpacing: 0.5 },
-  audioTrackDesc:    { fontSize: 13, color: '#444', fontWeight: '500', marginBottom: 2 },
-
-  // Seekbar tactile
-  audioSeekBar:   { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
-  audioSeekTrack: { position: 'absolute', left: 2, right: 2, height: 4,
-                    backgroundColor: '#DDD6FE', borderRadius: 2 },
-  audioSeekFill:  { position: 'absolute', left: 2, height: 4,
-                    backgroundColor: '#7C3AED', borderRadius: 2 },
-  audioSeekThumb: { position: 'absolute', top: 6, width: 16, height: 16,
-                    borderRadius: 8, backgroundColor: '#7C3AED',
-                    marginLeft: -8, elevation: 3,
-                    shadowColor: '#7C3AED', shadowOpacity: 0.4, shadowRadius: 4 },
-
-  audioTimings:   { flexDirection: 'row', justifyContent: 'space-between' },
-  audioTime:      { fontSize: 10, color: '#9CA3AF' },
-
-  // Contrôles
-  audioControls:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20 },
-  audioSkipBtn:   { alignItems: 'center', gap: 2 },
-  audioSkipText:  { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
-  audioPlayBtn:   { width: 48, height: 48, borderRadius: 24, borderWidth: 2,
-                    borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center',
-                    backgroundColor: '#FFF' },
-  audioPlayBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
 });
