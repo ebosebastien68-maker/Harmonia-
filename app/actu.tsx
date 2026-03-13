@@ -508,6 +508,10 @@ export default function ActuScreen() {
   const [refreshing,   setRefreshing]  = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // ── Push notifications ───────────────────────────────────────────────────
+  const [pushDone,    setPushDone]    = useState(false);  // déjà abonné ou refusé
+  const [showPushBtn, setShowPushBtn] = useState(false);  // afficher le bouton
+
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCreateModal,         setShowCreateModal]         = useState(false);
   const [showCommentsModal,       setShowCommentsModal]       = useState(false);
@@ -567,7 +571,12 @@ export default function ActuScreen() {
     loadSubmissions();
   }, [userId, accessToken]);
 
-  // ── Push notifications — init une seule fois après connexion ────────────
+  // ── Push notifications ──────────────────────────────────────────────────
+  // Sur mobile : initPushMobile peut demander la permission directement
+  //   (les OS mobiles autorisent les appels programmatiques)
+  // Sur web    : requestPermission() EXIGE un geste utilisateur →
+  //   on vérifie d'abord silencieusement si déjà abonné,
+  //   sinon on affiche un bouton pour déclencher le flux
   useEffect(() => {
     if (!userId) return;
 
@@ -577,16 +586,68 @@ export default function ActuScreen() {
       return { user_id: t.uid, access_token: t.token };
     };
 
-    if (Platform.OS === 'web') {
-      initPushWeb(getAuth).catch(err =>
-        console.warn('[ActuScreen] initPushWeb error:', err)
-      );
+    if (Platform.OS !== 'web') {
+      // Mobile : Expo peut demander la permission sans geste
+      initPushMobile(getAuth)
+        .then(() => setPushDone(true))
+        .catch(err => console.warn('[ActuScreen] initPushMobile error:', err));
     } else {
-      initPushMobile(getAuth).catch(err =>
-        console.warn('[ActuScreen] initPushMobile error:', err)
-      );
+      // Web : vérification silencieuse uniquement
+      // Si déjà abonné dans le navigateur → silence
+      // Sinon → afficher le bouton clochette
+      checkPushWebSilent(getAuth).then(alreadySubscribed => {
+        if (alreadySubscribed) {
+          setPushDone(true);
+        } else {
+          setShowPushBtn(true); // afficher le bouton
+        }
+      });
     }
-  }, [userId]); // déclenché une seule fois quand userId est connu
+  }, [userId]);
+
+  // Vérification silencieuse web (sans demander la permission)
+  const checkPushWebSilent = async (
+    getAuth: () => Promise<{ user_id: string; access_token: string } | null>
+  ): Promise<boolean> => {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return true;
+      const reg = await navigator.serviceWorker.getRegistration('/service-worker.js');
+      if (!reg) return false;
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) return true; // déjà abonné dans le navigateur
+      // Vérifier en DB
+      const auth = await getAuth();
+      if (!auth) return true;
+      const res = await fetch(`${BACKEND_URL}/push`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'checkSubscription', platform: 'web', ...auth }),
+      }).catch(() => null);
+      if (res?.ok) {
+        const data = await res.json();
+        return data.subscribed === true;
+      }
+      return false;
+    } catch { return false; }
+  };
+
+  // Déclenché par le clic sur le bouton clochette (web uniquement)
+  const handleEnablePush = async () => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShowPushBtn(false);
+    const getAuth = async () => {
+      const t = await getValidToken();
+      if (!t) return null;
+      return { user_id: t.uid, access_token: t.token };
+    };
+    try {
+      await initPushWeb(getAuth);
+      setPushDone(true);
+    } catch (err) {
+      console.warn('[ActuScreen] initPushWeb error:', err);
+      setPushDone(true); // cacher le bouton même en cas d'erreur
+    }
+  };
 
   const loadSubmissions = useCallback(async () => {
     try {
@@ -885,6 +946,14 @@ export default function ActuScreen() {
                   <Ionicons name="add" size={18} color="#fff" />
                 </LinearGradient>
               </TouchableOpacity>
+
+              {/* Bouton activer push — web uniquement, si pas encore abonné */}
+              {showPushBtn && !pushDone && (
+                <TouchableOpacity onPress={handleEnablePush} style={styles.pushEnableBtn}>
+                  <Ionicons name="notifications-circle" size={24} color="#FFD700" />
+                  <View style={styles.pushEnableDot} />
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity onPress={() => {
                 if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1471,6 +1540,8 @@ const styles = StyleSheet.create({
   filterBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
   filterBtnText: { color: '#FFD700', fontSize: 12, fontWeight: '700' },
   actionsBtns:   { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  pushEnableBtn: { position: 'relative' },
+  pushEnableDot: { position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF0080', borderWidth: 1.5, borderColor: '#4B0082' },
   createBtnGrad: { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
 
   doubleTapHint: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0E6FF', paddingVertical: 6, gap: 4 },
