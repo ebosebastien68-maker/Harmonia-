@@ -948,7 +948,7 @@ export default function ActuScreen() {
               </TouchableOpacity>
 
               {/* Bouton activer push — web uniquement, si pas encore abonné */}
-              {showPushBtn && !pushDone && (
+              {Platform.OS === 'web' && showPushBtn && !pushDone && (
                 <TouchableOpacity onPress={handleEnablePush} style={styles.pushEnableBtn}>
                   <Ionicons name="notifications-circle" size={24} color="#FFD700" />
                   <View style={styles.pushEnableDot} />
