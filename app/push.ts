@@ -252,7 +252,11 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
         shouldPlaySound: true,
         shouldSetBadge:  true,
       }),
-    });
+    })
+
+    // Enregistrer les catégories (boutons d'action par type)
+    const { registerNotificationCategories } = require('./notificationCategories')
+    await registerNotificationCategories();
 
     // Canal Android obligatoire
     if (Platform.OS === 'android') {
