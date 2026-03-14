@@ -1,34 +1,42 @@
 // =====================================================
-// service-worker.js
-// Service Worker Harmonia — Web Push
+// service-worker.js — Harmonia Web Push
+// Placer dans /public/ à la racine du projet
 //
-// Placer ce fichier à la RACINE du build web :
-//   /public/service-worker.js  (Expo Web / Vercel)
-//
-// Il reçoit les push events du serveur et affiche
-// la notification même si l'app est fermée.
+// URL app     : https://harmonia-world.vercel.app
+// Icon défaut : /favicon.png
+// Badge msg   : /message-badge.png
 // =====================================================
 
-const CACHE_NAME = 'harmonia-sw-v1';
+self.addEventListener('install', () => self.skipWaiting());
 
-// ── Installation ──────────────────────────────────────────────────────────────
-self.addEventListener('install', (event) => {
-  console.log('[SW] Installé');
-  self.skipWaiting();
-});
-
-// ── Activation ────────────────────────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activé');
   event.waitUntil(self.clients.claim());
 });
 
+// ── Badges par type (fallback si le backend ne l'envoie pas) ─────────────────
+const BADGES = {
+  nouveau_message: '/message-badge.png',
+};
+
+// ── Actions par type ──────────────────────────────────────────────────────────
+function getActions(type) {
+  switch (type) {
+    case 'nouveau_message':
+      return [
+        { action: 'open',    title: '💬 Lire le message' },
+        { action: 'dismiss', title: 'Ignorer'            },
+      ];
+    default:
+      return [
+        { action: 'open',    title: '👁 Voir'  },
+        { action: 'dismiss', title: 'Fermer'   },
+      ];
+  }
+}
+
 // ── Réception d'un push ───────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
-  if (!event.data) {
-    console.log('[SW] Push reçu sans données');
-    return;
-  }
+  if (!event.data) return;
 
   let payload;
   try {
@@ -37,40 +45,69 @@ self.addEventListener('push', (event) => {
     payload = { title: 'Harmonia', body: event.data.text() };
   }
 
-  const title   = payload.title   || 'Harmonia';
+  const type  = payload.data?.type || null;
+  const title = payload.title      || 'Harmonia';
+
   const options = {
-    body:    payload.body    || payload.content || '',
-    icon:    payload.icon    || '/assets/icon.png',
-    badge:   payload.badge   || '/assets/icon.png',
-    image:   payload.image   || undefined,
-    data:    payload.data    || {},
-    tag:     payload.tag     || 'harmonia-notif',
+    body:     payload.body  || '',
+    // Icône principale — toujours favicon.png (icône de l'app)
+    icon:     '/favicon.png',
+    // Badge — /message-badge.png pour nouveau_message
+    // sinon fallback favicon
+    badge:    payload.badge || BADGES[type] || '/favicon.png',
+    // Image optionnelle — null si non fournie
+    ...(payload.image ? { image: payload.image } : {}),
+    data:     payload.data  || {},
+    // tag — évite les doublons du même type
+    tag:      `harmonia-${type || 'notif'}`,
     renotify: true,
-    vibrate: [200, 100, 200],
+    vibrate:  [200, 100, 200],
+    actions:  getActions(type),
   };
 
-  console.log('[SW] Affichage notification :', title);
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
 });
 
-// ── Clic sur la notification ──────────────────────────────────────────────────
+// ── Clic sur la notification ou un bouton d'action ───────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const url = event.notification.data?.url || 'https://harmonia-world.vercel.app/home';
+  // Bouton "Ignorer" → on ferme, rien de plus
+  if (event.action === 'dismiss') return;
+
+  const data    = event.notification.data || {};
+  const type    = data.type;
+  const baseUrl = 'https://harmonia-world.vercel.app';
+  let   target  = `${baseUrl}/home`;
+
+  // Navigation selon le type
+  switch (type) {
+    case 'nouveau_message':
+      target = data.conversation_id
+        ? `${baseUrl}/messages?conversation=${data.conversation_id}`
+        : `${baseUrl}/messages`;
+      break;
+    default:
+      target = `${baseUrl}/home`;
+  }
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Fenêtre déjà ouverte → focus
-      const existing = clients.find(c => c.url.includes('harmonia-world.vercel.app'));
-      if (existing) {
-        existing.focus();
-        existing.navigate(url);
-      } else {
-        // Ouvrir une nouvelle fenêtre
-        self.clients.openWindow(url);
-      }
-    })
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clients) => {
+        // Fenêtre déjà ouverte → focus + navigation
+        const existing = clients.find(c =>
+          c.url.startsWith(baseUrl)
+        );
+        if (existing) {
+          existing.focus();
+          existing.navigate(target);
+        } else {
+          // Ouvrir une nouvelle fenêtre
+          self.clients.openWindow(target);
+        }
+      })
   );
 });
-                                                                              
