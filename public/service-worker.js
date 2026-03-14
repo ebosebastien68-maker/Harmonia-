@@ -12,8 +12,10 @@
 const CACHE_NAME = 'harmonia-sw-v1';
 
 // ── Badges par type de notification ──────────────────────────────────────────
+const BASE_URL = 'https://harmonia-world.vercel.app';
+
 const BADGES = {
-  nouveau_message: '/message-badge.png',
+  nouveau_message: BASE_URL + '/message-badge.png',
 };
 
 // ── Actions par type de notification ─────────────────────────────────────────
@@ -60,9 +62,9 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body:     payload.body    || payload.content || '',
-    icon:     payload.icon    || '/favicon.png',
+    icon:     payload.icon    || BASE_URL + '/favicon.png',
     // Badge dynamique selon le type, fallback favicon
-    badge:    payload.badge   || BADGES[type]    || '/favicon.png',
+    badge:    payload.badge   || BADGES[type]    || BASE_URL + '/favicon.png',
     // image uniquement si fournie (nullable)
     ...(payload.image ? { image: payload.image } : {}),
     data:     payload.data    || {},
@@ -114,4 +116,3 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
-        
