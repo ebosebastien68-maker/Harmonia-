@@ -18,7 +18,8 @@ import EditPostModal from '../components/EditPostModal';
 import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
-import { initPush } from './push';
+import { initPush }       from './push';
+import PushPromptModal   from '../components/PushPromptModal';
 
 const { width, height } = Dimensions.get('window');
 const BACKEND_URL    = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
@@ -508,8 +509,9 @@ export default function ActuScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ── Push notifications ───────────────────────────────────────────────────
-  const [pushDone,    setPushDone]    = useState(false);  // déjà abonné ou refusé
-  const [showPushBtn, setShowPushBtn] = useState(false);  // afficher le bouton
+  const [pushDone,      setPushDone]      = useState(false); // déjà abonné ou refusé
+  const [showPushBtn,   setShowPushBtn]   = useState(false); // petit bouton clochette
+  const [showPushPrompt,setShowPushPrompt] = useState(false); // popup 10s
 
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCreateModal,         setShowCreateModal]         = useState(false);
@@ -583,41 +585,47 @@ export default function ActuScreen() {
       return { user_id: t.uid, access_token: t.token };
     };
 
-    if (Platform.OS !== 'web') {
-      // Mobile : initPush demande la permission directement via OS
-      initPush(getAuth)
-        .then(() => setPushDone(true))
-        .catch(err => console.warn('[ActuScreen] initPush mobile error:', err));
-    } else {
-      // Web : vérification silencieuse d'abord
-      // Si déjà abonné → silence, sinon → bouton clochette
-      checkPushWebSilent(getAuth).then(alreadySubscribed => {
-        if (alreadySubscribed) {
-          setPushDone(true);
-        } else {
-          setShowPushBtn(true);
-        }
-      });
-    }
+    // Sur mobile : vérification silencieuse d'abord
+    // Sur web    : idem — si pas abonné → popup prompt 10s
+    // Dans les deux cas, si non abonné → afficher le prompt
+    checkPushSilent(getAuth).then(alreadySubscribed => {
+      if (alreadySubscribed) {
+        setPushDone(true);
+      } else {
+        // Légère pause pour ne pas bloquer le chargement du feed
+        setTimeout(() => setShowPushPrompt(true), 1500);
+      }
+    });
   }, [userId]);
 
-  // Vérification silencieuse web (sans demander la permission)
-  const checkPushWebSilent = async (
-    getAuth: () => Promise<{ user_id: string; access_token: string } | null>
+  // Vérification silencieuse — mobile ET web — sans demander la permission
+  const checkPushSilent = async (
+    getAuthFn: () => Promise<{ user_id: string; access_token: string } | null>
   ): Promise<boolean> => {
     try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return true;
-      const reg = await navigator.serviceWorker.getRegistration('/service-worker.js');
-      if (!reg) return false;
-      const existing = await reg.pushManager.getSubscription();
-      if (existing) return true; // déjà abonné dans le navigateur
+      const auth = await getAuthFn();
+      if (!auth) return true; // pas connecté → on ne montre rien
+
+      if (Platform.OS === 'web') {
+        // Web : vérifier la subscription navigateur
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return true;
+        const reg = await navigator.serviceWorker.getRegistration('/service-worker.js').catch(() => null);
+        if (reg) {
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) return true;
+        }
+      } else {
+        // Mobile : vérifier le cache local
+        const cached = await AsyncStorage.getItem('harmonia_push_mobile_registered');
+        if (cached === 'true') return true;
+      }
+
       // Vérifier en DB
-      const auth = await getAuth();
-      if (!auth) return true;
+      const platform = Platform.OS === 'web' ? 'web' : 'mobile';
       const res = await fetch(`${BACKEND_URL}/push`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'checkSubscription', platform: 'web', ...auth }),
+        body:    JSON.stringify({ action: 'checkSubscription', platform, ...auth }),
       }).catch(() => null);
       if (res?.ok) {
         const data = await res.json();
@@ -627,22 +635,29 @@ export default function ActuScreen() {
     } catch { return false; }
   };
 
-  // Déclenché par le clic sur le bouton clochette (web uniquement)
+  // ── Déclenché par "Activer" dans le prompt OU clic sur le bouton clochette ─
   const handleEnablePush = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShowPushPrompt(false);
     setShowPushBtn(false);
-    const getAuth = async () => {
+    const getAuthFn = async () => {
       const t = await getValidToken();
       if (!t) return null;
       return { user_id: t.uid, access_token: t.token };
     };
     try {
-      await initPush(getAuth);
+      await initPush(getAuthFn);
       setPushDone(true);
     } catch (err) {
-      console.warn('[ActuScreen] initPush web error:', err);
+      console.warn('[ActuScreen] initPush error:', err);
       setPushDone(true);
     }
+  };
+
+  // ── "Ignorer" ou timeout → petit bouton clochette ─────────────────────────
+  const handleDismissPrompt = () => {
+    setShowPushPrompt(false);
+    setShowPushBtn(true); // le bouton reste disponible dans le header
   };
 
   const loadSubmissions = useCallback(async () => {
@@ -1094,6 +1109,13 @@ export default function ActuScreen() {
         startIndex={audioStartIndex}
         onClose={() => setAudioModal(false)}
         onVote={handleVote}
+      />
+
+      {/* Popup invitation notifications — apparaît 1.5s après chargement */}
+      <PushPromptModal
+        visible={showPushPrompt}
+        onAccept={handleEnablePush}
+        onDismiss={handleDismissPrompt}
       />
     </View>
   );
