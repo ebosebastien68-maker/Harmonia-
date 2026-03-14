@@ -571,11 +571,9 @@ export default function ActuScreen() {
   }, [userId, accessToken]);
 
   // ── Push notifications ──────────────────────────────────────────────────
-  // Sur mobile : push.native.ts demande la permission directement
-  //   (les OS mobiles autorisent les appels programmatiques)
-  // Sur web    : requestPermission() EXIGE un geste utilisateur →
-  //   on vérifie d'abord silencieusement si déjà abonné,
-  //   sinon on affiche un bouton pour déclencher le flux
+  // push.ts contient toute la logique (web + native dans un seul fichier)
+  // Les imports natifs (expo-notifications) sont en require() dynamique
+  // → invisibles pour le bundler web (Expo static export SDK 50)
   useEffect(() => {
     if (!userId) return;
 
@@ -585,8 +583,6 @@ export default function ActuScreen() {
       return { user_id: t.uid, access_token: t.token };
     };
 
-    // Metro charge automatiquement push.native.ts sur mobile
-    // et push.web.ts sur web — même fonction, comportement différent
     if (Platform.OS !== 'web') {
       // Mobile : initPush demande la permission directement via OS
       initPush(getAuth)
