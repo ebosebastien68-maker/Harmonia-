@@ -18,8 +18,7 @@ import EditPostModal from '../components/EditPostModal';
 import SavedPostsModal from '../components/SavedPostsModal';
 import SearchModal from '../components/SearchModal';
 import LogoutModal from '../components/LogoutModal';
-import { initPushMobile } from './pushMobile';
-import { initPushWeb }    from './pushWeb';
+import { initPush } from './push';
 
 const { width, height } = Dimensions.get('window');
 const BACKEND_URL    = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
@@ -572,7 +571,7 @@ export default function ActuScreen() {
   }, [userId, accessToken]);
 
   // ── Push notifications ──────────────────────────────────────────────────
-  // Sur mobile : initPushMobile peut demander la permission directement
+  // Sur mobile : push.native.ts demande la permission directement
   //   (les OS mobiles autorisent les appels programmatiques)
   // Sur web    : requestPermission() EXIGE un geste utilisateur →
   //   on vérifie d'abord silencieusement si déjà abonné,
@@ -586,20 +585,21 @@ export default function ActuScreen() {
       return { user_id: t.uid, access_token: t.token };
     };
 
+    // Metro charge automatiquement push.native.ts sur mobile
+    // et push.web.ts sur web — même fonction, comportement différent
     if (Platform.OS !== 'web') {
-      // Mobile : Expo peut demander la permission sans geste
-      initPushMobile(getAuth)
+      // Mobile : initPush demande la permission directement via OS
+      initPush(getAuth)
         .then(() => setPushDone(true))
-        .catch(err => console.warn('[ActuScreen] initPushMobile error:', err));
+        .catch(err => console.warn('[ActuScreen] initPush mobile error:', err));
     } else {
-      // Web : vérification silencieuse uniquement
-      // Si déjà abonné dans le navigateur → silence
-      // Sinon → afficher le bouton clochette
+      // Web : vérification silencieuse d'abord
+      // Si déjà abonné → silence, sinon → bouton clochette
       checkPushWebSilent(getAuth).then(alreadySubscribed => {
         if (alreadySubscribed) {
           setPushDone(true);
         } else {
-          setShowPushBtn(true); // afficher le bouton
+          setShowPushBtn(true);
         }
       });
     }
@@ -641,11 +641,11 @@ export default function ActuScreen() {
       return { user_id: t.uid, access_token: t.token };
     };
     try {
-      await initPushWeb(getAuth);
+      await initPush(getAuth);
       setPushDone(true);
     } catch (err) {
-      console.warn('[ActuScreen] initPushWeb error:', err);
-      setPushDone(true); // cacher le bouton même en cas d'erreur
+      console.warn('[ActuScreen] initPush web error:', err);
+      setPushDone(true);
     }
   };
 
