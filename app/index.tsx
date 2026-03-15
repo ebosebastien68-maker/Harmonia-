@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -7,11 +7,13 @@ import {
   Image, 
   TouchableOpacity, 
   Dimensions,
-  ImageBackground 
+  ImageBackground,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 
 const { width } = Dimensions.get('window');
@@ -19,6 +21,41 @@ const { width } = Dimensions.get('window');
 export default function LandingPage() {
   const router = useRouter();
   const lastTap = useRef<number>(0);
+
+  // ── PWA Install Prompt (web uniquement) ───────────────────────────────────
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handler = (e: any) => {
+      e.preventDefault(); // Empêche le mini-infobar automatique du navigateur
+      setInstallPrompt(e);
+      setShowInstallBtn(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+
+    // Si déjà installé → ne pas montrer le bouton
+    window.addEventListener('appinstalled', () => {
+      setShowInstallBtn(false);
+      setInstallPrompt(null);
+    });
+
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setShowInstallBtn(false);
+      setInstallPrompt(null);
+    }
+  };
+  // ─────────────────────────────────────────────────────────────────────────
 
   const navigateToLogin = () => {
     router.push('/login');
@@ -39,6 +76,27 @@ export default function LandingPage() {
   return (
     <View style={styles.mainContainer}>
       <StatusBar style="dark" />
+
+      {/* ── Bouton installer PWA ── */}
+      {showInstallBtn && (
+        <TouchableOpacity style={styles.installBanner} onPress={handleInstall} activeOpacity={0.9}>
+          <LinearGradient
+            colors={['#8A2BE2', '#4B0082']}
+            style={styles.installBannerGrad}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+          >
+            <HarmoniaLogo size={28} showText={false} theme="light" />
+            <View style={styles.installBannerText}>
+              <Text style={styles.installBannerTitle}>Installer Harmonia</Text>
+              <Text style={styles.installBannerSub}>Accès rapide depuis votre écran</Text>
+            </View>
+            <View style={styles.installBannerBtn}>
+              <Ionicons name="download-outline" size={16} color="#FFF" />
+              <Text style={styles.installBannerBtnTxt}>Installer</Text>
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
       
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
@@ -193,12 +251,34 @@ const FeatureCard = ({ title, desc, color }: { title: string, desc: string, colo
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#F5F5F5' },
   scrollContent: { paddingBottom: 40 },
+
+  // ── Bannière installation PWA ──────────────────────────────────────────────
+  installBanner: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    zIndex: 1000,
+  },
+  installBannerGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  installBannerText: { flex: 1 },
+  installBannerTitle: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  installBannerSub:   { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 1 },
+  installBannerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 20,
+  },
+  installBannerBtnTxt: { color: '#FFF', fontWeight: '700', fontSize: 13 },
+
   heroBackground: { width: width, height: 500, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   heroContent: { alignItems: 'center', paddingHorizontal: 20, marginTop: 60 },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
+  logoContainer: { alignItems: 'center', marginBottom: 30 },
   heroTitle: { fontSize: 36, fontWeight: '800', textAlign: 'center', color: '#333', lineHeight: 44, marginBottom: 10 },
   heroSubtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 30, fontStyle: 'italic' },
   textGradientBlue: { color: '#0072ff' },
