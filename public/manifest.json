@@ -2,38 +2,29 @@
   "name": "Harmonia",
   "short_name": "Harmonia",
   "description": "Révélez Votre Talent",
-  "start_url": "/home",
+  "start_url": "https://harmonia-world.vercel.app/",
   "display": "standalone",
   "background_color": "#F5F5F5",
-  "theme_color": "#F5F5F5",
+  "theme_color": "#8A2BE2",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/assets/icon.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/assets/icon.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    },
-    {
-      "src": "/assets/adaptive-icon.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/assets/favicon.png",
+      "src": "https://harmonia-world.vercel.app/favicon.png",
       "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "https://harmonia-world.vercel.app/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://harmonia-world.vercel.app/favicon.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ],
   "id": "com.harmonia.app",
-  "categories": ["entertainment", "social"],
   "lang": "fr"
-    }
+}
