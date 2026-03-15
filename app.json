@@ -25,7 +25,16 @@
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
-      "output": "static"
+      "output": "static",
+      "name": "Harmonia",
+      "shortName": "Harmonia",
+      "description": "Révélez Votre Talent",
+      "themeColor": "#8A2BE2",
+      "backgroundColor": "#F5F5F5",
+      "startUrl": "/",
+      "display": "standalone",
+      "orientation": "portrait",
+      "lang": "fr"
     },
     "plugins": [
       "expo-router"
