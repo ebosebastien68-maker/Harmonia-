@@ -1,15 +1,24 @@
 // =====================================================
 // service-worker.js
-// Service Worker Harmonia — Web Push
+// Service Worker Harmonia — Web Push + PWA Cache
 //
 // Placer ce fichier à la RACINE du build web :
 //   /public/service-worker.js  (Expo Web / Vercel)
 //
 // Il reçoit les push events du serveur et affiche
 // la notification même si l'app est fermée.
+// Il met aussi en cache les ressources essentielles
+// pour que le navigateur reconnaisse l'app comme PWA.
 // =====================================================
 
 const CACHE_NAME = 'harmonia-sw-v1';
+
+// Ressources à mettre en cache pour le PWA
+const PRECACHE_ASSETS = [
+  '/',
+  '/favicon.png',
+  '/message-badge.png',
+];
 
 // ── Badges par type de notification ──────────────────────────────────────────
 const BASE_URL = 'https://harmonia-world.vercel.app';
@@ -49,16 +58,55 @@ function getActions(type) {
   }
 }
 
-// ── Installation ──────────────────────────────────────────────────────────────
+// ── Installation — mise en cache des ressources PWA ──────────────────────────
 self.addEventListener('install', (event) => {
   console.log('[SW] Installé');
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_ASSETS);
+    }).then(() => self.skipWaiting())
+  );
 });
 
-// ── Activation ────────────────────────────────────────────────────────────────
+// ── Activation — nettoyage des anciens caches ─────────────────────────────────
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activé');
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
+// ── Fetch — stratégie Network First avec fallback cache ──────────────────────
+self.addEventListener('fetch', (event) => {
+  // Ignorer les requêtes non-GET et les API externes
+  if (event.request.method !== 'GET') return;
+  if (event.request.url.includes('/push') ||
+      event.request.url.includes('supabase') ||
+      event.request.url.includes('onrender.com')) return;
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        // Mettre à jour le cache avec la réponse fraîche
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => {
+        // Réseau indisponible → fallback sur le cache
+        return caches.match(event.request).then((cached) => {
+          return cached || caches.match('/');
+        });
+      })
+  );
 });
 
 // ── Réception d'un push ───────────────────────────────────────────────────────
@@ -81,15 +129,12 @@ self.addEventListener('push', (event) => {
   const options = {
     body:     payload.body    || payload.content || '',
     icon:     payload.icon    || BASE_URL + '/favicon.png',
-    // Badge dynamique selon le type, fallback favicon
     badge:    payload.badge   || BADGES[type]    || BASE_URL + '/favicon.png',
-    // image uniquement si fournie (nullable)
     ...(payload.image ? { image: payload.image } : {}),
     data:     payload.data    || {},
     tag:      payload.tag     || 'harmonia-notif',
     renotify: true,
     vibrate:  [200, 100, 200],
-    // Boutons d'action selon le type
     actions:  getActions(type),
   };
 
@@ -101,14 +146,12 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  // Bouton "Ignorer" → fermer sans ouvrir l'app
   if (event.action === 'dismiss') return;
 
   const data    = event.notification.data || {};
   const type    = data.type;
   const baseUrl = 'https://harmonia-world.vercel.app';
 
-  // URL selon le type, fallback sur /home
   let url;
   switch (type) {
     case 'nouveau_message':
@@ -131,13 +174,11 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Fenêtre déjà ouverte → focus
       const existing = clients.find(c => c.url.includes('harmonia-world.vercel.app'));
       if (existing) {
         existing.focus();
         existing.navigate(url);
       } else {
-        // Ouvrir une nouvelle fenêtre
         self.clients.openWindow(url);
       }
     })
