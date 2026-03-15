@@ -16,6 +16,9 @@ const BASE_URL = 'https://harmonia-world.vercel.app';
 
 const BADGES = {
   nouveau_message: BASE_URL + '/message-badge.png',
+  nouveau_trophee: BASE_URL + '/favicon.png',
+  notification:    BASE_URL + '/favicon.png',
+  session_ouverte: BASE_URL + '/favicon.png',
 };
 
 // ── Actions par type de notification ─────────────────────────────────────────
@@ -25,6 +28,21 @@ function getActions(type) {
       return [
         { action: 'open',    title: '💬 Lire le message' },
         { action: 'dismiss', title: 'Ignorer'            },
+      ];
+    case 'nouveau_trophee':
+      return [
+        { action: 'open',    title: '🏆 Voir mon trophée' },
+        { action: 'dismiss', title: 'Fermer'              },
+      ];
+    case 'session_ouverte':
+      return [
+        { action: 'open',    title: '🎮 Voir la session' },
+        { action: 'dismiss', title: 'Plus tard'          },
+      ];
+    case 'notification':
+      return [
+        { action: 'open',    title: '👁 Lire' },
+        { action: 'dismiss', title: 'Fermer'  },
       ];
     default:
       return [];
@@ -97,6 +115,15 @@ self.addEventListener('notificationclick', (event) => {
       url = data.conversation_id
         ? `${baseUrl}/messages?conversation=${data.conversation_id}`
         : `${baseUrl}/messages`;
+      break;
+    case 'nouveau_trophee':
+      url = `${baseUrl}/notifications`;
+      break;
+    case 'session_ouverte':
+      url = `${baseUrl}/home`;
+      break;
+    case 'notification':
+      url = `${baseUrl}/notifications`;
       break;
     default:
       url = data.url || `${baseUrl}/home`;
