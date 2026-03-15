@@ -16,7 +16,10 @@ import * as Notifications from 'expo-notifications'
 
 // ── Types de notifications ────────────────────────────────────────────────────
 export const NOTIF_TYPES = {
-  NOUVEAU_MESSAGE: 'nouveau_message',
+  NOUVEAU_MESSAGE:  'nouveau_message',
+  NOUVEAU_TROPHEE:  'nouveau_trophee',
+  NOTIFICATION:     'notification',
+  SESSION_OUVERTE:  'session_ouverte',
 } as const
 
 // ── Enregistrement des catégories ─────────────────────────────────────────────
@@ -50,7 +53,58 @@ export async function registerNotificationCategories(): Promise<void> {
     }
   )
 
-  console.log('[NotifCategories] ✅ Catégorie nouveau_message enregistrée')
+  // ── Nouveau trophée ────────────────────────────────────────────────────────
+  await Notifications.setNotificationCategoryAsync(
+    NOTIF_TYPES.NOUVEAU_TROPHEE,
+    [
+      {
+        identifier: 'open',
+        buttonTitle: '🏆 Voir mon trophée',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'dismiss',
+        buttonTitle: 'Fermer',
+        options: { opensAppToForeground: false },
+      },
+    ]
+  )
+
+  // ── Notification générale ───────────────────────────────────────────────────
+  await Notifications.setNotificationCategoryAsync(
+    NOTIF_TYPES.NOTIFICATION,
+    [
+      {
+        identifier: 'open',
+        buttonTitle: '👁 Lire',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'dismiss',
+        buttonTitle: 'Fermer',
+        options: { opensAppToForeground: false },
+      },
+    ]
+  )
+
+  // ── Nouvelle session ─────────────────────────────────────────────────────────
+  await Notifications.setNotificationCategoryAsync(
+    NOTIF_TYPES.SESSION_OUVERTE,
+    [
+      {
+        identifier: 'open',
+        buttonTitle: '🎮 Voir la session',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'dismiss',
+        buttonTitle: 'Plus tard',
+        options: { opensAppToForeground: false },
+      },
+    ]
+  )
+
+  console.log('[NotifCategories] ✅ Toutes les catégories enregistrées')
 }
 
 // ── Gestionnaire de tap sur la notification ───────────────────────────────────
@@ -74,12 +128,23 @@ export function setupNotificationResponseHandler(
 
       switch (type) {
         case NOTIF_TYPES.NOUVEAU_MESSAGE:
-          // Ouvrir la conversation concernée
           if (data?.conversation_id) {
             navigate('messages', { conversation_id: data.conversation_id })
           } else {
             navigate('messages')
           }
+          break
+
+        case NOTIF_TYPES.NOUVEAU_TROPHEE:
+          navigate('notifications')
+          break
+
+        case NOTIF_TYPES.NOTIFICATION:
+          navigate('notifications')
+          break
+
+        case NOTIF_TYPES.SESSION_OUVERTE:
+          navigate('home')
           break
 
         default:
@@ -105,4 +170,4 @@ export function setupForegroundNotificationHandler(): () => void {
   )
 
   return () => subscription.remove()
-  }
+}
