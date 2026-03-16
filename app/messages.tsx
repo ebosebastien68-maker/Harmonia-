@@ -88,10 +88,11 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   useEffect(() => {
     if (!userId || !accessToken) return;
-    loadAllData();
-    updatePresence(true);
     setupListSocket();
-    return () => { listSocketRef.current?.disconnect(); updatePresence(false); };
+    return () => {
+      listSocketRef.current?.disconnect();
+      updatePresenceWith(userId, accessToken, false);
+    };
   }, [userId]);
 
   useEffect(() => {
@@ -103,8 +104,21 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const initSession = async () => {
     try {
       const raw = await AsyncStorage.getItem('harmonia_session');
-      if (raw) { const s = JSON.parse(raw); setUserId(s.user.id); setAccessToken(s.access_token); }
-    } catch {} finally { setLoading(false); }
+      if (raw) {
+        const s   = JSON.parse(raw);
+        const uid = s?.user?.id ?? '';
+        const tok = s?.access_token ?? '';
+        if (uid && tok) {
+          // Définir les états ET appeler loadAllData avec les valeurs locales
+          // pour éviter la race condition entre les deux setState
+          setUserId(uid);
+          setAccessToken(tok);
+          await loadAllDataWith(uid, tok);
+          await updatePresenceWith(uid, tok, true);
+        }
+      }
+    } catch (e) { console.error('[MessagesScreen] initSession:', e); }
+    finally { setLoading(false); }
   };
 
   const setupListSocket = useCallback(() => {
@@ -117,8 +131,23 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   }, [userId]);
 
   const loadAllData = useCallback(async () => {
+    if (!userId || !accessToken) return;
     await Promise.all([loadConversations(), loadOnlineFriends(), loadAllFriends(), loadMyGroups()]);
   }, [userId, accessToken]);
+
+  // Version avec paramètres explicites — évite la race condition au démarrage
+  const loadAllDataWith = async (uid: string, tok: string) => {
+    await Promise.all([
+      api('getConversations', uid, tok).then(d => { if (d.success) setConversations(d.conversations ?? []); }).catch(() => {}),
+      api('getFriendsOnline', uid, tok).then(d => { if (d.success) setOnlineFriends(d.friends ?? []); }).catch(() => {}),
+      api('getAllFriends',    uid, tok).then(d => { if (d.success) setAllFriends(d.friends ?? []); }).catch(() => {}),
+      groupsApi('getUserGroups', uid, tok).then(d => { if (d.success) setMyGroups(d.groups ?? []); }).catch(() => {}),
+    ]);
+  };
+
+  const updatePresenceWith = async (uid: string, tok: string, online: boolean) => {
+    try { await api('updatePresence', uid, tok, { is_online: online }); } catch {}
+  };
 
   const loadConversations = useCallback(async () => {
     if (!userId || !accessToken) return;
@@ -132,7 +161,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   const loadAllFriends = useCallback(async () => {
     if (!userId || !accessToken) return;
-    try { const d = await api('getFriends', userId, accessToken); if (d.success) setAllFriends(d.friends ?? []); } catch {}
+    try { const d = await api('getAllFriends', userId, accessToken); if (d.success) setAllFriends(d.friends ?? []); } catch {}
   }, [userId, accessToken]);
 
   const loadMyGroups = useCallback(async () => {
