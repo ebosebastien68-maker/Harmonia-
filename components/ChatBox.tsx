@@ -83,12 +83,10 @@ export default function ChatBox({
     });
 
     socket.on('joined', (data: { conversation_id: string; messages: Message[] }) => {
-      console.log('[ChatBox] Rejoint la conversation');
-      if (data.messages) {
-        setMessages(data.messages);
-        scrollToEnd();
-      }
+      console.log('[ChatBox] Rejoint la conversation privée');
+      setMessages(data.messages ?? []);
       setLoading(false);
+      scrollToEnd();
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
@@ -108,8 +106,7 @@ export default function ChatBox({
       });
       if (msg.senderId !== userId) {
         if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        markAsRead();
-        onNewMessage?.();
+          onNewMessage?.();
       }
       scrollToEnd();
     });
@@ -145,11 +142,13 @@ export default function ChatBox({
       });
     });
 
-    socket.on('joined',         () => { loadMessages(); });
-    socket.on('group_history',  (data: { messages: Message[] }) => {
-      setMessages(data.messages ?? []);
-      setLoading(false);
-      scrollToEnd();
+    // Les messages arrivent directement dans 'joined' via handleGroups.ts
+    socket.on('joined', (data: { messages: Message[]; group: any }) => {
+      if (data?.messages) {
+        setMessages(data.messages);
+        setLoading(false);
+        scrollToEnd();
+      }
     });
     socket.on('new_message',    (msg: Message) => {
       setMessages(prev => {
@@ -169,30 +168,8 @@ export default function ChatBox({
     socketRef.current = socket;
   };
 
-  // ── Chargement messages (prive seulement — groupe recu via socket) ─────────
-  const loadMessages = async () => {
-    if (conversationType !== 'private') return;
-    try {
-      const res = await fetch(`${WS_BASE}/messages`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'getMessages', conversation_id: conversationId, user_id: userId, access_token: accessToken }),
-      });
-      const d = await res.json();
-      if (d.success) { setMessages(d.messages ?? []); scrollToEnd(); }
-    } catch {} finally { setLoading(false); }
-  };
-
-  const markAsRead = async () => {
-    if (conversationType !== 'private') return;
-    try {
-      await fetch(`${WS_BASE}/messages`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'markAsRead', conversation_id: conversationId, user_id: userId, access_token: accessToken }),
-      });
-    } catch {}
-  };
+  // Messages chargés via socket (event 'joined') — pas de REST séparé
+  // markAsRead : le backend le fait automatiquement dans join_conversation
 
   const scrollToEnd = () => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
