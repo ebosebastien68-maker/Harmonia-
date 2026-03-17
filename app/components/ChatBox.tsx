@@ -298,10 +298,19 @@ export default function ChatBox({
     return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Normalise un message brut du socket pour garantir le champ createdAt
+  // Normalise un message brut du socket (snake_case Supabase → camelCase React)
+  // Messages historiques ('joined')  → souvent déjà camelCase
+  // Messages temps réel ('new_message') → snake_case brut de Supabase
   const normalizeMsg = (msg: any): Message => ({
     ...msg,
-    createdAt: msg.createdAt ?? msg.created_at ?? null,
+    id:           msg.id,
+    content:      msg.content       ?? msg.text          ?? '',
+    senderId:     msg.senderId      ?? msg.sender_id     ?? '',
+    isFromMe:     msg.isFromMe      ?? msg.is_from_me    ?? false,
+    senderName:   msg.senderName    ?? msg.sender_name   ?? '',
+    senderAvatar: msg.senderAvatar  ?? msg.sender_avatar ?? null,
+    createdAt:    msg.createdAt     ?? msg.created_at    ?? null,
+    isRead:       msg.isRead        ?? msg.is_read       ?? false,
   });
 
   // ── Rendu ──────────────────────────────────────────────────────────────────
