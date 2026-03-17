@@ -127,20 +127,22 @@ export default function ChatBox({
 
     socket.on('joined', (data: { conversation_id: string; messages: Message[] }) => {
       console.log('[ChatBox] Rejoint la conversation privée');
-      setMessages(data.messages ?? []);
+      setMessages((data.messages ?? []).map(normalizeMsg));
       setLoading(false);
       scrollToEnd();
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
+      const msg = normalizeMsg(data.message);
       setMessages(prev =>
-        prev.find(m => m.id === data.message.id) ? prev : [...prev, data.message]
+        prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
       setSending(false);
       scrollToEnd();
     });
 
-    socket.on('new_message', (msg: Message) => {
+    socket.on('new_message', (raw: any) => {
+      const msg = normalizeMsg(raw);
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
@@ -186,13 +188,14 @@ export default function ChatBox({
 
     socket.on('joined', (data: { messages: Message[]; group: any }) => {
       if (data?.messages) {
-        setMessages(data.messages);
+        setMessages(data.messages.map(normalizeMsg));
         setLoading(false);
         scrollToEnd();
       }
     });
 
-    socket.on('new_message', (msg: Message) => {
+    socket.on('new_message', (raw: any) => {
+      const msg = normalizeMsg(raw);
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
@@ -211,12 +214,11 @@ export default function ChatBox({
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
   //
-  // CORRECTION 3 — Animation Web :
-  //   Sur le web, useNativeDriver n'est pas supporté.
-  //   On désactive animated uniquement sur Platform.OS === 'web'.
+  // Web    → animated: false  (useNativeDriver non supporté sur navigateur)
+  // Mobile → animated: true   (scroll fluide sur iOS / Android)
 
   const scrollToEnd = () => {
-    const shouldAnimate = Platform.OS !== 'web';
+    const shouldAnimate = Platform.OS === 'web' ? false : true;
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: shouldAnimate }), 100);
   };
 
@@ -284,15 +286,23 @@ export default function ChatBox({
 
   // ── Formatage heure ────────────────────────────────────────────────────────
   //
-  // CORRECTION 5 — Invalid Date :
-  //   Guard sur null/undefined et vérification isNaN avant d'afficher.
+  // Normalise les deux formats possibles venant du socket :
+  //   - camelCase : msg.createdAt  (format interne React)
+  //   - snake_case: msg.created_at (format brut Supabase/backend)
+  // Guard complet : null, undefined, chaîne vide, timestamp invalide → ''
 
-  const fmtTime = (value: string | null | undefined): string => {
-    if (!value) return '';
+  const fmtTime = (value: string | number | null | undefined): string => {
+    if (value === null || value === undefined || value === '') return '';
     const date = new Date(value);
     if (isNaN(date.getTime())) return '';
     return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
+
+  // Normalise un message brut du socket pour garantir le champ createdAt
+  const normalizeMsg = (msg: any): Message => ({
+    ...msg,
+    createdAt: msg.createdAt ?? msg.created_at ?? null,
+  });
 
   // ── Rendu ──────────────────────────────────────────────────────────────────
 
@@ -339,7 +349,9 @@ export default function ChatBox({
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
         onContentSizeChange={() =>
-          scrollRef.current?.scrollToEnd({ animated: Platform.OS !== 'web' })
+          scrollRef.current?.scrollToEnd({
+            animated: Platform.OS === 'web' ? false : true,
+          })
         }
       >
         {loading ? (
