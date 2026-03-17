@@ -1,5 +1,16 @@
-// ChatBox.tsx — v5 (correction socket zombie + gestion token)
-// Messagerie temps reel via Socket.IO Render
+// ChatBox.tsx — v5
+// Messagerie temps réel via Socket.IO Render
+// Privé  : socket /private-chat
+// Groupe : socket /group-chat
+//
+// Corrections appliquées (consigne) :
+//  1. Socket Zombie     → variable locale const socket dans useEffect
+//                         + ref assigné en parallèle
+//                         → cleanup utilise la variable locale (jamais null)
+//  2. Accumulation      → socket.removeAllListeners() avant socket.disconnect()
+//  3. Animation Web     → scrollToEnd désactive animated sur Platform.OS === 'web'
+//  4. Dépendances effet → [conversationId, accessToken]
+//  5. Invalid Date      → fmtTime protégé contre valeur null/invalide
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -11,151 +22,207 @@ import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
 import { io, Socket }     from 'socket.io-client';
-import { getValidToken }  from '../utils/tokenManager'; // adapte le chemin
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 interface Message {
-  id: string;
-  content: string;
-  senderId: string;
-  isFromMe: boolean;
-  senderName: string;
+  id:           string;
+  content:      string;
+  senderId:     string;
+  isFromMe:     boolean;
+  senderName:   string;
   senderAvatar: string | null;
-  createdAt: string;
-  isRead?: boolean;
+  createdAt:    string;
+  isRead?:      boolean;
 }
 
 interface ChatBoxProps {
   conversationId:   string;
   conversationType: 'private' | 'group';
-  userId:           string;                // toujours nécessaire pour identifier l'utilisateur
-  otherUser?: { id: string; nom: string; prenom: string; avatar_url: string | null; isOnline?: boolean };
-  groupName?:   string;
-  memberCount?: number;
-  onBack:       () => void;
+  userId:           string;
+  accessToken:      string;
+  otherUser?: {
+    id: string; nom: string; prenom: string;
+    avatar_url: string | null; isOnline?: boolean;
+  };
+  groupName?:    string;
+  memberCount?:  number;
+  onBack:        () => void;
   onNewMessage?: () => void;
 }
 
+// ── Composant ─────────────────────────────────────────────────────────────────
+
 export default function ChatBox({
-  conversationId, conversationType, userId,
+  conversationId, conversationType, userId, accessToken,
   otherUser, groupName, memberCount, onBack, onNewMessage,
 }: ChatBoxProps) {
-  const [messages,      setMessages]      = useState<Message[]>([]);
-  const [input,         setInput]         = useState('');
-  const [loading,       setLoading]       = useState(true);
-  const [sending,       setSending]       = useState(false);
-  const [otherTyping,   setOtherTyping]   = useState(false);
-  const [otherOnline,   setOtherOnline]   = useState(otherUser?.isOnline ?? false);
-  const scrollRef     = useRef<ScrollView>(null);
-  const socketRef     = useRef<Socket | null>(null);
-  const typingTimer   = useRef<any>(null);
-  const isTypingRef   = useRef(false);
 
-  // ── Détermine si l'animation de scroll est autorisée (pas sur le Web) ──
-  const canAnimateScroll = Platform.OS !== 'web';
+  const [messages,    setMessages]    = useState<Message[]>([]);
+  const [input,       setInput]       = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [sending,     setSending]     = useState(false);
+  const [otherTyping, setOtherTyping] = useState(false);
+  const [otherOnline, setOtherOnline] = useState(otherUser?.isOnline ?? false);
 
-  // ── Fonction pour scroll en fin avec animation conditionnelle ──
-  const scrollToEnd = () => {
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: canAnimateScroll });
-    }, 100);
+  const scrollRef   = useRef<ScrollView>(null);
+  const socketRef   = useRef<Socket | null>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
+
+  // ── useEffect principal ────────────────────────────────────────────────────
+  //
+  // CORRECTION 1 — Socket Zombie :
+  //   On crée le socket dans une variable locale `socket`.
+  //   Cette variable est "enfermée" (closure) dans l'effet courant.
+  //   Le cleanup du return utilise cette variable locale, qui ne sera
+  //   JAMAIS null au moment du nettoyage, même si socketRef.current
+  //   a été remplacé entre-temps par un autre rendu.
+  //
+  // CORRECTION 4 — Dépendances :
+  //   [conversationId, accessToken] → l'effet se relance si le token change
+  //   (ex: après un refresh dans MessagesScreen).
+
+  useEffect(() => {
+    // Variable locale — garantit un cleanup propre
+    const socket =
+      conversationType === 'private'
+        ? buildPrivateSocket()
+        : buildGroupSocket();
+
+    // On assigne aussi au ref pour que sendMessage/handleTyping puissent l'utiliser
+    socketRef.current = socket;
+
+    return () => {
+      // CORRECTION 2 — Accumulation de listeners :
+      //   removeAllListeners() d'abord → le socket devient totalement silencieux
+      //   avant d'être fermé. Plus aucun event ne peut déclencher un setState
+      //   sur un composant en cours de démontage.
+      socket.removeAllListeners();
+      socket.disconnect();
+
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, accessToken]);
+
+  // ── Construction socket privé ──────────────────────────────────────────────
+
+  const buildPrivateSocket = (): Socket => {
+    const socket = io(`${WS_BASE}/private-chat`, {
+      transports: ['websocket'],
+      reconnectionDelay: 2000,
+    });
+
+    socket.on('connect', () => {
+      console.log('[ChatBox] Socket privé connecté');
+      socket.emit('join_conversation', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+      });
+    });
+
+    socket.on('joined', (data: { conversation_id: string; messages: Message[] }) => {
+      console.log('[ChatBox] Rejoint la conversation privée');
+      setMessages(data.messages ?? []);
+      setLoading(false);
+      scrollToEnd();
+    });
+
+    socket.on('message_sent', (data: { message: Message }) => {
+      setMessages(prev =>
+        prev.find(m => m.id === data.message.id) ? prev : [...prev, data.message]
+      );
+      setSending(false);
+      scrollToEnd();
+    });
+
+    socket.on('new_message', (msg: Message) => {
+      setMessages(prev =>
+        prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
+      );
+      if (msg.senderId !== userId) {
+        if (Platform.OS !== 'web') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        onNewMessage?.();
+      }
+      scrollToEnd();
+    });
+
+    socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
+      if (data.user_id !== userId) setOtherTyping(data.is_typing);
+    });
+
+    socket.on('error', (err: { message: string }) => {
+      console.warn('[ChatBox] Erreur socket privé :', err.message);
+      setSending(false);
+    });
+
+    socket.on('disconnect', () => console.log('[ChatBox] Socket privé déconnecté'));
+
+    return socket;
   };
 
-  // ── Initialisation du socket ───────────────────────────────────────────────
-  useEffect(() => {
-    // Variable locale pour capturer le socket dans la closure de nettoyage
-    let socket: Socket | null = null;
+  // ── Construction socket groupe ─────────────────────────────────────────────
 
-    const initSocket = async () => {
-      // Selon le type, on choisit le namespace
-      const namespace = conversationType === 'private' ? '/private-chat' : '/group-chat';
-      socket = io(`${WS_BASE}${namespace}`, {
-        transports: ['websocket'],
-        reconnectionDelay: 2000,
+  const buildGroupSocket = (): Socket => {
+    const socket = io(`${WS_BASE}/group-chat`, {
+      transports: ['websocket'],
+      reconnectionDelay: 2000,
+    });
+
+    socket.on('connect', () => {
+      console.log('[ChatBox] Socket groupe connecté');
+      socket.emit('join_group', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
       });
+    });
 
-      socketRef.current = socket;
-
-      socket.on('connect', async () => {
-        console.log(`[ChatBox] Socket ${namespace} connecté`);
-        // Récupérer un token valide pour rejoindre la conversation
-        const token = await getValidToken();
-        if (conversationType === 'private') {
-          socket?.emit('join_conversation', {
-            conversation_id: conversationId,
-            user_id: userId,
-            access_token: token,
-          });
-        } else {
-          socket?.emit('join_group', {
-            group_id: conversationId,
-            user_id: userId,
-            access_token: token,
-          });
-        }
-      });
-
-      // Gestionnaires communs
-      socket.on('joined', (data: { messages?: Message[] }) => {
-        console.log('[ChatBox] Rejoint conversation');
-        if (data.messages) {
-          setMessages(data.messages);
-          setLoading(false);
-          scrollToEnd();
-        }
-      });
-
-      socket.on('new_message', (msg: Message) => {
-        setMessages(prev => {
-          if (prev.find(m => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-        if (msg.senderId !== userId) {
-          if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          onNewMessage?.();
-        }
+    socket.on('joined', (data: { messages: Message[]; group: any }) => {
+      if (data?.messages) {
+        setMessages(data.messages);
+        setLoading(false);
         scrollToEnd();
-      });
-
-      socket.on('message_sent', (data: { message: Message }) => {
-        setMessages(prev => {
-          if (prev.find(m => m.id === data.message.id)) return prev;
-          return [...prev, data.message];
-        });
-        scrollToEnd();
-        setSending(false);
-      });
-
-      // Spécifique privé
-      if (conversationType === 'private') {
-        socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
-          if (data.user_id !== userId) setOtherTyping(data.is_typing);
-        });
       }
+    });
 
-      socket.on('error', (err: { message: string }) => {
-        console.warn('[ChatBox] Erreur socket:', err.message);
-      });
-
-      socket.on('disconnect', () => console.log('[ChatBox] Socket déconnecté'));
-    };
-
-    initSocket();
-
-    // Nettoyage : utilise la variable locale `socket` pour éviter les références périmées
-    return () => {
-      if (socket) {
-        socket.removeAllListeners(); // vide tous les écouteurs
-        socket.disconnect();
+    socket.on('new_message', (msg: Message) => {
+      setMessages(prev =>
+        prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
+      );
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      socketRef.current = null;
-      clearTimeout(typingTimer.current);
-    };
-  }, [conversationId, conversationType, userId]); // userId ne change pas souvent, mais si l'utilisateur change, on recrée
+      onNewMessage?.();
+      scrollToEnd();
+    });
+
+    socket.on('error',      (err: { message: string }) => console.warn('[ChatBox] Groupe erreur :', err.message));
+    socket.on('disconnect', () => console.log('[ChatBox] Socket groupe déconnecté'));
+
+    return socket;
+  };
+
+  // ── Scroll ─────────────────────────────────────────────────────────────────
+  //
+  // CORRECTION 3 — Animation Web :
+  //   Sur le web, useNativeDriver n'est pas supporté.
+  //   On désactive animated uniquement sur Platform.OS === 'web'.
+
+  const scrollToEnd = () => {
+    const shouldAnimate = Platform.OS !== 'web';
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: shouldAnimate }), 100);
+  };
 
   // ── Envoi de message ───────────────────────────────────────────────────────
-  const sendMessage = async () => {
+
+  const sendMessage = () => {
     if (!input.trim() || sending) return;
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -163,39 +230,34 @@ export default function ChatBox({
     setInput('');
     setSending(true);
 
-    // Arrêt de l'indicateur de frappe si en privé
+    // Arrêt indicateur de frappe
     if (conversationType === 'private' && isTypingRef.current) {
       isTypingRef.current = false;
-      socketRef.current?.emit('typing', { is_typing: false });
+      socketRef.current?.emit('typing', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        is_typing:       false,
+      });
     }
 
-    try {
-      const token = await getValidToken();
-      if (conversationType === 'private') {
-        socketRef.current?.emit('send_message', {
-          conversation_id: conversationId,
-          user_id: userId,
-          access_token: token,
-          content,
-        });
-      } else {
-        socketRef.current?.emit('send_message', {
-          group_id: conversationId,
-          user_id: userId,
-          access_token: token,
-          content,
-        });
-      }
-    } catch (error) {
-      console.error('[ChatBox] Erreur envoi message:', error);
-      setSending(false);
-      // Optionnel : afficher une notification à l'utilisateur
+    if (conversationType === 'private') {
+      socketRef.current?.emit('send_message', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+        content,
+      });
+      // setSending(false) est géré par l'event 'message_sent'
+    } else {
+      socketRef.current?.emit('send_message', { content });
+      setSending(false); // pas d'accusé côté groupe
     }
 
-    // Ne pas remettre sending à false ici, car on attend l'ack `message_sent`
+    scrollToEnd();
   };
 
-  // ── Gestion de la frappe ───────────────────────────────────────────────────
+  // ── Indicateur de frappe ───────────────────────────────────────────────────
+
   const handleTyping = (text: string) => {
     setInput(text);
     if (conversationType !== 'private') return;
@@ -204,36 +266,51 @@ export default function ChatBox({
       isTypingRef.current = true;
       socketRef.current?.emit('typing', {
         conversation_id: conversationId,
-        user_id: userId,
-        is_typing: true,
+        user_id:         userId,
+        is_typing:       true,
       });
     }
-    clearTimeout(typingTimer.current);
+
+    if (typingTimer.current) clearTimeout(typingTimer.current);
     typingTimer.current = setTimeout(() => {
-      if (isTypingRef.current) {
-        isTypingRef.current = false;
-        socketRef.current?.emit('typing', {
-          conversation_id: conversationId,
-          user_id: userId,
-          is_typing: false,
-        });
-      }
+      isTypingRef.current = false;
+      socketRef.current?.emit('typing', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        is_typing:       false,
+      });
     }, 2000);
   };
 
-  const fmtTime = (d: string) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  // ── Formatage heure ────────────────────────────────────────────────────────
+  //
+  // CORRECTION 5 — Invalid Date :
+  //   Guard sur null/undefined et vérification isNaN avant d'afficher.
+
+  const fmtTime = (value: string | null | undefined): string => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // ── Rendu ──────────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={S.container}>
+
       {/* Header */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <TouchableOpacity onPress={onBack} style={S.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
+
         {conversationType === 'private' ? (
           <>
             <View style={S.avatar}>
-              <Text style={S.avatarTxt}>{otherUser?.prenom.charAt(0)}{otherUser?.nom.charAt(0)}</Text>
+              <Text style={S.avatarTxt}>
+                {otherUser?.prenom.charAt(0)}{otherUser?.nom.charAt(0)}
+              </Text>
               {otherOnline && <View style={S.onlineDot} />}
             </View>
             <View style={S.headerInfo}>
@@ -261,15 +338,21 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        onContentSizeChange={scrollToEnd} // appelle scrollToEnd après chaque changement de contenu
+        onContentSizeChange={() =>
+          scrollRef.current?.scrollToEnd({ animated: Platform.OS !== 'web' })
+        }
       >
         {loading ? (
           <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
         ) : messages.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 80 }}>
             <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#999', marginTop: 15 }}>Aucun message</Text>
-            <Text style={{ fontSize: 14, color: '#999', marginTop: 5 }}>Commencez la conversation !</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#999', marginTop: 15 }}>
+              Aucun message
+            </Text>
+            <Text style={{ fontSize: 14, color: '#999', marginTop: 5 }}>
+              Commencez la conversation !
+            </Text>
           </View>
         ) : (
           messages.map(msg => (
@@ -277,16 +360,18 @@ export default function ChatBox({
               {!msg.isFromMe && conversationType === 'group' && (
                 <Text style={S.senderName}>{msg.senderName}</Text>
               )}
-              <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
+              <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>
+                {msg.content}
+              </Text>
               <Text style={[S.msgTime, msg.isFromMe ? S.msgTimeMe : S.msgTimeThem]}>
-                {fmtTime(msg.createdAt)}{msg.isFromMe && msg.isRead && ' ✓✓'}
+                {fmtTime(msg.createdAt)}{msg.isFromMe && msg.isRead ? ' ✓✓' : ''}
               </Text>
             </View>
           ))
         )}
       </ScrollView>
 
-      {/* Input */}
+      {/* Zone de saisie */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={S.inputWrap}>
           <TextInput
@@ -305,41 +390,71 @@ export default function ChatBox({
             disabled={!input.trim() || sending}
             activeOpacity={0.7}
           >
-            {sending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="send" size={20} color="#fff" />
-            )}
+            {sending
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Ionicons name="send" size={20} color="#fff" />}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
     </SafeAreaView>
   );
 }
 
+// ── Styles ─────────────────────────────────────────────────────────────────────
+
 const S = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: '#F5F5F5' },
-  header:       { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 10 : 20, paddingBottom: 15, paddingHorizontal: 15 },
-  backBtn:      { marginRight: 12, padding: 5 },
-  avatar:       { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center', position: 'relative' },
-  avatarTxt:    { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  onlineDot:    { position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#fff', bottom: 2, right: 2 },
-  headerInfo:   { flex: 1, marginLeft: 10 },
-  headerName:   { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  headerStatus: { fontSize: 12, color: '#E0D0FF', marginTop: 2 },
-  msgs:         { flex: 1 },
-  bubble:       { maxWidth: '75%', padding: 12, borderRadius: 18, marginBottom: 8 },
-  bubbleMe:     { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
-  bubbleThem:   { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
-  senderName:   { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
-  msgText:      { fontSize: 15, lineHeight: 20 },
-  msgTextMe:    { color: '#fff' },
-  msgTextThem:  { color: '#333' },
-  msgTime:      { fontSize: 10, marginTop: 4 },
-  msgTimeMe:    { color: '#E0D0FF', textAlign: 'right' },
-  msgTimeThem:  { color: '#999' },
-  inputWrap:    { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#fff', paddingHorizontal: 15, paddingVertical: 10, paddingBottom: Platform.OS === 'ios' ? 20 : 10, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  input:        { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, marginRight: 10 },
-  sendBtn:      { width: 44, height: 44, borderRadius: 22, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
+  container:       { flex: 1, backgroundColor: '#F5F5F5' },
+  header:          {
+    flexDirection: 'row', alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 10 : 20,
+    paddingBottom: 15, paddingHorizontal: 15,
+  },
+  backBtn:         { marginRight: 12, padding: 5 },
+  avatar:          {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#8A2BE2',
+    justifyContent: 'center', alignItems: 'center',
+    position: 'relative',
+  },
+  avatarTxt:       { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  onlineDot:       {
+    position: 'absolute', width: 10, height: 10, borderRadius: 5,
+    backgroundColor: '#10B981', borderWidth: 2, borderColor: '#fff',
+    bottom: 2, right: 2,
+  },
+  headerInfo:      { flex: 1, marginLeft: 10 },
+  headerName:      { fontSize: 18, fontWeight: 'bold', color: '#fff' },
+  headerStatus:    { fontSize: 12, color: '#E0D0FF', marginTop: 2 },
+  msgs:            { flex: 1 },
+  bubble:          { maxWidth: '75%', padding: 12, borderRadius: 18, marginBottom: 8 },
+  bubbleMe:        { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
+  bubbleThem:      {
+    alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1, shadowRadius: 2, elevation: 1,
+  },
+  senderName:      { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
+  msgText:         { fontSize: 15, lineHeight: 20 },
+  msgTextMe:       { color: '#fff' },
+  msgTextThem:     { color: '#333' },
+  msgTime:         { fontSize: 10, marginTop: 4 },
+  msgTimeMe:       { color: '#E0D0FF', textAlign: 'right' },
+  msgTimeThem:     { color: '#999' },
+  inputWrap:       {
+    flexDirection: 'row', alignItems: 'flex-end',
+    backgroundColor: '#fff', paddingHorizontal: 15, paddingVertical: 10,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
+    borderTopWidth: 1, borderTopColor: '#E0E0E0',
+  },
+  input:           {
+    flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20,
+    paddingHorizontal: 16, paddingVertical: 10,
+    fontSize: 15, maxHeight: 100, marginRight: 10,
+  },
+  sendBtn:         {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center',
+  },
   sendBtnDisabled: { backgroundColor: '#ccc' },
 });
