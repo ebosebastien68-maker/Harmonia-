@@ -1,7 +1,5 @@
-// ChatBox.tsx — v4
+// ChatBox.tsx — v5 (correction socket zombie + gestion token)
 // Messagerie temps reel via Socket.IO Render
-// Prive : socket /private-chat
-// Groupe : socket /group-chat (deja existant)
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -13,6 +11,7 @@ import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
 import { io, Socket }     from 'socket.io-client';
+import { getValidToken }  from '../utils/tokenManager'; // adapte le chemin
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -30,8 +29,7 @@ interface Message {
 interface ChatBoxProps {
   conversationId:   string;
   conversationType: 'private' | 'group';
-  userId:           string;
-  accessToken:      string;
+  userId:           string;                // toujours nécessaire pour identifier l'utilisateur
   otherUser?: { id: string; nom: string; prenom: string; avatar_url: string | null; isOnline?: boolean };
   groupName?:   string;
   memberCount?: number;
@@ -40,7 +38,7 @@ interface ChatBoxProps {
 }
 
 export default function ChatBox({
-  conversationId, conversationType, userId, accessToken,
+  conversationId, conversationType, userId,
   otherUser, groupName, memberCount, onBack, onNewMessage,
 }: ChatBoxProps) {
   const [messages,      setMessages]      = useState<Message[]>([]);
@@ -54,129 +52,110 @@ export default function ChatBox({
   const typingTimer   = useRef<any>(null);
   const isTypingRef   = useRef(false);
 
+  // ── Détermine si l'animation de scroll est autorisée (pas sur le Web) ──
+  const canAnimateScroll = Platform.OS !== 'web';
+
+  // ── Fonction pour scroll en fin avec animation conditionnelle ──
+  const scrollToEnd = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: canAnimateScroll });
+    }, 100);
+  };
+
+  // ── Initialisation du socket ───────────────────────────────────────────────
   useEffect(() => {
-    if (conversationType === 'private') {
-      initPrivateSocket();
-    } else {
-      initGroupSocket();
-    }
+    // Variable locale pour capturer le socket dans la closure de nettoyage
+    let socket: Socket | null = null;
+
+    const initSocket = async () => {
+      // Selon le type, on choisit le namespace
+      const namespace = conversationType === 'private' ? '/private-chat' : '/group-chat';
+      socket = io(`${WS_BASE}${namespace}`, {
+        transports: ['websocket'],
+        reconnectionDelay: 2000,
+      });
+
+      socketRef.current = socket;
+
+      socket.on('connect', async () => {
+        console.log(`[ChatBox] Socket ${namespace} connecté`);
+        // Récupérer un token valide pour rejoindre la conversation
+        const token = await getValidToken();
+        if (conversationType === 'private') {
+          socket?.emit('join_conversation', {
+            conversation_id: conversationId,
+            user_id: userId,
+            access_token: token,
+          });
+        } else {
+          socket?.emit('join_group', {
+            group_id: conversationId,
+            user_id: userId,
+            access_token: token,
+          });
+        }
+      });
+
+      // Gestionnaires communs
+      socket.on('joined', (data: { messages?: Message[] }) => {
+        console.log('[ChatBox] Rejoint conversation');
+        if (data.messages) {
+          setMessages(data.messages);
+          setLoading(false);
+          scrollToEnd();
+        }
+      });
+
+      socket.on('new_message', (msg: Message) => {
+        setMessages(prev => {
+          if (prev.find(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+        if (msg.senderId !== userId) {
+          if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          onNewMessage?.();
+        }
+        scrollToEnd();
+      });
+
+      socket.on('message_sent', (data: { message: Message }) => {
+        setMessages(prev => {
+          if (prev.find(m => m.id === data.message.id)) return prev;
+          return [...prev, data.message];
+        });
+        scrollToEnd();
+        setSending(false);
+      });
+
+      // Spécifique privé
+      if (conversationType === 'private') {
+        socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
+          if (data.user_id !== userId) setOtherTyping(data.is_typing);
+        });
+      }
+
+      socket.on('error', (err: { message: string }) => {
+        console.warn('[ChatBox] Erreur socket:', err.message);
+      });
+
+      socket.on('disconnect', () => console.log('[ChatBox] Socket déconnecté'));
+    };
+
+    initSocket();
+
+    // Nettoyage : utilise la variable locale `socket` pour éviter les références périmées
     return () => {
-      socketRef.current?.disconnect();
+      if (socket) {
+        socket.removeAllListeners(); // vide tous les écouteurs
+        socket.disconnect();
+      }
+      socketRef.current = null;
       clearTimeout(typingTimer.current);
     };
-  }, [conversationId]);
+  }, [conversationId, conversationType, userId]); // userId ne change pas souvent, mais si l'utilisateur change, on recrée
 
-  // ── Socket prive ───────────────────────────────────────────────────────────
-  const initPrivateSocket = () => {
-    const socket = io(`${WS_BASE}/private-chat`, {
-      transports: ['websocket'],
-      reconnectionDelay: 2000,
-    });
-
-    socket.on('connect', () => {
-      console.log('[ChatBox] Socket prive connecte');
-      socket.emit('join_conversation', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        access_token:    accessToken,
-      });
-    });
-
-    socket.on('joined', (data: { conversation_id: string; messages: Message[] }) => {
-      console.log('[ChatBox] Rejoint la conversation privée');
-      setMessages(data.messages ?? []);
-      setLoading(false);
-      scrollToEnd();
-    });
-
-    socket.on('message_sent', (data: { message: Message }) => {
-      setMessages(prev => {
-        if (prev.find(m => m.id === data.message.id)) return prev;
-        return [...prev, data.message];
-      });
-      scrollToEnd();
-      setSending(false);
-    });
-
-    socket.on('new_message', (msg: Message) => {
-      setMessages(prev => {
-        const exists = prev.find(m => m.id === msg.id);
-        if (exists) return prev;
-        return [...prev, msg];
-      });
-      if (msg.senderId !== userId) {
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          onNewMessage?.();
-      }
-      scrollToEnd();
-    });
-
-    socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
-      if (data.user_id !== userId) setOtherTyping(data.is_typing);
-    });
-
-    // presence-update : géré via user_presence à la connexion/déconnexion
-
-    socket.on('error', (err: { message: string }) => {
-      console.warn('[ChatBox] Erreur socket:', err.message);
-    });
-
-    socket.on('disconnect', () => console.log('[ChatBox] Deconnecte'));
-
-    socketRef.current = socket;
-  };
-
-  // ── Socket groupe (namespace existant) ────────────────────────────────────
-  const initGroupSocket = () => {
-    const socket = io(`${WS_BASE}/group-chat`, {
-      transports: ['websocket'],
-      reconnectionDelay: 2000,
-    });
-
-    socket.on('connect', () => {
-      console.log('[ChatBox] Socket groupe connecte');
-      socket.emit('join_group', {
-        group_id:     conversationId,
-        user_id:      userId,
-        access_token: accessToken,
-      });
-    });
-
-    // Les messages arrivent directement dans 'joined' via handleGroups.ts
-    socket.on('joined', (data: { messages: Message[]; group: any }) => {
-      if (data?.messages) {
-        setMessages(data.messages);
-        setLoading(false);
-        scrollToEnd();
-      }
-    });
-    socket.on('new_message',    (msg: Message) => {
-      setMessages(prev => {
-        const exists = prev.find(m => m.id === msg.id);
-        if (exists) return prev;
-        return [...prev, msg];
-      });
-      if (msg.senderId !== userId && Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-      onNewMessage?.();
-      scrollToEnd();
-    });
-    socket.on('error',          (err: { message: string }) => console.warn('[ChatBox] Groupe erreur:', err.message));
-    socket.on('disconnect',     () => console.log('[ChatBox] Groupe deconnecte'));
-
-    socketRef.current = socket;
-  };
-
-  // Messages chargés via socket (event 'joined') — pas de REST séparé
-  // markAsRead : le backend le fait automatiquement dans join_conversation
-
-  const scrollToEnd = () => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
-  };
-
-  // ── Envoi message ──────────────────────────────────────────────────────────
-  const sendMessage = () => {
+  // ── Envoi de message ───────────────────────────────────────────────────────
+  const sendMessage = async () => {
     if (!input.trim() || sending) return;
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -184,40 +163,61 @@ export default function ChatBox({
     setInput('');
     setSending(true);
 
-    // Arret indicateur de frappe
+    // Arrêt de l'indicateur de frappe si en privé
     if (conversationType === 'private' && isTypingRef.current) {
       isTypingRef.current = false;
       socketRef.current?.emit('typing', { is_typing: false });
     }
 
-    if (conversationType === 'private') {
-      socketRef.current?.emit('send_message', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        access_token:    accessToken,
-        content,
-      });
-    } else {
-      socketRef.current?.emit('send_message', { content });
+    try {
+      const token = await getValidToken();
+      if (conversationType === 'private') {
+        socketRef.current?.emit('send_message', {
+          conversation_id: conversationId,
+          user_id: userId,
+          access_token: token,
+          content,
+        });
+      } else {
+        socketRef.current?.emit('send_message', {
+          group_id: conversationId,
+          user_id: userId,
+          access_token: token,
+          content,
+        });
+      }
+    } catch (error) {
+      console.error('[ChatBox] Erreur envoi message:', error);
+      setSending(false);
+      // Optionnel : afficher une notification à l'utilisateur
     }
 
-    setSending(false);
-    scrollToEnd();
+    // Ne pas remettre sending à false ici, car on attend l'ack `message_sent`
   };
 
-  // ── Frappe ─────────────────────────────────────────────────────────────────
+  // ── Gestion de la frappe ───────────────────────────────────────────────────
   const handleTyping = (text: string) => {
     setInput(text);
     if (conversationType !== 'private') return;
 
     if (text.length > 0 && !isTypingRef.current) {
       isTypingRef.current = true;
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing: true });
+      socketRef.current?.emit('typing', {
+        conversation_id: conversationId,
+        user_id: userId,
+        is_typing: true,
+      });
     }
     clearTimeout(typingTimer.current);
     typingTimer.current = setTimeout(() => {
-      isTypingRef.current = false;
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing: false });
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        socketRef.current?.emit('typing', {
+          conversation_id: conversationId,
+          user_id: userId,
+          is_typing: false,
+        });
+      }
     }, 2000);
   };
 
@@ -239,7 +239,7 @@ export default function ChatBox({
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{otherUser?.prenom} {otherUser?.nom}</Text>
               <Text style={S.headerStatus}>
-                {otherTyping ? "En train d'ecrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}
+                {otherTyping ? "En train d'écrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}
               </Text>
             </View>
           </>
@@ -257,27 +257,33 @@ export default function ChatBox({
       </LinearGradient>
 
       {/* Messages */}
-      <ScrollView ref={scrollRef} style={S.msgs} contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
-        {loading
-          ? <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
-          : messages.length === 0
-            ? <View style={{ alignItems: 'center', paddingVertical: 80 }}>
-                <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
-                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#999', marginTop: 15 }}>Aucun message</Text>
-                <Text style={{ fontSize: 14, color: '#999', marginTop: 5 }}>Commencez la conversation !</Text>
-              </View>
-            : messages.map(msg => (
-              <View key={msg.id} style={[S.bubble, msg.isFromMe ? S.bubbleMe : S.bubbleThem]}>
-                {!msg.isFromMe && conversationType === 'group' && (
-                  <Text style={S.senderName}>{msg.senderName}</Text>
-                )}
-                <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
-                <Text style={[S.msgTime, msg.isFromMe ? S.msgTimeMe : S.msgTimeThem]}>
-                  {fmtTime(msg.createdAt)}{msg.isFromMe && msg.isRead && ' ✓✓'}
-                </Text>
-              </View>
-            ))}
+      <ScrollView
+        ref={scrollRef}
+        style={S.msgs}
+        contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
+        onContentSizeChange={scrollToEnd} // appelle scrollToEnd après chaque changement de contenu
+      >
+        {loading ? (
+          <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
+        ) : messages.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+            <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#999', marginTop: 15 }}>Aucun message</Text>
+            <Text style={{ fontSize: 14, color: '#999', marginTop: 5 }}>Commencez la conversation !</Text>
+          </View>
+        ) : (
+          messages.map(msg => (
+            <View key={msg.id} style={[S.bubble, msg.isFromMe ? S.bubbleMe : S.bubbleThem]}>
+              {!msg.isFromMe && conversationType === 'group' && (
+                <Text style={S.senderName}>{msg.senderName}</Text>
+              )}
+              <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
+              <Text style={[S.msgTime, msg.isFromMe ? S.msgTimeMe : S.msgTimeThem]}>
+                {fmtTime(msg.createdAt)}{msg.isFromMe && msg.isRead && ' ✓✓'}
+              </Text>
+            </View>
+          ))
+        )}
       </ScrollView>
 
       {/* Input */}
@@ -285,7 +291,7 @@ export default function ChatBox({
         <View style={S.inputWrap}>
           <TextInput
             style={S.input}
-            placeholder="Ecrivez un message..."
+            placeholder="Écrivez un message..."
             placeholderTextColor="#999"
             value={input}
             onChangeText={handleTyping}
@@ -299,7 +305,11 @@ export default function ChatBox({
             disabled={!input.trim() || sending}
             activeOpacity={0.7}
           >
-            {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={20} color="#fff" />}
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
