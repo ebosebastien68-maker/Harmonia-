@@ -1,4 +1,4 @@
-// MessagesScreen.tsx — v4
+// MessagesScreen.tsx — v5 (avec gestion automatique des tokens)
 // Messagerie privée + groupes — Socket.IO Render
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -12,6 +12,7 @@ import AsyncStorage       from '@react-native-async-storage/async-storage';
 import * as Haptics       from 'expo-haptics';
 import { io, Socket }     from 'socket.io-client';
 import ChatBox            from '../components/ChatBox';
+import { getValidToken, getCurrentUserId, clearSession } from '../utils/tokenManager'; // adapte le chemin
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
@@ -45,7 +46,9 @@ function EmptyState({ icon, text }: { icon: string; text: string }) {
   );
 }
 
-async function api(action: string, userId: string, token: string, extra?: any) {
+// Fonctions API avec récupération automatique du token
+async function api(action: string, userId: string, extra?: any) {
+  const token = await getValidToken();
   const res = await fetch(`${WS_BASE}/messages`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -53,7 +56,9 @@ async function api(action: string, userId: string, token: string, extra?: any) {
   });
   return res.json();
 }
-async function groupsApi(action: string, userId: string, token: string, extra?: any) {
+
+async function groupsApi(action: string, userId: string, extra?: any) {
+  const token = await getValidToken();
   const res = await fetch(`${WS_BASE}/groups`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -67,8 +72,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const [activeTab, setActiveTab] = useState<TabMode>('history');
   const [loading,   setLoading]   = useState(true);
   const [refreshing,setRefreshing]= useState(false);
-  const [userId,      setUserId]      = useState('');
-  const [accessToken, setAccessToken] = useState('');
+  const [userId,      setUserId]      = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [onlineFriends, setOnlineFriends] = useState<User[]>([]);
   const [allFriends,    setAllFriends]    = useState<User[]>([]);
@@ -87,11 +91,11 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   }, []);
 
   useEffect(() => {
-    if (!userId || !accessToken) return;
+    if (!userId) return;
     setupListSocket();
     return () => {
       listSocketRef.current?.disconnect();
-      updatePresenceWith(userId, accessToken, false);
+      updatePresence(false);
     };
   }, [userId]);
 
@@ -103,19 +107,13 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   const initSession = async () => {
     try {
-      const raw = await AsyncStorage.getItem('harmonia_session');
-      if (raw) {
-        const s   = JSON.parse(raw);
-        const uid = s?.user?.id ?? '';
-        const tok = s?.access_token ?? '';
-        if (uid && tok) {
-          // Définir les états ET appeler loadAllData avec les valeurs locales
-          // pour éviter la race condition entre les deux setState
-          setUserId(uid);
-          setAccessToken(tok);
-          await loadAllDataWith(uid, tok);
-          await updatePresenceWith(uid, tok, true);
-        }
+      const uid = await getCurrentUserId();
+      if (uid) {
+        setUserId(uid);
+        await loadAllDataWith(uid);
+        await updatePresenceWith(uid, true);
+      } else {
+        // Rediriger vers login si nécessaire
       }
     } catch (e) { console.error('[MessagesScreen] initSession:', e); }
     finally { setLoading(false); }
@@ -130,74 +128,75 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     listSocketRef.current = socket;
   }, [userId]);
 
-  const loadAllData = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    await Promise.all([loadConversations(), loadOnlineFriends(), loadAllFriends(), loadMyGroups()]);
-  }, [userId, accessToken]);
-
-  // Version avec paramètres explicites — évite la race condition au démarrage
-  const loadAllDataWith = async (uid: string, tok: string) => {
+  // Version avec paramètres explicites
+  const loadAllDataWith = async (uid: string) => {
     await Promise.all([
-      api('getConversations', uid, tok).then(d => { if (d.success) setConversations(d.conversations ?? []); }).catch(() => {}),
-      api('getFriendsOnline', uid, tok).then(d => { if (d.success) setOnlineFriends(d.friends ?? []); }).catch(() => {}),
-      api('getAllFriends',    uid, tok).then(d => { if (d.success) setAllFriends(d.friends ?? []); }).catch(() => {}),
-      groupsApi('getUserGroups', uid, tok).then(d => { if (d.success) setMyGroups(d.groups ?? []); }).catch(() => {}),
+      api('getConversations', uid).then(d => { if (d.success) setConversations(d.conversations ?? []); }).catch(() => {}),
+      api('getFriendsOnline', uid).then(d => { if (d.success) setOnlineFriends(d.friends ?? []); }).catch(() => {}),
+      api('getAllFriends',    uid).then(d => { if (d.success) setAllFriends(d.friends ?? []); }).catch(() => {}),
+      groupsApi('getUserGroups', uid).then(d => { if (d.success) setMyGroups(d.groups ?? []); }).catch(() => {}),
     ]);
   };
 
-  const updatePresenceWith = async (uid: string, tok: string, online: boolean) => {
-    try { await api('updatePresence', uid, tok, { is_online: online }); } catch {}
+  const updatePresenceWith = async (uid: string, online: boolean) => {
+    try { await api('updatePresence', uid, { is_online: online }); } catch {}
   };
-
-  const loadConversations = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    try { const d = await api('getConversations', userId, accessToken); if (d.success) setConversations(d.conversations ?? []); } catch {}
-  }, [userId, accessToken]);
-
-  const loadOnlineFriends = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    try { const d = await api('getFriendsOnline', userId, accessToken); if (d.success) setOnlineFriends(d.friends ?? []); } catch {}
-  }, [userId, accessToken]);
-
-  const loadAllFriends = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    try { const d = await api('getAllFriends', userId, accessToken); if (d.success) setAllFriends(d.friends ?? []); } catch {}
-  }, [userId, accessToken]);
-
-  const loadMyGroups = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    setGroupLoading(true);
-    try { const d = await groupsApi('getUserGroups', userId, accessToken); if (d.success) setMyGroups(d.groups ?? []); }
-    catch {} finally { setGroupLoading(false); }
-  }, [userId, accessToken]);
-
-  const loadAllGroups = useCallback(async () => {
-    if (!userId || !accessToken) return;
-    setGroupLoading(true);
-    try { const d = await groupsApi('getAllGroups', userId, accessToken); if (d.success) setAllGroups(d.groups ?? []); }
-    catch {} finally { setGroupLoading(false); }
-  }, [userId, accessToken]);
 
   const updatePresence = async (online: boolean) => {
-    if (!userId || !accessToken) return;
-    try { await api('updatePresence', userId, accessToken, { is_online: online }); } catch {}
+    if (!userId) return;
+    await updatePresenceWith(userId, online);
   };
+
+  const loadAllData = useCallback(async () => {
+    if (!userId) return;
+    await Promise.all([loadConversations(), loadOnlineFriends(), loadAllFriends(), loadMyGroups()]);
+  }, [userId]);
+
+  const loadConversations = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getConversations', userId); if (d.success) setConversations(d.conversations ?? []); } catch {}
+  }, [userId]);
+
+  const loadOnlineFriends = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getFriendsOnline', userId); if (d.success) setOnlineFriends(d.friends ?? []); } catch {}
+  }, [userId]);
+
+  const loadAllFriends = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getAllFriends', userId); if (d.success) setAllFriends(d.friends ?? []); } catch {}
+  }, [userId]);
+
+  const loadMyGroups = useCallback(async () => {
+    if (!userId) return;
+    setGroupLoading(true);
+    try { const d = await groupsApi('getUserGroups', userId); if (d.success) setMyGroups(d.groups ?? []); }
+    catch {} finally { setGroupLoading(false); }
+  }, [userId]);
+
+  const loadAllGroups = useCallback(async () => {
+    if (!userId) return;
+    setGroupLoading(true);
+    try { const d = await groupsApi('getAllGroups', userId); if (d.success) setAllGroups(d.groups ?? []); }
+    catch {} finally { setGroupLoading(false); }
+  }, [userId]);
 
   const onRefresh = async () => { haptic(); setRefreshing(true); await loadAllData(); setRefreshing(false); };
 
   const joinGroup = async (group: GroupItem) => {
+    if (!userId) return;
     setGroupAction(group.id);
-    try { await groupsApi('joinGroup', userId, accessToken, { group_id: group.id }); await Promise.all([loadMyGroups(), loadAllGroups()]); }
+    try { await groupsApi('joinGroup', userId, { group_id: group.id }); await Promise.all([loadMyGroups(), loadAllGroups()]); }
     catch {} finally { setGroupAction(null); }
   };
 
   const askLeaveGroup = (group: GroupItem) => {
-    // Confirmation handled inline
+    if (!userId) return;
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     setGroupAction(group.id);
-    groupsApi('leaveGroup', userId, accessToken, { group_id: group.id })
+    groupsApi('leaveGroup', userId, { group_id: group.id })
       .then(() => Promise.all([loadMyGroups(), loadAllGroups()]))
       .catch(() => {})
       .finally(() => setGroupAction(null));
@@ -219,9 +218,10 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   };
 
   const openPrivateChat = async (friend: User) => {
+    if (!userId) return;
     haptic();
     try {
-      const d = await api('getOrCreateConversation', userId, accessToken, { friend_id: friend.id });
+      const d = await api('getOrCreateConversation', userId, { friend_id: friend.id });
       if (d.success) {
         setActiveConversation({ type: 'private', id: d.conversation_id, otherUser: friend, lastMessage: null, createdAt: new Date().toISOString() });
         setViewMode('chat'); onChatModeChange?.(true);
@@ -263,8 +263,9 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
       <ChatBox
         conversationId={activeConversation.id}
         conversationType={activeConversation.type}
-        userId={userId}
-        accessToken={accessToken}
+        userId={userId!}
+        accessToken={undefined} // ChatBox devra aussi utiliser getValidToken, on lui passera undefined et il utilisera tokenManager
+        // ou on lui passe une fonction pour obtenir le token, mais pour l'instant on laisse undefined et on modifie ChatBox plus tard
         otherUser={activeConversation.otherUser}
         groupName={activeConversation.name}
         memberCount={activeConversation.memberCount}
