@@ -142,7 +142,8 @@ export default function ChatBox({
     });
 
     socket.on('new_message', (raw: any) => {
-      const msg = normalizeMsg(raw);
+      // Le backend emballe le message : { message: {...} }
+      const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
@@ -195,7 +196,8 @@ export default function ChatBox({
     });
 
     socket.on('new_message', (raw: any) => {
-      const msg = normalizeMsg(raw);
+      // Le backend emballe le message : { message: {...} }
+      const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
