@@ -223,8 +223,10 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         // getValidToken() rafraîchit automatiquement si nécessaire
         const tok = await getValidToken();
         if (uid && tok) {
-          accessTokenRef.current = tok;  // on stocke dans le ref AVANT setUserId
-          setUserId(uid);                    // ce seul setState déclenche le render
+          accessTokenRef.current = tok;  // stocké dans le ref → pas de re-render
+          await loadAllDataWith(uid);        // charge les données AVANT le render
+          await updatePresence(uid, true);   // met en ligne
+          setUserId(uid);                    // UN seul setState → UN seul render → ChatBox monte une fois
         }
       }
     } catch (e) {
