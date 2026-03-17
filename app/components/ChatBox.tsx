@@ -86,6 +86,9 @@ export default function ChatBox({
   //   (ex: après un refresh dans MessagesScreen).
 
   useEffect(() => {
+    // Ne pas démarrer le socket tant que le token n'est pas prêt
+    if (!accessToken) return;
+
     // Variable locale — garantit un cleanup propre
     const socket =
       conversationType === 'private'
@@ -142,8 +145,11 @@ export default function ChatBox({
     });
 
     socket.on('new_message', (raw: any) => {
+      // DEBUG — à retirer une fois le format confirmé
+      console.log('[DEBUG new_message raw]', JSON.stringify(raw));
       // Le backend emballe le message : { message: {...} }
       const msg = normalizeMsg(raw?.message ?? raw);
+      console.log('[DEBUG msg normalisé]', JSON.stringify(msg));
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
