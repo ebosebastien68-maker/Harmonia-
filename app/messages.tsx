@@ -169,7 +169,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userId,      setUserId]      = useState('');
-  const [accessToken, setAccessToken] = useState('');
+  const accessTokenRef = useRef('');       // ref au lieu de state → évite le double render de ChatBox
   const [conversations,  setConversations]  = useState<Conversation[]>([]);
   const [onlineFriends,  setOnlineFriends]  = useState<User[]>([]);
   const [allFriends,     setAllFriends]     = useState<User[]>([]);
@@ -189,14 +189,19 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   useEffect(() => {
     initSession();
-    return () => { listSocketRef.current?.disconnect(); };
+    // Pas de cleanup ici : le second useEffect gère la déconnexion du socket
   }, []);
 
   useEffect(() => {
-    if (!userId || !accessToken) return;
+    if (!userId || !accessTokenRef.current) return;
     setupListSocket();
     return () => {
-      listSocketRef.current?.disconnect();
+      // Utilise le ref directement mais avec removeAllListeners en premier
+      if (listSocketRef.current) {
+        listSocketRef.current.removeAllListeners();
+        listSocketRef.current.disconnect();
+        listSocketRef.current = null;
+      }
       updatePresence(userId, false);
     };
   }, [userId]);
@@ -218,10 +223,8 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         // getValidToken() rafraîchit automatiquement si nécessaire
         const tok = await getValidToken();
         if (uid && tok) {
-          setUserId(uid);
-          setAccessToken(tok);
-          await loadAllDataWith(uid);
-          await updatePresence(uid, true);
+          accessTokenRef.current = tok;  // on stocke dans le ref AVANT setUserId
+          setUserId(uid);                    // ce seul setState déclenche le render
         }
       }
     } catch (e) {
@@ -234,7 +237,11 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   // ── Socket liste ──────────────────────────────────────────────────────────────
 
   const setupListSocket = useCallback(() => {
-    listSocketRef.current?.disconnect();
+    // Nettoyer proprement l'ancien socket avant d'en créer un nouveau
+    if (listSocketRef.current) {
+      listSocketRef.current.removeAllListeners();
+      listSocketRef.current.disconnect();
+    }
     const socket = io(`${WS_BASE}/private-chat`, {
       transports: ['websocket'],
       reconnectionDelay: 2000,
@@ -396,13 +403,13 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   // ── Rendu ChatBox ─────────────────────────────────────────────────────────────
 
-  if (viewMode === 'chat' && activeConversation) {
+  if (viewMode === 'chat' && activeConversation && accessTokenRef.current) {
     return (
       <ChatBox
         conversationId={activeConversation.id}
         conversationType={activeConversation.type}
         userId={userId}
-        accessToken={accessToken}
+        accessToken={accessTokenRef.current}
         otherUser={activeConversation.otherUser}
         groupName={activeConversation.name}
         memberCount={activeConversation.memberCount}
