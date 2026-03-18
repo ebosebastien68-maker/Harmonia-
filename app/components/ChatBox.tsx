@@ -222,12 +222,27 @@ export default function ChatBox({
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
   //
-  // Web    → animated: false  (useNativeDriver non supporté sur navigateur)
-  // Mobile → animated: true   (scroll fluide sur iOS / Android)
+  // Chaque environnement utilise ses propres outils :
+  //   Web    → scrollTop natif DOM (pas d'animation, pas de useNativeDriver)
+  //   Mobile → scrollToEnd avec animated:true (scroll fluide iOS/Android)
 
   const scrollToEnd = () => {
-    const shouldAnimate = Platform.OS === 'web' ? false : true;
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: shouldAnimate }), 100);
+    if (Platform.OS === 'web') {
+      // Web : manipulation DOM directe, aucune animation React Native
+      setTimeout(() => {
+        const node = (scrollRef.current as any)?._nativeTag
+          ?? (scrollRef.current as any)?.getScrollableNode?.();
+        if (node) {
+          node.scrollTop = node.scrollHeight;
+        } else {
+          // Fallback web si nativeTag indisponible
+          scrollRef.current?.scrollToEnd({ animated: false });
+        }
+      }, 50);
+    } else {
+      // Mobile : animation native fluide
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    }
   };
 
   // ── Envoi de message ───────────────────────────────────────────────────────
@@ -365,11 +380,12 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        onContentSizeChange={() =>
-          scrollRef.current?.scrollToEnd({
-            animated: Platform.OS === 'web' ? false : true,
-          })
-        }
+        // Web    → pas de onContentSizeChange (déclenche useNativeDriver → bloque le rendu)
+        // Mobile → onContentSizeChange avec animation native
+        {...(Platform.OS !== 'web' && {
+          onContentSizeChange: () =>
+            scrollRef.current?.scrollToEnd({ animated: true }),
+        })}
       >
         {loading ? (
           <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
