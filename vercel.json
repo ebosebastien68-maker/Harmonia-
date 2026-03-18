@@ -2,5 +2,15 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "cleanUrls": true,
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://harmonia-world.vercel.app/api/:path*"
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://harmonia-world.vercel.app/:path*"
+    }
+  ]
 }
