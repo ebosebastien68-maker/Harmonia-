@@ -1,16 +1,7 @@
-// ChatBox.tsx — v5
+// ChatBox.tsx — v5 DEBUG
 // Messagerie temps réel via Socket.IO Render
 // Privé  : socket /private-chat
 // Groupe : socket /group-chat
-//
-// Corrections appliquées (consigne) :
-//  1. Socket Zombie     → variable locale const socket dans useEffect
-//                         + ref assigné en parallèle
-//                         → cleanup utilise la variable locale (jamais null)
-//  2. Accumulation      → socket.removeAllListeners() avant socket.disconnect()
-//  3. Animation Web     → scrollToEnd désactive animated sur Platform.OS === 'web'
-//  4. Dépendances effet → [conversationId, accessToken]
-//  5. Invalid Date      → fmtTime protégé contre valeur null/invalide
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -72,40 +63,19 @@ export default function ChatBox({
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
-  // ── useEffect principal ────────────────────────────────────────────────────
-  //
-  // CORRECTION 1 — Socket Zombie :
-  //   On crée le socket dans une variable locale `socket`.
-  //   Cette variable est "enfermée" (closure) dans l'effet courant.
-  //   Le cleanup du return utilise cette variable locale, qui ne sera
-  //   JAMAIS null au moment du nettoyage, même si socketRef.current
-  //   a été remplacé entre-temps par un autre rendu.
-  //
-  // CORRECTION 4 — Dépendances :
-  //   [conversationId, accessToken] → l'effet se relance si le token change
-  //   (ex: après un refresh dans MessagesScreen).
-
   useEffect(() => {
-    // Ne pas démarrer le socket tant que le token n'est pas prêt
     if (!accessToken) return;
 
-    // Variable locale — garantit un cleanup propre
     const socket =
       conversationType === 'private'
         ? buildPrivateSocket()
         : buildGroupSocket();
 
-    // On assigne aussi au ref pour que sendMessage/handleTyping puissent l'utiliser
     socketRef.current = socket;
 
     return () => {
-      // CORRECTION 2 — Accumulation de listeners :
-      //   removeAllListeners() d'abord → le socket devient totalement silencieux
-      //   avant d'être fermé. Plus aucun event ne peut déclencher un setState
-      //   sur un composant en cours de démontage.
       socket.removeAllListeners();
       socket.disconnect();
-
       if (typingTimer.current) clearTimeout(typingTimer.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,9 +115,10 @@ export default function ChatBox({
     });
 
     socket.on('new_message', (raw: any) => {
-      // DEBUG — à retirer une fois le format confirmé
-      console.log('[DEBUG new_message raw]', JSON.stringify(raw));
-      // Le backend emballe le message : { message: {...} }
+      // ── DEBUG — copie ces deux lignes dans F12 et envoie-les ──────────────
+      console.log('[DEBUG new_message raw]',      JSON.stringify(raw));
+      console.log('[DEBUG new_message raw.message]', JSON.stringify(raw?.message));
+      // ─────────────────────────────────────────────────────────────────────
       const msg = normalizeMsg(raw?.message ?? raw);
       console.log('[DEBUG msg normalisé]', JSON.stringify(msg));
       setMessages(prev =>
@@ -202,8 +173,9 @@ export default function ChatBox({
     });
 
     socket.on('new_message', (raw: any) => {
-      // Le backend emballe le message : { message: {...} }
+      console.log('[DEBUG groupe new_message raw]', JSON.stringify(raw));
       const msg = normalizeMsg(raw?.message ?? raw);
+      console.log('[DEBUG groupe msg normalisé]',   JSON.stringify(msg));
       setMessages(prev =>
         prev.find(m => m.id === msg.id) ? prev : [...prev, msg]
       );
@@ -221,26 +193,21 @@ export default function ChatBox({
   };
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
-  //
-  // Chaque environnement utilise ses propres outils :
-  //   Web    → scrollTop natif DOM (pas d'animation, pas de useNativeDriver)
-  //   Mobile → scrollToEnd avec animated:true (scroll fluide iOS/Android)
+  // Web    → DOM natif scrollTop (pas de useNativeDriver)
+  // Mobile → scrollToEnd animé natif
 
   const scrollToEnd = () => {
     if (Platform.OS === 'web') {
-      // Web : manipulation DOM directe, aucune animation React Native
       setTimeout(() => {
         const node = (scrollRef.current as any)?._nativeTag
           ?? (scrollRef.current as any)?.getScrollableNode?.();
         if (node) {
           node.scrollTop = node.scrollHeight;
         } else {
-          // Fallback web si nativeTag indisponible
           scrollRef.current?.scrollToEnd({ animated: false });
         }
       }, 50);
     } else {
-      // Mobile : animation native fluide
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
   };
@@ -255,7 +222,6 @@ export default function ChatBox({
     setInput('');
     setSending(true);
 
-    // Arrêt indicateur de frappe
     if (conversationType === 'private' && isTypingRef.current) {
       isTypingRef.current = false;
       socketRef.current?.emit('typing', {
@@ -272,10 +238,9 @@ export default function ChatBox({
         access_token:    accessToken,
         content,
       });
-      // setSending(false) est géré par l'event 'message_sent'
     } else {
       socketRef.current?.emit('send_message', { content });
-      setSending(false); // pas d'accusé côté groupe
+      setSending(false);
     }
 
     scrollToEnd();
@@ -308,11 +273,6 @@ export default function ChatBox({
   };
 
   // ── Formatage heure ────────────────────────────────────────────────────────
-  //
-  // Normalise les deux formats possibles venant du socket :
-  //   - camelCase : msg.createdAt  (format interne React)
-  //   - snake_case: msg.created_at (format brut Supabase/backend)
-  // Guard complet : null, undefined, chaîne vide, timestamp invalide → ''
 
   const fmtTime = (value: string | number | null | undefined): string => {
     if (value === null || value === undefined || value === '') return '';
@@ -321,9 +281,9 @@ export default function ChatBox({
     return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Normalise un message brut du socket (snake_case Supabase → camelCase React)
-  // Messages historiques ('joined')  → souvent déjà camelCase
-  // Messages temps réel ('new_message') → snake_case brut de Supabase
+  // ── Normalisation message ──────────────────────────────────────────────────
+  // Mappe snake_case (Supabase/socket) → camelCase (React)
+
   const normalizeMsg = (msg: any): Message => ({
     ...msg,
     id:           msg.id,
@@ -380,8 +340,6 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        // Web    → pas de onContentSizeChange (déclenche useNativeDriver → bloque le rendu)
-        // Mobile → onContentSizeChange avec animation native
         {...(Platform.OS !== 'web' && {
           onContentSizeChange: () =>
             scrollRef.current?.scrollToEnd({ animated: true }),
