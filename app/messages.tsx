@@ -187,16 +187,20 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
   // ── Cycle de vie ─────────────────────────────────────────────────────────────
 
+  // 1. Au montage : lire la session
   useEffect(() => {
     initSession();
-    // Pas de cleanup ici : le second useEffect gère la déconnexion du socket
   }, []);
 
+  // 2. Quand userId est prêt : charger les données + socket + présence
+  //    Séparé de initSession pour éviter la race condition :
+  //    les setState de loadAllDataWith sont commitées dans le même render que setUserId
   useEffect(() => {
     if (!userId || !accessTokenRef.current) return;
+    loadAllDataWith(userId);
+    updatePresence(userId, true);
     setupListSocket();
     return () => {
-      // Utilise le ref directement mais avec removeAllListeners en premier
       if (listSocketRef.current) {
         listSocketRef.current.removeAllListeners();
         listSocketRef.current.disconnect();
@@ -206,6 +210,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     };
   }, [userId]);
 
+  // 3. Onglet groupes
   useEffect(() => {
     if (activeTab === 'groups' && userId) {
       groupSubTab === 'mine' ? loadMyGroups() : loadAllGroups();
@@ -213,6 +218,8 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   }, [activeTab, groupSubTab, userId]);
 
   // ── Session ──────────────────────────────────────────────────────────────────
+  // initSession lit uniquement la session et set userId + accessTokenRef.
+  // Le chargement des données est déclenché par useEffect([userId]) ci-dessus.
 
   const initSession = async () => {
     try {
@@ -220,13 +227,10 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
       if (raw) {
         const s   = JSON.parse(raw);
         const uid = s?.user?.id ?? '';
-        // getValidToken() rafraîchit automatiquement si nécessaire
         const tok = await getValidToken();
         if (uid && tok) {
-          accessTokenRef.current = tok;  // stocké dans le ref → pas de re-render
-          await loadAllDataWith(uid);        // charge les données AVANT le render
-          await updatePresence(uid, true);   // met en ligne
-          setUserId(uid);                    // UN seul setState → UN seul render → ChatBox monte une fois
+          accessTokenRef.current = tok; // ref → pas de re-render supplémentaire
+          setUserId(uid);               // déclenche useEffect([userId]) → charge tout
         }
       }
     } catch (e) {
