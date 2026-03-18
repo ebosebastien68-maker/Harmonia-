@@ -51,12 +51,14 @@ export default function ChatBox({
   otherUser, groupName, memberCount, onBack, onNewMessage,
 }: ChatBoxProps) {
 
-  const [messages,    setMessages]    = useState<Message[]>([]);
-  const [input,       setInput]       = useState('');
-  const [loading,     setLoading]     = useState(true);
-  const [sending,     setSending]     = useState(false);
-  const [otherTyping, setOtherTyping] = useState(false);
-  const [otherOnline, setOtherOnline] = useState(otherUser?.isOnline ?? false);
+  const [messages,     setMessages]     = useState<Message[]>([]);
+  const [input,        setInput]        = useState('');
+  const [loading,      setLoading]      = useState(true);
+  const [sending,      setSending]      = useState(false);
+  const [otherTyping,  setOtherTyping]  = useState(false);
+  const [otherOnline,  setOtherOnline]  = useState(otherUser?.isOnline ?? false);
+  const [hasMore,      setHasMore]      = useState(false);   // afficher bouton "Charger plus"
+  const [loadingMore,  setLoadingMore]  = useState(false);   // spinner pendant load_more
 
   const scrollRef   = useRef<ScrollView>(null);
   const socketRef   = useRef<Socket | null>(null);
@@ -98,9 +100,10 @@ export default function ChatBox({
       });
     });
 
-    socket.on('joined', (data: { conversation_id: string; messages: Message[] }) => {
+    socket.on('joined', (data: { conversation_id: string; messages: Message[]; has_more: boolean }) => {
       console.log('[ChatBox] Rejoint la conversation privée');
       setMessages((data.messages ?? []).map(normalizeMsg));
+      setHasMore(data.has_more ?? false);
       setLoading(false);
       scrollToEnd();
     });
@@ -131,6 +134,13 @@ export default function ChatBox({
         onNewMessage?.();
       }
       scrollToEnd();
+    });
+
+    socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
+      // Préserve la position du scroll : on insère AVANT les messages existants
+      setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
+      setHasMore(data.has_more ?? false);
+      setLoadingMore(false);
     });
 
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
@@ -210,6 +220,21 @@ export default function ChatBox({
     } else {
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
+  };
+
+  // ── Charger plus ───────────────────────────────────────────────────────────
+
+  const loadMore = () => {
+    if (loadingMore || !hasMore || messages.length === 0) return;
+    setLoadingMore(true);
+    // Curseur = createdAt du message le plus ancien actuellement affiché
+    const oldest = messages[0]?.createdAt;
+    socketRef.current?.emit('load_more', {
+      conversation_id: conversationId,
+      user_id:         userId,
+      access_token:    accessToken,
+      before:          oldest,
+    });
   };
 
   // ── Envoi de message ───────────────────────────────────────────────────────
@@ -345,6 +370,28 @@ export default function ChatBox({
             scrollRef.current?.scrollToEnd({ animated: true }),
         })}
       >
+        {/* Bouton Charger plus — affiché en haut si has_more */}
+        {hasMore && !loading && (
+          <TouchableOpacity
+            onPress={loadMore}
+            disabled={loadingMore}
+            style={{
+              alignSelf: 'center', marginBottom: 12, marginTop: 4,
+              paddingHorizontal: 16, paddingVertical: 8,
+              backgroundColor: '#F0E8FF', borderRadius: 20,
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+            }}
+          >
+            {loadingMore
+              ? <ActivityIndicator size="small" color="#8A2BE2" />
+              : <Ionicons name="chevron-up" size={16} color="#8A2BE2" />
+            }
+            <Text style={{ fontSize: 13, color: '#8A2BE2', fontWeight: '600' }}>
+              {loadingMore ? 'Chargement...' : 'Voir les messages précédents'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {loading ? (
           <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
         ) : messages.length === 0 ? (
