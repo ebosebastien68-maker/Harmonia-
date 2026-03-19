@@ -1,80 +1,93 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7b18d6"/>
-      <stop offset="55%" stop-color="#7415d0"/>
-      <stop offset="100%" stop-color="#6a12c7"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7f18de"/>
+      <stop offset="55%" stop-color="#7817d7"/>
+      <stop offset="100%" stop-color="#6a13cb"/>
     </linearGradient>
 
-    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ffcb33"/>
-      <stop offset="45%" stop-color="#ffb31f"/>
-      <stop offset="100%" stop-color="#ff8d00"/>
-    </linearGradient>
-
-    <radialGradient id="sphereGrad" cx="30%" cy="25%" r="80%">
-      <stop offset="0%" stop-color="#52d2ff"/>
-      <stop offset="55%" stop-color="#1c94eb"/>
-      <stop offset="100%" stop-color="#0073d8"/>
+    <radialGradient id="bgGlow" cx="48%" cy="48%" r="65%">
+      <stop offset="0%" stop-color="#b84cff" stop-opacity="0.16"/>
+      <stop offset="45%" stop-color="#b84cff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#b84cff" stop-opacity="0"/>
     </radialGradient>
 
-    <linearGradient id="hGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffc93a"/>
-      <stop offset="100%" stop-color="#ffb118"/>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffd84d"/>
+      <stop offset="42%" stop-color="#ffbb1f"/>
+      <stop offset="100%" stop-color="#ff8f00"/>
     </linearGradient>
 
-    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#2b0054" flood-opacity="0.35"/>
+    <radialGradient id="sphere" cx="30%" cy="24%" r="78%">
+      <stop offset="0%" stop-color="#7fe6ff"/>
+      <stop offset="30%" stop-color="#37bfff"/>
+      <stop offset="70%" stop-color="#1491f1"/>
+      <stop offset="100%" stop-color="#056fda"/>
+    </radialGradient>
+
+    <linearGradient id="hFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffc93a"/>
+      <stop offset="100%" stop-color="#ffaf11"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#260046" flood-opacity="0.35"/>
+    </filter>
+
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2.2"/>
     </filter>
   </defs>
 
-  <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bgGlow)"/>
 
-  <g filter="url(#softShadow)">
-    <circle cx="175" cy="500" r="125"
-            fill="none"
-            stroke="url(#ringGrad)"
-            stroke-width="18"
-            stroke-linecap="round"
-            stroke-dasharray="650 150"
-            transform="rotate(-25 175 500)"/>
+  <g filter="url(#shadow)" transform="translate(0,0)">
+    <path d="M 74 520
+             A 112 112 0 1 1 266 520"
+          fill="none"
+          stroke="url(#ring)"
+          stroke-width="14"
+          stroke-linecap="round"/>
+    <path d="M 54 440
+             A 168 168 0 1 0 286 440"
+          fill="none"
+          stroke="url(#ring)"
+          stroke-width="13"
+          stroke-linecap="round"
+          opacity="0.96"/>
 
-    <circle cx="175" cy="500" r="72" fill="url(#sphereGrad)"/>
-    <circle cx="175" cy="500" r="72" fill="none" stroke="#b9f2ff" stroke-opacity="0.65" stroke-width="2"/>
+    <circle cx="168" cy="500" r="72" fill="url(#sphere)"/>
+    <circle cx="168" cy="500" r="72" fill="none" stroke="#d7f6ff" stroke-opacity="0.58" stroke-width="2"/>
 
-    <ellipse cx="145" cy="475" rx="28" ry="22" fill="#d6f7ff" opacity="0.45"/>
-    <ellipse cx="151" cy="468" rx="14" ry="10" fill="#ffffff" opacity="0.28"/>
+    <ellipse cx="145" cy="475" rx="24" ry="20" fill="#ffffff" opacity="0.28"/>
+    <ellipse cx="148" cy="472" rx="10" ry="8" fill="#ffffff" opacity="0.22"/>
 
-    <path d="M175 360
-             L181 374
-             L195 380
-             L181 386
-             L175 400
-             L169 386
-             L155 380
-             L169 374 Z"
-          fill="#ffe64a"/>
+    <path d="M168 360 L174 374 L188 380 L174 386 L168 400 L162 386 L148 380 L162 374 Z"
+          fill="#ffe94d"/>
+
+    <ellipse cx="168" cy="548" rx="92" ry="18" fill="#2e0058" opacity="0.12" filter="url(#soft)"/>
   </g>
 
-  <g filter="url(#softShadow)">
-    <text x="335" y="540"
-          font-family="Arial, Helvetica, sans-serif"
+  <g filter="url(#shadow)">
+    <text x="338" y="540"
+          font-family="Poppins, Montserrat, Avenir Next, Arial, sans-serif"
           font-size="175"
           font-weight="700"
-          fill="url(#hGrad)"
+          fill="url(#hFill)"
           letter-spacing="-3">H</text>
 
-    <text x="460" y="540"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="128"
+    <text x="468" y="540"
+          font-family="Poppins, Montserrat, Avenir Next, Arial, sans-serif"
+          font-size="130"
           font-weight="500"
           fill="#ffffff"
           letter-spacing="-2">armonia</text>
 
-    <text x="901" y="540"
-          font-family="Arial, Helvetica, sans-serif"
-          font-size="128"
+    <text x="895" y="540"
+          font-family="Poppins, Montserrat, Avenir Next, Arial, sans-serif"
+          font-size="130"
           font-weight="500"
           fill="#ffb61d">.</text>
   </g>
