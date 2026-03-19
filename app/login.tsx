@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,350 +9,416 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
-  Linking,
 } from 'react-native';
-import { useRouter }      from 'expo-router';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar }      from 'expo-status-bar';
-import AsyncStorage       from '@react-native-async-storage/async-storage';
-import { Ionicons }       from '@expo/vector-icons';
-import DateTimePicker     from '@react-native-community/datetimepicker';
-import * as Haptics       from 'expo-haptics';
-import HarmoniaLogo       from '../components/HarmoniaLogo';
+import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Haptics from 'expo-haptics';
+import HarmoniaLogo from '../components/HarmoniaLogo';
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-const AUTH_URL    = `${BACKEND_URL}/auth`;
+// ─── SEUL CHANGEMENT : API_BASE pointe vers le backend Render ─────────────────
+const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+const API_BASE = `${WS_BASE}/auth`;
 
-// Deep link de l'app — utilisé comme redirectTo pour les emails Supabase
-// Supabase redirigera vers cette URL après confirmation / reset
-const DEEP_LINK_RESET = Platform.OS === 'web'
-  ? 'https://harmonia-world.vercel.app/auth/reset'
-  : 'harmonia://auth/reset';
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
-type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup' | 'verify-reset';
+type AuthMode = 'login' | 'signup' | 'reset' | 'verify-signup' | 'verify-reset';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
 
 interface StatusMessage {
-  type:    MessageType;
-  text:    string;
+  type: MessageType;
+  text: string;
   visible: boolean;
 }
 
-// ─── COMPOSANT ────────────────────────────────────────────────────────────────
 export default function LoginPage() {
   const router = useRouter();
 
-  const [mode,    setMode]    = useState<AuthMode>('login');
+  // États principaux
+  const [mode, setMode] = useState<AuthMode>('login');
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<StatusMessage>({
-    type: 'info', text: '', visible: false,
+    type: 'info',
+    text: '',
+    visible: false,
   });
 
   // Champs formulaire
-  const [email,    setEmail]    = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [nom,      setNom]      = useState('');
-  const [prenom,   setPrenom]   = useState('');
-
-  // Date de naissance
-  const [dateNaissance,    setDateNaissance]    = useState<Date>(new Date(2000, 0, 1));
+  const [nom, setNom] = useState('');
+  const [prenom, setPrenom] = useState('');
+  
+  // Date de naissance - Format différent selon plateforme
+  const [dateNaissance, setDateNaissance] = useState<Date>(new Date(2000, 0, 1));
   const [dateNaissanceWeb, setDateNaissanceWeb] = useState<string>('2000-01-01');
-  const [showDatePicker,   setShowDatePicker]   = useState(false);
-
-  // Reset mot de passe
-  const [newPassword,     setNewPassword]     = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  
+  const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [resetToken,      setResetToken]      = useState('');  // access_token du deep link
 
-  // Visibilité mots de passe
-  const [showPassword,        setShowPassword]        = useState(false);
-  const [showNewPassword,     setShowNewPassword]     = useState(false);
+  // Visibilité mot de passe
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Email en attente de confirmation
+  // État vérification
   const [pendingEmail, setPendingEmail] = useState('');
+  const [resetToken, setResetToken] = useState('');
 
-  // ─── DEEP LINK HANDLER ──────────────────────────────────────────────────────
-  // Intercepte le deep link après que l'utilisateur a cliqué sur le lien de reset
-  // URL attendue : harmonia://auth/reset?access_token=xxx&type=recovery
-  // ou côté web  : https://harmonia-world.vercel.app/auth/reset#access_token=xxx
-
-  const handleDeepLink = useCallback((url: string | null) => {
-    if (!url) return;
-
-    // Extraire les paramètres (query string ou fragment)
-    const extractParams = (rawUrl: string): Record<string, string> => {
-      const params: Record<string, string> = {};
-      // Chercher d'abord dans le fragment (#), puis dans les query params (?)
-      const fragment = rawUrl.includes('#') ? rawUrl.split('#')[1] : '';
-      const query    = rawUrl.includes('?') ? rawUrl.split('?')[1].split('#')[0] : '';
-      const source   = fragment || query;
-      if (!source) return params;
-      source.split('&').forEach(pair => {
-        const [k, v] = pair.split('=');
-        if (k && v) params[decodeURIComponent(k)] = decodeURIComponent(v);
-      });
-      return params;
-    };
-
-    const params = extractParams(url);
-    const { access_token, type } = params;
-
-    if (access_token && type === 'recovery') {
-      setResetToken(access_token);
-      setMode('verify-reset');
-    }
-  }, []);
-
-  // ─── SESSION + DEEP LINK ──────────────────────────────────────────────────
+  // Vérifier si déjà connecté au chargement
   useEffect(() => {
     checkExistingSession();
+  }, []);
 
-    // URL initiale (app ouverte depuis un lien)
-    Linking.getInitialURL().then(handleDeepLink);
-
-    // URL reçue pendant que l'app est ouverte
-    const sub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
-    return () => sub.remove();
-  }, [handleDeepLink]);
-
-  // Auto-hide status après 5s
+  // Auto-hide status message after 5 seconds
   useEffect(() => {
-    if (!statusMessage.visible) return;
-    const t = setTimeout(() => setStatusMessage(p => ({ ...p, visible: false })), 5000);
-    return () => clearTimeout(t);
+    if (statusMessage.visible) {
+      const timer = setTimeout(() => {
+        setStatusMessage(prev => ({ ...prev, visible: false }));
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
   }, [statusMessage.visible]);
 
   const checkExistingSession = async () => {
     try {
-      const raw = await AsyncStorage.getItem('harmonia_session');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.access_token) router.replace('/home');
+      const session = await AsyncStorage.getItem('harmonia_session');
+      if (session) {
+        const parsed = JSON.parse(session);
+        if (parsed.access_token) {
+          router.replace('/home');
+        }
       }
-    } catch { /* pas de session */ }
+    } catch (error) {
+      console.log('No existing session');
+    }
   };
 
-  // ─── HELPERS ──────────────────────────────────────────────────────────────
-  const showMsg = (type: MessageType, text: string) => {
+  const showMessage = (type: MessageType, text: string) => {
     if (Platform.OS !== 'web') {
       Haptics.notificationAsync(
-        type === 'error'   ? Haptics.NotificationFeedbackType.Error   :
+        type === 'error' ? Haptics.NotificationFeedbackType.Error :
         type === 'success' ? Haptics.NotificationFeedbackType.Success :
-                             Haptics.NotificationFeedbackType.Warning
+        Haptics.NotificationFeedbackType.Warning
       );
     }
     setStatusMessage({ type, text, visible: true });
   };
 
-  const formatDateDisplay = (d: Date) => {
-    const dd = d.getDate().toString().padStart(2, '0');
-    const mm = (d.getMonth() + 1).toString().padStart(2, '0');
-    return `${dd}/${mm}/${d.getFullYear()}`;
+  const formatDateDisplay = (date: Date): string => {
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
   };
 
   const formatDateForAPI = (): string => {
-    if (Platform.OS === 'web') return dateNaissanceWeb;
-    const dd = dateNaissance.getDate().toString().padStart(2, '0');
-    const mm = (dateNaissance.getMonth() + 1).toString().padStart(2, '0');
-    return `${dateNaissance.getFullYear()}-${mm}-${dd}`;
-  };
-
-  const isValidDate = (s: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-    const d = new Date(s);
-    return d instanceof Date && !isNaN(d.getTime());
-  };
-
-  const authFetch = async (body: Record<string, string>) => {
-    const res = await fetch(AUTH_URL, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erreur serveur');
-    return data;
-  };
-
-  // ─── VÉRIFICATION INSCRIPTIONS OUVERTES ───────────────────────────────────
-  const checkRegistrationsOpen = async (): Promise<boolean> => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/check-registrations`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({}),
-      });
-      if (!res.ok) { showMsg('error', 'Impossible de vérifier les inscriptions.'); return false; }
-      const d = await res.json();
-      if (d.registrations_open === false) {
-        showMsg('error', d.registrations_message || 'Les inscriptions sont actuellement fermées. 🔐');
-        return false;
-      }
-      return true;
-    } catch {
-      showMsg('error', 'Impossible de joindre le serveur. Vérifiez votre connexion.');
-      return false;
+    if (Platform.OS === 'web') {
+      return dateNaissanceWeb;
+    } else {
+      const day = dateNaissance.getDate().toString().padStart(2, '0');
+      const month = (dateNaissance.getMonth() + 1).toString().padStart(2, '0');
+      const year = dateNaissance.getFullYear();
+      return `${year}-${month}-${day}`;
     }
   };
 
-  // ─── INSCRIPTION ──────────────────────────────────────────────────────────
+  const isValidDate = (dateString: string): boolean => {
+    const regex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!regex.test(dateString)) return false;
+    const date = new Date(dateString);
+    return date instanceof Date && !isNaN(date.getTime());
+  };
+
+  // =====================
+  // INSCRIPTION
+  // =====================
   const handleSignup = async () => {
     if (!email.trim() || !password.trim() || !nom.trim() || !prenom.trim()) {
-      showMsg('error', 'Veuillez remplir tous les champs'); return;
+      showMessage('error', 'Veuillez remplir tous les champs');
+      return;
     }
     if (password.length < 6) {
-      showMsg('error', 'Le mot de passe doit contenir au moins 6 caractères'); return;
+      showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
+      return;
     }
     const dateForAPI = formatDateForAPI();
     if (!isValidDate(dateForAPI)) {
-      showMsg('error', 'Format de date invalide'); return;
+      showMessage('error', 'Format de date invalide');
+      return;
     }
 
-    const open = await checkRegistrationsOpen();
-    if (!open) return;
+    // Vérifier si les inscriptions sont ouvertes
+    try {
+      const chkRes = await fetch(`${WS_BASE}/check-registrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (chkRes.ok) {
+        const chk = await chkRes.json();
+        if (chk.registrations_open === false) {
+          showMessage('error', chk.registrations_message || 'Les inscriptions sont actuellement fermées. 🔐');
+          return;
+        }
+      } else {
+        showMessage('error', 'Impossible de vérifier les inscriptions. Réessayez plus tard.');
+        return;
+      }
+    } catch {
+      showMessage('error', 'Impossible de joindre le serveur. Vérifiez votre connexion.');
+      return;
+    }
 
     setLoading(true);
-    showMsg('info', 'Création du compte en cours...');
+    showMessage('info', 'Création du compte en cours...');
+
     try {
-      await authFetch({
-        action:         'signup',
-        email:          email.trim().toLowerCase(),
-        password,
-        nom:            nom.trim(),
-        prenom:         prenom.trim(),
-        date_naissance: dateForAPI,
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'signup',
+          email: email.trim().toLowerCase(),
+          password,
+          nom: nom.trim(),
+          prenom: prenom.trim(),
+          date_naissance: dateForAPI,
+        }),
       });
-      // Conserver email + password en mémoire pour le check-confirmed
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erreur lors de l'inscription");
+      }
+
       setPendingEmail(email.trim().toLowerCase());
       setMode('verify-signup');
-      showMsg('success', 'Compte créé ! Vérifiez votre boîte mail.');
-    } catch (e: any) {
-      showMsg('error', e.message);
+      showMessage('success', 'Compte créé ! Vérifiez votre email.');
+    } catch (error: any) {
+      showMessage('error', error.message || 'Impossible de créer le compte');
     } finally {
       setLoading(false);
     }
   };
 
-  // ─── VÉRIFICATION EMAIL INSCRIPTION ──────────────────────────────────────
-  // L'utilisateur clique "J'ai cliqué le lien" → on tente une connexion
-  // Si l'email est confirmé → Supabase retourne une session → redirect /home
-  // Sinon → message d'attente
-
-  const handleCheckConfirmed = async () => {
+  // =====================
+  // VÉRIFICATION EMAIL (après inscription)
+  // =====================
+  const handleVerifySignup = async () => {
     setLoading(true);
-    showMsg('info', 'Vérification en cours...');
+    showMessage('info', 'Vérification en cours...');
+
     try {
-      const data = await authFetch({
-        action:   'check-confirmed',
-        email:    pendingEmail,
-        password,
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'verify-email',
+          email: pendingEmail,
+          password, // nécessaire pour créer la session après confirmation
+        }),
       });
-      if (data.confirmed) {
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur de vérification');
+      }
+
+      if (data.verified) {
         await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
-        showMsg('success', 'Email confirmé ! Bienvenue sur Harmonia !');
+        showMessage('success', 'Email vérifié ! Bienvenue sur Harmonia !');
         setTimeout(() => router.replace('/home'), 1500);
       } else {
-        showMsg('warning', 'Email pas encore confirmé. Cliquez sur le lien dans votre mail.');
+        showMessage('warning', 'Email non vérifié. Cliquez sur le lien dans votre email.');
       }
-    } catch (e: any) {
-      showMsg('error', e.message);
+    } catch (error: any) {
+      showMessage('error', error.message || "Impossible de vérifier l'email");
     } finally {
       setLoading(false);
     }
   };
 
-  // ─── CONNEXION ────────────────────────────────────────────────────────────
+  // =====================
+  // CONNEXION
+  // =====================
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      showMsg('error', 'Veuillez entrer votre email et mot de passe'); return;
+      showMessage('error', 'Veuillez entrer votre email et mot de passe');
+      return;
     }
+
     setLoading(true);
-    showMsg('info', 'Connexion en cours...');
+    showMessage('info', 'Connexion en cours...');
+
     try {
-      const data = await authFetch({
-        action:   'login',
-        email:    email.trim().toLowerCase(),
-        password,
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'login',
+          email: email.trim().toLowerCase(),
+          password,
+        }),
       });
-      await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
-      showMsg('success', 'Connexion réussie ! Bienvenue !');
-      setTimeout(() => router.replace('/home'), 1500);
-    } catch (e: any) {
-      if (e.message.includes('non confirmé')) {
-        showMsg('warning', 'Email non confirmé. Vérifiez votre boîte mail.');
-      } else {
-        showMsg('error', e.message);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.error?.includes('Email not confirmed')) {
+          showMessage('warning', 'Email non confirmé. Vérifiez votre boîte mail.');
+          return;
+        }
+        throw new Error(data.error || 'Identifiants incorrects');
       }
+
+      await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
+      showMessage('success', 'Connexion réussie ! Bienvenue !');
+      setTimeout(() => router.replace('/home'), 1500);
+    } catch (error: any) {
+      showMessage('error', error.message || 'Impossible de se connecter');
     } finally {
       setLoading(false);
     }
   };
 
-  // ─── MOT DE PASSE OUBLIÉ ─────────────────────────────────────────────────
+  // =====================
+  // MOT DE PASSE OUBLIÉ - Étape 1
+  // =====================
   const handleRequestReset = async () => {
     if (!email.trim()) {
-      showMsg('error', 'Veuillez entrer votre email'); return;
+      showMessage('error', 'Veuillez entrer votre email');
+      return;
     }
+
     setLoading(true);
-    showMsg('info', 'Envoi du lien en cours...');
+    showMessage('info', "Envoi de l'email en cours...");
+
     try {
-      await authFetch({
-        action:     'request-reset',
-        email:      email.trim().toLowerCase(),
-        redirectTo: DEEP_LINK_RESET,
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'request-reset',
+          email: email.trim().toLowerCase() 
+        }),
       });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.error?.includes('not found')) {
+          showMessage('error', 'Aucun compte avec cet email');
+          return;
+        }
+        throw new Error(data.error || 'Erreur lors de la demande');
+      }
+
       setPendingEmail(email.trim().toLowerCase());
       setMode('verify-reset');
-      showMsg('success', 'Lien envoyé ! Consultez votre boîte mail.');
-    } catch (e: any) {
-      showMsg('error', e.message);
+      showMessage('success', 'Email envoyé ! Vérifiez votre boîte mail.');
+    } catch (error: any) {
+      showMessage('error', error.message || "Impossible d'envoyer l'email");
     } finally {
       setLoading(false);
     }
   };
 
-  // ─── RESET MOT DE PASSE ───────────────────────────────────────────────────
-  // resetToken est rempli automatiquement par le deep link handler
+  // =====================
+  // MOT DE PASSE OUBLIÉ - Vérification lien
+  // =====================
+  const handleVerifyReset = async () => {
+    setLoading(true);
+    showMessage('info', 'Vérification en cours...');
+
+    try {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'verify-reset',
+          email: pendingEmail 
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur de vérification');
+      }
+
+      if (data.verified && data.token) {
+        setResetToken(data.token);
+        showMessage('success', 'Lien vérifié ! Définissez un nouveau mot de passe.');
+      } else {
+        showMessage('warning', 'Lien non activé. Cliquez sur le lien dans votre email.');
+      }
+    } catch (error: any) {
+      showMessage('error', error.message || 'Impossible de vérifier le lien');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // =====================
+  // MOT DE PASSE OUBLIÉ - Nouveau mot de passe
+  // =====================
   const handleResetPassword = async () => {
     if (!newPassword.trim() || !confirmPassword.trim()) {
-      showMsg('error', 'Veuillez remplir les deux champs'); return;
+      showMessage('error', 'Veuillez remplir les deux champs');
+      return;
     }
     if (newPassword.length < 6) {
-      showMsg('error', 'Le mot de passe doit contenir au moins 6 caractères'); return;
+      showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
+      return;
     }
     if (newPassword !== confirmPassword) {
-      showMsg('error', 'Les mots de passe ne correspondent pas'); return;
+      showMessage('error', 'Les mots de passe ne correspondent pas');
+      return;
     }
+
     setLoading(true);
-    showMsg('info', 'Réinitialisation en cours...');
+    showMessage('info', 'Réinitialisation en cours...');
+
     try {
-      const data = await authFetch({
-        action:       'reset-password',
-        token:        resetToken,
-        new_password: newPassword,
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset-password',
+          token: resetToken,
+          new_password: newPassword,
+        }),
       });
-      if (data.session) {
-        await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
-        showMsg('success', 'Mot de passe modifié avec succès !');
-        setTimeout(() => router.replace('/home'), 1500);
-      } else {
-        showMsg('success', 'Mot de passe modifié ! Connectez-vous.');
-        setTimeout(() => setMode('login'), 1500);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur lors de la réinitialisation');
       }
-    } catch (e: any) {
-      showMsg('error', e.message);
+
+      await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
+      showMessage('success', 'Mot de passe modifié avec succès !');
+      setTimeout(() => router.replace('/home'), 1500);
+    } catch (error: any) {
+      showMessage('error', error.message || 'Impossible de réinitialiser le mot de passe');
     } finally {
       setLoading(false);
     }
   };
 
-  // ─── DATE PICKER MOBILE ───────────────────────────────────────────────────
-  const onDateChange = (_event: any, selectedDate?: Date) => {
+  // =====================
+  // GESTION DATEPICKER MOBILE
+  // =====================
+  const onDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
-    if (selectedDate) setDateNaissance(selectedDate);
+    if (selectedDate) {
+      setDateNaissance(selectedDate);
+    }
   };
 
   const renderDatePicker = () => {
@@ -363,68 +429,77 @@ export default function LoginPage() {
           <input
             type="date"
             value={dateNaissanceWeb}
-            onChange={e => setDateNaissanceWeb(e.target.value)}
+            onChange={(e) => setDateNaissanceWeb(e.target.value)}
             max={new Date().toISOString().split('T')[0]}
             min="1900-01-01"
             disabled={loading}
             style={{
-              flex: 1, padding: 15, fontSize: 16,
-              border: 'none', outline: 'none',
-              backgroundColor: 'transparent', color: '#333',
+              flex: 1,
+              padding: 15,
+              fontSize: 16,
+              border: 'none',
+              outline: 'none',
+              backgroundColor: 'transparent',
+              color: '#333',
             }}
           />
         </View>
       );
+    } else {
+      return (
+        <>
+          <TouchableOpacity 
+            style={styles.inputContainer}
+            onPress={() => setShowDatePicker(true)}
+            disabled={loading}
+          >
+            <Ionicons name="calendar-outline" size={20} color="#999" style={styles.inputIcon} />
+            <Text style={styles.dateText}>{formatDateDisplay(dateNaissance)}</Text>
+            <Ionicons name="chevron-down-outline" size={20} color="#999" />
+          </TouchableOpacity>
+
+          {showDatePicker && (
+            <DateTimePicker
+              value={dateNaissance}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={onDateChange}
+              maximumDate={new Date()}
+              minimumDate={new Date(1900, 0, 1)}
+            />
+          )}
+        </>
+      );
     }
-    return (
-      <>
-        <TouchableOpacity
-          style={styles.inputContainer}
-          onPress={() => setShowDatePicker(true)}
-          disabled={loading}
-        >
-          <Ionicons name="calendar-outline" size={20} color="#999" style={styles.inputIcon} />
-          <Text style={styles.dateText}>{formatDateDisplay(dateNaissance)}</Text>
-          <Ionicons name="chevron-down-outline" size={20} color="#999" />
-        </TouchableOpacity>
-        {showDatePicker && (
-          <DateTimePicker
-            value={dateNaissance}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={onDateChange}
-            maximumDate={new Date()}
-            minimumDate={new Date(1900, 0, 1)}
-          />
-        )}
-      </>
-    );
   };
 
-  // ─── RENDU PRINCIPAL ──────────────────────────────────────────────────────
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <StatusBar style="light" />
-
-      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.gradientBackground}>
-
+      
+      <LinearGradient
+        colors={['#8A2BE2', '#4B0082']}
+        style={styles.gradientBackground}
+      >
         {/* MESSAGE DE STATUT */}
         {statusMessage.visible && (
           <View style={[
             styles.statusMessageContainer,
-            styles[`statusMessage${statusMessage.type.charAt(0).toUpperCase() + statusMessage.type.slice(1)}` as keyof typeof styles],
+            styles[`statusMessage${statusMessage.type.charAt(0).toUpperCase() + statusMessage.type.slice(1)}` as keyof typeof styles]
           ]}>
-            <Ionicons
+            <Ionicons 
               name={
-                statusMessage.type === 'success' ? 'checkmark-circle'  :
-                statusMessage.type === 'error'   ? 'close-circle'      :
-                statusMessage.type === 'warning' ? 'warning'           :
-                                                   'information-circle'
+                statusMessage.type === 'success' ? 'checkmark-circle' :
+                statusMessage.type === 'error' ? 'close-circle' :
+                statusMessage.type === 'warning' ? 'warning' :
+                'information-circle'
               }
-              size={24} color="#fff" style={styles.statusIcon}
+              size={24}
+              color="#fff"
+              style={styles.statusIcon}
             />
             <Text style={styles.statusMessageText}>{statusMessage.text}</Text>
           </View>
@@ -445,7 +520,6 @@ export default function LoginPage() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* LOGO */}
           <View style={styles.logoContainer}>
             <HarmoniaLogo size={80} showText={true} theme="light" />
             <Text style={styles.tagline}>Révélez Votre Talent</Text>
@@ -592,13 +666,10 @@ export default function LoginPage() {
             {/* ==================== VÉRIFICATION INSCRIPTION ==================== */}
             {mode === 'verify-signup' && (
               <>
-                <Ionicons
-                  name="mail-open-outline" size={60} color="#8A2BE2"
-                  style={{ alignSelf: 'center', marginBottom: 20 }}
-                />
-                <Text style={styles.title}>Confirmez votre email</Text>
+                <Ionicons name="mail-open-outline" size={60} color="#8A2BE2" style={{ alignSelf: 'center', marginBottom: 20 }} />
+                <Text style={styles.title}>Vérifiez votre email</Text>
                 <Text style={styles.subtitle}>
-                  Un lien de confirmation a été envoyé à{'\n'}
+                  Un lien de confirmation a été envoyé à {'\n'}
                   <Text style={{ fontWeight: 'bold' }}>{pendingEmail}</Text>
                 </Text>
 
@@ -606,13 +677,13 @@ export default function LoginPage() {
                   <Text style={styles.infoText}>
                     📧 Consultez votre boîte mail{'\n'}
                     🔗 Cliquez sur le lien de confirmation{'\n'}
-                    ✅ Revenez ici et appuyez sur le bouton
+                    ✅ Revenez ici et cliquez sur "Vérifier"
                   </Text>
                 </View>
 
-                <TouchableOpacity onPress={handleCheckConfirmed} disabled={loading} activeOpacity={0.8}>
+                <TouchableOpacity onPress={handleVerifySignup} disabled={loading} activeOpacity={0.8}>
                   <LinearGradient colors={['#00c6ff', '#0072ff']} style={styles.primaryButton}>
-                    <Text style={styles.buttonText}>J'ai cliqué le lien ✓</Text>
+                    <Text style={styles.buttonText}>Vérifier l'activation</Text>
                   </LinearGradient>
                 </TouchableOpacity>
 
@@ -627,12 +698,9 @@ export default function LoginPage() {
             {/* ==================== MOT DE PASSE OUBLIÉ ==================== */}
             {mode === 'reset' && (
               <>
-                <Ionicons
-                  name="key-outline" size={60} color="#FF0080"
-                  style={{ alignSelf: 'center', marginBottom: 20 }}
-                />
+                <Ionicons name="key-outline" size={60} color="#FF0080" style={{ alignSelf: 'center', marginBottom: 20 }} />
                 <Text style={styles.title}>Mot de passe oublié</Text>
-                <Text style={styles.subtitle}>Entrez votre email pour recevoir un lien</Text>
+                <Text style={styles.subtitle}>Entrez votre email pour réinitialiser</Text>
 
                 <View style={styles.inputContainer}>
                   <Ionicons name="mail-outline" size={20} color="#999" style={styles.inputIcon} />
@@ -666,37 +734,31 @@ export default function LoginPage() {
             {/* ==================== VÉRIFICATION RESET ==================== */}
             {mode === 'verify-reset' && (
               <>
-                <Ionicons
-                  name="shield-checkmark-outline" size={60} color="#11998e"
-                  style={{ alignSelf: 'center', marginBottom: 20 }}
-                />
+                <Ionicons name="shield-checkmark-outline" size={60} color="#11998e" style={{ alignSelf: 'center', marginBottom: 20 }} />
+                <Text style={styles.title}>Vérifiez votre email</Text>
+                <Text style={styles.subtitle}>
+                  Un lien de réinitialisation a été envoyé à {'\n'}
+                  <Text style={{ fontWeight: 'bold' }}>{pendingEmail}</Text>
+                </Text>
 
-                {/* Attente du clic sur le lien — tant que resetToken n'est pas reçu */}
-                {!resetToken && (
-                  <>
-                    <Text style={styles.title}>Vérifiez votre email</Text>
-                    <Text style={styles.subtitle}>
-                      Un lien de réinitialisation a été envoyé à{'\n'}
-                      <Text style={{ fontWeight: 'bold' }}>{pendingEmail}</Text>
-                    </Text>
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoText}>
+                    📧 Consultez votre boîte mail{'\n'}
+                    🔗 Cliquez sur le lien de réinitialisation{'\n'}
+                    ✅ Revenez ici et cliquez sur "Vérifier"
+                  </Text>
+                </View>
 
-                    <View style={styles.infoBox}>
-                      <Text style={styles.infoText}>
-                        📧 Consultez votre boîte mail{'\n'}
-                        🔗 Cliquez sur le lien de réinitialisation{'\n'}
-                        📱 L'application s'ouvrira automatiquement
-                      </Text>
-                    </View>
-                  </>
-                )}
+                <TouchableOpacity onPress={handleVerifyReset} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#00c6ff', '#0072ff']} style={styles.primaryButton}>
+                    <Text style={styles.buttonText}>Vérifier l'activation</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
 
-                {/* Formulaire nouveau mot de passe — après réception du token via deep link */}
+                {/* FORMULAIRE NOUVEAU MOT DE PASSE — apparaît après vérification */}
                 {resetToken && (
-                  <>
-                    <Text style={styles.title}>Nouveau mot de passe</Text>
-                    <Text style={styles.subtitle}>
-                      Choisissez un nouveau mot de passe sécurisé
-                    </Text>
+                  <View style={styles.resetFormContainer}>
+                    <Text style={styles.resetFormTitle}>Nouveau mot de passe</Text>
 
                     <View style={styles.inputContainer}>
                       <Ionicons name="lock-closed-outline" size={20} color="#999" style={styles.inputIcon} />
@@ -737,7 +799,7 @@ export default function LoginPage() {
                         <Text style={styles.buttonText}>Réinitialiser</Text>
                       </LinearGradient>
                     </TouchableOpacity>
-                  </>
+                  </View>
                 )}
 
                 <TouchableOpacity onPress={() => setMode('login')} style={styles.linkButton} disabled={loading}>
@@ -755,16 +817,15 @@ export default function LoginPage() {
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container:          { flex: 1 },
+  container: { flex: 1 },
   gradientBackground: { flex: 1 },
   scrollContent: {
     flexGrow: 1, justifyContent: 'center',
     paddingVertical: 40, paddingHorizontal: 20,
   },
   logoContainer: { alignItems: 'center', marginBottom: 40 },
-  tagline:       { fontSize: 16, color: '#E0D0FF', fontStyle: 'italic', marginTop: 12, letterSpacing: 1 },
+  tagline: { fontSize: 16, color: '#E0D0FF', fontStyle: 'italic', marginTop: 12, letterSpacing: 1 },
   card: {
     backgroundColor: '#fff', borderRadius: 25, padding: 30,
     shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
@@ -777,9 +838,9 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 15, marginBottom: 15,
     borderWidth: 1, borderColor: '#E0E0E0',
   },
-  inputIcon:      { marginRight: 10 },
-  input:          { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
-  dateText:       { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  inputIcon:    { marginRight: 10 },
+  input:        { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  dateText:     { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
   forgotPassword: { color: '#8A2BE2', fontSize: 14, textAlign: 'right', marginBottom: 20, fontWeight: '600' },
   primaryButton:  { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText:     { color: '#fff', fontSize: 16, fontWeight: 'bold', textTransform: 'uppercase' },
@@ -790,9 +851,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0F8FF', borderRadius: 12, padding: 20,
     marginVertical: 20, borderWidth: 1, borderColor: '#B0D4FF',
   },
-  infoText:             { fontSize: 14, color: '#333', lineHeight: 24 },
-  resetFormContainer:   { marginTop: 30, paddingTop: 30, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  resetFormTitle:       { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
+  infoText: { fontSize: 14, color: '#333', lineHeight: 24 },
+  resetFormContainer: { marginTop: 30, paddingTop: 30, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  resetFormTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
   statusMessageContainer: {
     position: 'absolute', top: 50, left: 20, right: 20,
     flexDirection: 'row', alignItems: 'center', padding: 15,
@@ -804,8 +865,8 @@ const styles = StyleSheet.create({
   statusMessageError:   { backgroundColor: '#EF4444' },
   statusMessageWarning: { backgroundColor: '#F59E0B' },
   statusMessageInfo:    { backgroundColor: '#3B82F6' },
-  statusIcon:           { marginRight: 10 },
-  statusMessageText:    { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
+  statusIcon:        { marginRight: 10 },
+  statusMessageText: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
   loadingOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
