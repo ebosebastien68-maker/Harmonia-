@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
+  Linking,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,8 +24,7 @@ import HarmoniaLogo from '../components/HarmoniaLogo';
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-// verify-reset retiré — géré par app/reset.tsx après clic sur le lien email
-type AuthMode = 'login' | 'signup' | 'reset' | 'verify-signup';
+type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
 
 interface StatusMessage {
@@ -35,30 +36,25 @@ interface StatusMessage {
 export default function LoginPage() {
   const router = useRouter();
 
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [mode, setMode]       = useState<AuthMode>('login');
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<StatusMessage>({
-    type: 'info',
-    text: '',
-    visible: false,
+    type: 'info', text: '', visible: false,
   });
 
-  const [email, setEmail] = useState('');
+  const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [nom, setNom] = useState('');
-  const [prenom, setPrenom] = useState('');
-  
-  const [dateNaissance, setDateNaissance] = useState<Date>(new Date(2000, 0, 1));
+  const [nom,      setNom]      = useState('');
+  const [prenom,   setPrenom]   = useState('');
+
+  const [dateNaissance,    setDateNaissance]    = useState<Date>(new Date(2000, 0, 1));
   const [dateNaissanceWeb, setDateNaissanceWeb] = useState<string>('2000-01-01');
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showDatePicker,   setShowDatePicker]   = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
-
   const [pendingEmail, setPendingEmail] = useState('');
 
-  useEffect(() => {
-    checkExistingSession();
-  }, []);
+  useEffect(() => { checkExistingSession() }, []);
 
   useEffect(() => {
     if (statusMessage.visible) {
@@ -74,42 +70,33 @@ export default function LoginPage() {
       const session = await AsyncStorage.getItem('harmonia_session');
       if (session) {
         const parsed = JSON.parse(session);
-        if (parsed.access_token) {
-          router.replace('/home');
-        }
+        if (parsed.access_token) router.replace('/home');
       }
-    } catch (error) {
-      console.log('No existing session');
-    }
+    } catch { console.log('No existing session') }
   };
 
   const showMessage = (type: MessageType, text: string) => {
     if (Platform.OS !== 'web') {
       Haptics.notificationAsync(
-        type === 'error' ? Haptics.NotificationFeedbackType.Error :
+        type === 'error'   ? Haptics.NotificationFeedbackType.Error   :
         type === 'success' ? Haptics.NotificationFeedbackType.Success :
-        Haptics.NotificationFeedbackType.Warning
+                             Haptics.NotificationFeedbackType.Warning
       );
     }
     setStatusMessage({ type, text, visible: true });
   };
 
   const formatDateDisplay = (date: Date): string => {
-    const day = date.getDate().toString().padStart(2, '0');
+    const day   = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
+    return `${day}/${month}/${date.getFullYear()}`;
   };
 
   const formatDateForAPI = (): string => {
-    if (Platform.OS === 'web') {
-      return dateNaissanceWeb;
-    } else {
-      const day = dateNaissance.getDate().toString().padStart(2, '0');
-      const month = (dateNaissance.getMonth() + 1).toString().padStart(2, '0');
-      const year = dateNaissance.getFullYear();
-      return `${year}-${month}-${day}`;
-    }
+    if (Platform.OS === 'web') return dateNaissanceWeb;
+    const day   = dateNaissance.getDate().toString().padStart(2, '0');
+    const month = (dateNaissance.getMonth() + 1).toString().padStart(2, '0');
+    return `${dateNaissance.getFullYear()}-${month}-${day}`;
   };
 
   const isValidDate = (dateString: string): boolean => {
@@ -124,20 +111,16 @@ export default function LoginPage() {
   // =====================
   const handleSignup = async () => {
     if (!email.trim() || !password.trim() || !nom.trim() || !prenom.trim()) {
-      showMessage('error', 'Veuillez remplir tous les champs');
-      return;
+      showMessage('error', 'Veuillez remplir tous les champs'); return;
     }
     if (password.length < 6) {
-      showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
-      return;
+      showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères'); return;
     }
     const dateForAPI = formatDateForAPI();
     if (!isValidDate(dateForAPI)) {
-      showMessage('error', 'Format de date invalide');
-      return;
+      showMessage('error', 'Format de date invalide'); return;
     }
 
-    // Vérifier si les inscriptions sont ouvertes
     try {
       const chkRes = await fetch(`${WS_BASE}/check-registrations`, {
         method: 'POST',
@@ -151,37 +134,29 @@ export default function LoginPage() {
           return;
         }
       } else {
-        showMessage('error', 'Impossible de vérifier les inscriptions. Réessayez plus tard.');
-        return;
+        showMessage('error', 'Impossible de vérifier les inscriptions. Réessayez plus tard.'); return;
       }
     } catch {
-      showMessage('error', 'Impossible de joindre le serveur. Vérifiez votre connexion.');
-      return;
+      showMessage('error', 'Impossible de joindre le serveur. Vérifiez votre connexion.'); return;
     }
 
     setLoading(true);
     showMessage('info', 'Création du compte en cours...');
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'signup',
-          email: email.trim().toLowerCase(),
+          email:  email.trim().toLowerCase(),
           password,
-          nom: nom.trim(),
-          prenom: prenom.trim(),
+          nom:            nom.trim(),
+          prenom:         prenom.trim(),
           date_naissance: dateForAPI,
         }),
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Erreur lors de l'inscription");
-      }
-
+      if (!response.ok) throw new Error(data.error || "Erreur lors de l'inscription");
       setPendingEmail(email.trim().toLowerCase());
       setMode('verify-signup');
       showMessage('success', 'Compte créé ! Vérifiez votre email.');
@@ -193,29 +168,19 @@ export default function LoginPage() {
   };
 
   // =====================
-  // VÉRIFICATION EMAIL (après inscription)
+  // VÉRIFICATION EMAIL
   // =====================
   const handleVerifySignup = async () => {
     setLoading(true);
     showMessage('info', 'Vérification en cours...');
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'verify-email',
-          email: pendingEmail,
-          password,
-        }),
+        body: JSON.stringify({ action: 'verify-email', email: pendingEmail, password }),
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erreur de vérification');
-      }
-
+      if (!response.ok) throw new Error(data.error || 'Erreur de vérification');
       if (data.verified) {
         await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
         showMessage('success', 'Email vérifié ! Bienvenue sur Harmonia !');
@@ -235,34 +200,23 @@ export default function LoginPage() {
   // =====================
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      showMessage('error', 'Veuillez entrer votre email et mot de passe');
-      return;
+      showMessage('error', 'Veuillez entrer votre email et mot de passe'); return;
     }
-
     setLoading(true);
     showMessage('info', 'Connexion en cours...');
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'login',
-          email: email.trim().toLowerCase(),
-          password,
-        }),
+        body: JSON.stringify({ action: 'login', email: email.trim().toLowerCase(), password }),
       });
-
       const data = await response.json();
-
       if (!response.ok) {
         if (data.error?.includes('Email not confirmed')) {
-          showMessage('warning', 'Email non confirmé. Vérifiez votre boîte mail.');
-          return;
+          showMessage('warning', 'Email non confirmé. Vérifiez votre boîte mail.'); return;
         }
         throw new Error(data.error || 'Identifiants incorrects');
       }
-
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
       showMessage('success', 'Connexion réussie ! Bienvenue !');
       setTimeout(() => router.replace('/home'), 1500);
@@ -275,40 +229,26 @@ export default function LoginPage() {
 
   // =====================
   // MOT DE PASSE OUBLIÉ
-  // Envoie le lien → l'utilisateur clique → redirigé vers app/reset.tsx
   // =====================
   const handleRequestReset = async () => {
     if (!email.trim()) {
-      showMessage('error', 'Veuillez entrer votre email');
-      return;
+      showMessage('error', 'Veuillez entrer votre email'); return;
     }
-
     setLoading(true);
     showMessage('info', "Envoi de l'email en cours...");
-
     try {
       const response = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'request-reset',
-          email: email.trim().toLowerCase() 
-        }),
+        body: JSON.stringify({ action: 'request-reset', email: email.trim().toLowerCase() }),
       });
-
       const data = await response.json();
-
       if (!response.ok) {
         if (data.error?.includes('not found')) {
-          showMessage('error', 'Aucun compte avec cet email');
-          return;
+          showMessage('error', 'Aucun compte avec cet email'); return;
         }
         throw new Error(data.error || 'Erreur lors de la demande');
       }
-
-      // Lien envoyé — on reste sur l'écran reset avec un message
-      // L'utilisateur cliquera le lien dans son email et sera redirigé
-      // automatiquement vers harmoniaworld.world/reset
       showMessage('success', 'Lien envoyé ! Consultez votre boîte mail et cliquez le lien.');
     } catch (error: any) {
       showMessage('error', error.message || "Impossible d'envoyer l'email");
@@ -318,13 +258,37 @@ export default function LoginPage() {
   };
 
   // =====================
-  // GESTION DATEPICKER MOBILE
+  // CONNEXION GOOGLE
+  // =====================
+  const handleGoogleSignin = async () => {
+    setLoading(true);
+    showMessage('info', 'Redirection vers Google...');
+    try {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'google-signin' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Erreur Google');
+
+      // Ouvrir l'URL OAuth Google dans le navigateur
+      await Linking.openURL(data.url);
+
+      showMessage('info', 'Connectez-vous avec Google dans votre navigateur.');
+    } catch (error: any) {
+      showMessage('error', error.message || 'Impossible de se connecter avec Google');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // =====================
+  // DATE PICKER
   // =====================
   const onDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
-    if (selectedDate) {
-      setDateNaissance(selectedDate);
-    }
+    if (selectedDate) setDateNaissance(selectedDate);
   };
 
   const renderDatePicker = () => {
@@ -340,52 +304,75 @@ export default function LoginPage() {
             min="1900-01-01"
             disabled={loading}
             style={{
-              flex: 1,
-              padding: 15,
-              fontSize: 16,
-              border: 'none',
-              outline: 'none',
-              backgroundColor: 'transparent',
-              color: '#333',
+              flex: 1, padding: 15, fontSize: 16,
+              border: 'none', outline: 'none',
+              backgroundColor: 'transparent', color: '#333',
             }}
           />
         </View>
       );
-    } else {
-      return (
-        <>
-          <TouchableOpacity 
-            style={styles.inputContainer}
-            onPress={() => setShowDatePicker(true)}
-            disabled={loading}
-          >
-            <Ionicons name="calendar-outline" size={20} color="#999" style={styles.inputIcon} />
-            <Text style={styles.dateText}>{formatDateDisplay(dateNaissance)}</Text>
-            <Ionicons name="chevron-down-outline" size={20} color="#999" />
-          </TouchableOpacity>
-
-          {showDatePicker && (
-            <DateTimePicker
-              value={dateNaissance}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-              onChange={onDateChange}
-              maximumDate={new Date()}
-              minimumDate={new Date(1900, 0, 1)}
-            />
-          )}
-        </>
-      );
     }
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.inputContainer}
+          onPress={() => setShowDatePicker(true)}
+          disabled={loading}
+        >
+          <Ionicons name="calendar-outline" size={20} color="#999" style={styles.inputIcon} />
+          <Text style={styles.dateText}>{formatDateDisplay(dateNaissance)}</Text>
+          <Ionicons name="chevron-down-outline" size={20} color="#999" />
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker
+            value={dateNaissance}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={onDateChange}
+            maximumDate={new Date()}
+            minimumDate={new Date(1900, 0, 1)}
+          />
+        )}
+      </>
+    );
   };
 
+  // =====================
+  // BOUTON GOOGLE — réutilisé sur login et signup
+  // =====================
+  const renderGoogleButton = () => (
+    <>
+      <View style={styles.dividerContainer}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>ou</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <TouchableOpacity
+        style={styles.googleButton}
+        onPress={handleGoogleSignin}
+        disabled={loading}
+        activeOpacity={0.8}
+      >
+        <Image
+          source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
+          style={styles.googleLogo}
+        />
+        <Text style={styles.googleButtonText}>Continuer avec Google</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  // =====================
+  // RENDU
+  // =====================
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <StatusBar style="light" />
-      
+
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.gradientBackground}>
 
         {/* MESSAGE DE STATUT */}
@@ -394,16 +381,14 @@ export default function LoginPage() {
             styles.statusMessageContainer,
             styles[`statusMessage${statusMessage.type.charAt(0).toUpperCase() + statusMessage.type.slice(1)}` as keyof typeof styles]
           ]}>
-            <Ionicons 
+            <Ionicons
               name={
                 statusMessage.type === 'success' ? 'checkmark-circle' :
-                statusMessage.type === 'error' ? 'close-circle' :
-                statusMessage.type === 'warning' ? 'warning' :
-                'information-circle'
+                statusMessage.type === 'error'   ? 'close-circle'     :
+                statusMessage.type === 'warning' ? 'warning'          :
+                                                   'information-circle'
               }
-              size={24}
-              color="#fff"
-              style={styles.statusIcon}
+              size={24} color="#fff" style={styles.statusIcon}
             />
             <Text style={styles.statusMessageText}>{statusMessage.text}</Text>
           </View>
@@ -478,6 +463,8 @@ export default function LoginPage() {
                     <Text style={styles.buttonText}>Se connecter</Text>
                   </LinearGradient>
                 </TouchableOpacity>
+
+                {renderGoogleButton()}
 
                 <TouchableOpacity onPress={() => setMode('signup')} style={styles.linkButton} disabled={loading}>
                   <Text style={styles.linkText}>
@@ -558,6 +545,8 @@ export default function LoginPage() {
                     <Text style={styles.buttonText}>Créer mon compte</Text>
                   </LinearGradient>
                 </TouchableOpacity>
+
+                {renderGoogleButton()}
 
                 <TouchableOpacity onPress={() => setMode('login')} style={styles.linkButton} disabled={loading}>
                   <Text style={styles.linkText}>
@@ -645,14 +634,14 @@ export default function LoginPage() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container:          { flex: 1 },
   gradientBackground: { flex: 1 },
   scrollContent: {
     flexGrow: 1, justifyContent: 'center',
     paddingVertical: 40, paddingHorizontal: 20,
   },
   logoContainer: { alignItems: 'center', marginBottom: 40 },
-  tagline: { fontSize: 16, color: '#E0D0FF', fontStyle: 'italic', marginTop: 12, letterSpacing: 1 },
+  tagline:       { fontSize: 16, color: '#E0D0FF', fontStyle: 'italic', marginTop: 12, letterSpacing: 1 },
   card: {
     backgroundColor: '#fff', borderRadius: 25, padding: 30,
     shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
@@ -665,9 +654,9 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 15, marginBottom: 15,
     borderWidth: 1, borderColor: '#E0E0E0',
   },
-  inputIcon:    { marginRight: 10 },
-  input:        { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
-  dateText:     { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  inputIcon:      { marginRight: 10 },
+  input:          { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
+  dateText:       { flex: 1, paddingVertical: 15, fontSize: 16, color: '#333' },
   forgotPassword: { color: '#8A2BE2', fontSize: 14, textAlign: 'right', marginBottom: 20, fontWeight: '600' },
   primaryButton:  { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText:     { color: '#fff', fontSize: 16, fontWeight: 'bold', textTransform: 'uppercase' },
@@ -679,6 +668,26 @@ const styles = StyleSheet.create({
     marginVertical: 20, borderWidth: 1, borderColor: '#B0D4FF',
   },
   infoText: { fontSize: 14, color: '#333', lineHeight: 24 },
+
+  // ── Divider ──────────────────────────────────────────────────────────────────
+  dividerContainer: {
+    flexDirection: 'row', alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#E0E0E0' },
+  dividerText: { marginHorizontal: 12, color: '#999', fontSize: 14 },
+
+  // ── Bouton Google ─────────────────────────────────────────────────────────────
+  googleButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#fff', borderRadius: 12, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#E0E0E0',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
+  },
+  googleLogo:       { width: 22, height: 22, marginRight: 12 },
+  googleButtonText: { fontSize: 16, color: '#333', fontWeight: '600' },
+
   statusMessageContainer: {
     position: 'absolute', top: 50, left: 20, right: 20,
     flexDirection: 'row', alignItems: 'center', padding: 15,
@@ -690,8 +699,8 @@ const styles = StyleSheet.create({
   statusMessageError:   { backgroundColor: '#EF4444' },
   statusMessageWarning: { backgroundColor: '#F59E0B' },
   statusMessageInfo:    { backgroundColor: '#3B82F6' },
-  statusIcon:        { marginRight: 10 },
-  statusMessageText: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
+  statusIcon:           { marginRight: 10 },
+  statusMessageText:    { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
   loadingOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
