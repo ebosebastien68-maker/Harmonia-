@@ -19,11 +19,11 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import HarmoniaLogo from '../components/HarmoniaLogo';
 
-// ─── SEUL CHANGEMENT : API_BASE pointe vers le backend Render ─────────────────
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-type AuthMode = 'login' | 'signup' | 'reset' | 'verify-signup' | 'verify-reset';
+// verify-reset retiré — géré par app/reset.tsx après clic sur le lien email
+type AuthMode = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
 
 interface StatusMessage {
@@ -35,7 +35,6 @@ interface StatusMessage {
 export default function LoginPage() {
   const router = useRouter();
 
-  // États principaux
   const [mode, setMode] = useState<AuthMode>('login');
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<StatusMessage>({
@@ -44,35 +43,23 @@ export default function LoginPage() {
     visible: false,
   });
 
-  // Champs formulaire
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   
-  // Date de naissance - Format différent selon plateforme
   const [dateNaissance, setDateNaissance] = useState<Date>(new Date(2000, 0, 1));
   const [dateNaissanceWeb, setDateNaissanceWeb] = useState<string>('2000-01-01');
   const [showDatePicker, setShowDatePicker] = useState(false);
-  
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
 
-  // Visibilité mot de passe
   const [showPassword, setShowPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // État vérification
   const [pendingEmail, setPendingEmail] = useState('');
-  const [resetToken, setResetToken] = useState('');
 
-  // Vérifier si déjà connecté au chargement
   useEffect(() => {
     checkExistingSession();
   }, []);
 
-  // Auto-hide status message after 5 seconds
   useEffect(() => {
     if (statusMessage.visible) {
       const timer = setTimeout(() => {
@@ -219,7 +206,7 @@ export default function LoginPage() {
         body: JSON.stringify({ 
           action: 'verify-email',
           email: pendingEmail,
-          password, // nécessaire pour créer la session après confirmation
+          password,
         }),
       });
 
@@ -287,7 +274,8 @@ export default function LoginPage() {
   };
 
   // =====================
-  // MOT DE PASSE OUBLIÉ - Étape 1
+  // MOT DE PASSE OUBLIÉ
+  // Envoie le lien → l'utilisateur clique → redirigé vers app/reset.tsx
   // =====================
   const handleRequestReset = async () => {
     if (!email.trim()) {
@@ -318,94 +306,12 @@ export default function LoginPage() {
         throw new Error(data.error || 'Erreur lors de la demande');
       }
 
-      setPendingEmail(email.trim().toLowerCase());
-      setMode('verify-reset');
-      showMessage('success', 'Email envoyé ! Vérifiez votre boîte mail.');
+      // Lien envoyé — on reste sur l'écran reset avec un message
+      // L'utilisateur cliquera le lien dans son email et sera redirigé
+      // automatiquement vers harmoniaworld.world/reset
+      showMessage('success', 'Lien envoyé ! Consultez votre boîte mail et cliquez le lien.');
     } catch (error: any) {
       showMessage('error', error.message || "Impossible d'envoyer l'email");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // =====================
-  // MOT DE PASSE OUBLIÉ - Vérification lien
-  // =====================
-  const handleVerifyReset = async () => {
-    setLoading(true);
-    showMessage('info', 'Vérification en cours...');
-
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'verify-reset',
-          email: pendingEmail 
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erreur de vérification');
-      }
-
-      if (data.verified && data.token) {
-        setResetToken(data.token);
-        showMessage('success', 'Lien vérifié ! Définissez un nouveau mot de passe.');
-      } else {
-        showMessage('warning', 'Lien non activé. Cliquez sur le lien dans votre email.');
-      }
-    } catch (error: any) {
-      showMessage('error', error.message || 'Impossible de vérifier le lien');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // =====================
-  // MOT DE PASSE OUBLIÉ - Nouveau mot de passe
-  // =====================
-  const handleResetPassword = async () => {
-    if (!newPassword.trim() || !confirmPassword.trim()) {
-      showMessage('error', 'Veuillez remplir les deux champs');
-      return;
-    }
-    if (newPassword.length < 6) {
-      showMessage('error', 'Le mot de passe doit contenir au moins 6 caractères');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      showMessage('error', 'Les mots de passe ne correspondent pas');
-      return;
-    }
-
-    setLoading(true);
-    showMessage('info', 'Réinitialisation en cours...');
-
-    try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'reset-password',
-          token: resetToken,
-          new_password: newPassword,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erreur lors de la réinitialisation');
-      }
-
-      await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
-      showMessage('success', 'Mot de passe modifié avec succès !');
-      setTimeout(() => router.replace('/home'), 1500);
-    } catch (error: any) {
-      showMessage('error', error.message || 'Impossible de réinitialiser le mot de passe');
     } finally {
       setLoading(false);
     }
@@ -480,10 +386,8 @@ export default function LoginPage() {
     >
       <StatusBar style="light" />
       
-      <LinearGradient
-        colors={['#8A2BE2', '#4B0082']}
-        style={styles.gradientBackground}
-      >
+      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.gradientBackground}>
+
         {/* MESSAGE DE STATUT */}
         {statusMessage.visible && (
           <View style={[
@@ -700,7 +604,9 @@ export default function LoginPage() {
               <>
                 <Ionicons name="key-outline" size={60} color="#FF0080" style={{ alignSelf: 'center', marginBottom: 20 }} />
                 <Text style={styles.title}>Mot de passe oublié</Text>
-                <Text style={styles.subtitle}>Entrez votre email pour réinitialiser</Text>
+                <Text style={styles.subtitle}>
+                  Entrez votre email pour recevoir un lien de réinitialisation
+                </Text>
 
                 <View style={styles.inputContainer}>
                   <Ionicons name="mail-outline" size={20} color="#999" style={styles.inputIcon} />
@@ -722,85 +628,6 @@ export default function LoginPage() {
                     <Text style={styles.buttonText}>Envoyer le lien</Text>
                   </LinearGradient>
                 </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => setMode('login')} style={styles.linkButton} disabled={loading}>
-                  <Text style={styles.linkText}>
-                    <Text style={styles.linkBold}>← Retour à la connexion</Text>
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            {/* ==================== VÉRIFICATION RESET ==================== */}
-            {mode === 'verify-reset' && (
-              <>
-                <Ionicons name="shield-checkmark-outline" size={60} color="#11998e" style={{ alignSelf: 'center', marginBottom: 20 }} />
-                <Text style={styles.title}>Vérifiez votre email</Text>
-                <Text style={styles.subtitle}>
-                  Un lien de réinitialisation a été envoyé à {'\n'}
-                  <Text style={{ fontWeight: 'bold' }}>{pendingEmail}</Text>
-                </Text>
-
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoText}>
-                    📧 Consultez votre boîte mail{'\n'}
-                    🔗 Cliquez sur le lien de réinitialisation{'\n'}
-                    ✅ Revenez ici et cliquez sur "Vérifier"
-                  </Text>
-                </View>
-
-                <TouchableOpacity onPress={handleVerifyReset} disabled={loading} activeOpacity={0.8}>
-                  <LinearGradient colors={['#00c6ff', '#0072ff']} style={styles.primaryButton}>
-                    <Text style={styles.buttonText}>Vérifier l'activation</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                {/* FORMULAIRE NOUVEAU MOT DE PASSE — apparaît après vérification */}
-                {resetToken && (
-                  <View style={styles.resetFormContainer}>
-                    <Text style={styles.resetFormTitle}>Nouveau mot de passe</Text>
-
-                    <View style={styles.inputContainer}>
-                      <Ionicons name="lock-closed-outline" size={20} color="#999" style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Nouveau mot de passe"
-                        placeholderTextColor="#999"
-                        value={newPassword}
-                        onChangeText={setNewPassword}
-                        secureTextEntry={!showNewPassword}
-                        autoCapitalize="none"
-                        editable={!loading}
-                      />
-                      <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
-                        <Ionicons name={showNewPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.inputContainer}>
-                      <Ionicons name="lock-closed-outline" size={20} color="#999" style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Confirmer le mot de passe"
-                        placeholderTextColor="#999"
-                        value={confirmPassword}
-                        onChangeText={setConfirmPassword}
-                        secureTextEntry={!showConfirmPassword}
-                        autoCapitalize="none"
-                        editable={!loading}
-                      />
-                      <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                        <Ionicons name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999" />
-                      </TouchableOpacity>
-                    </View>
-
-                    <TouchableOpacity onPress={handleResetPassword} disabled={loading} activeOpacity={0.8}>
-                      <LinearGradient colors={['#11998e', '#38ef7d']} style={styles.primaryButton}>
-                        <Text style={styles.buttonText}>Réinitialiser</Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
-                )}
 
                 <TouchableOpacity onPress={() => setMode('login')} style={styles.linkButton} disabled={loading}>
                   <Text style={styles.linkText}>
@@ -852,8 +679,6 @@ const styles = StyleSheet.create({
     marginVertical: 20, borderWidth: 1, borderColor: '#B0D4FF',
   },
   infoText: { fontSize: 14, color: '#333', lineHeight: 24 },
-  resetFormContainer: { marginTop: 30, paddingTop: 30, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  resetFormTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
   statusMessageContainer: {
     position: 'absolute', top: 50, left: 20, right: 20,
     flexDirection: 'row', alignItems: 'center', padding: 15,
