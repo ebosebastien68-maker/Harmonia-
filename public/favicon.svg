@@ -1,0 +1,47 @@
+<svg width="800" height="300" viewBox="0 0 800 300" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Background -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8A2BE2"/>
+      <stop offset="100%" stop-color="#5A00A8"/>
+    </linearGradient>
+
+    <linearGradient id="blueBall" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4FC3F7"/>
+      <stop offset="100%" stop-color="#0D47A1"/>
+    </linearGradient>
+
+    <linearGradient id="orangeArc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFD54F"/>
+      <stop offset="100%" stop-color="#F57C00"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="300" fill="url(#bg)"/>
+
+  <!-- Orange Arc -->
+  <path d="M120 200 A80 80 0 1 1 240 200"
+        fill="none"
+        stroke="url(#orangeArc)"
+        stroke-width="15"
+        stroke-linecap="round"/>
+
+  <!-- Blue Sphere -->
+  <circle cx="180" cy="150" r="55" fill="url(#blueBall)"/>
+
+  <!-- Shine -->
+  <circle cx="155" cy="125" r="18" fill="white" opacity="0.3"/>
+
+  <!-- Star -->
+  <polygon points="180,75 185,85 195,85 187,92 190,102 180,96 170,102 173,92 165,85 175,85"
+           fill="#FFEB3B"/>
+
+  <!-- Text -->
+  <text x="300" y="180" font-family="Arial, Helvetica, sans-serif" font-size="80">
+    <tspan fill="#FBC02D" font-weight="bold">H</tspan>
+    <tspan fill="#E0E0E0">armonia</tspan>
+    <tspan fill="#FBC02D">.</tspan>
+  </text>
+
+</svg>
