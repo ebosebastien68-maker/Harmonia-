@@ -67,29 +67,6 @@ export default function LoginPage() {
 
   const checkExistingSession = async () => {
     try {
-      // ── Cas OAuth Web : Supabase redirige vers /login#access_token=xxx ──
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location.hash) {
-        const hash   = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        const accessToken  = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
-        const expiresAt    = params.get('expires_at');
-        const tokenType    = params.get('token_type');
-
-        if (accessToken && tokenType === 'bearer') {
-          await AsyncStorage.setItem('harmonia_session', JSON.stringify({
-            access_token:  accessToken,
-            refresh_token: refreshToken,
-            expires_at:    expiresAt ? parseInt(expiresAt) : null,
-          }));
-          // Nettoyer le fragment de l'URL sans recharger
-          window.history.replaceState(null, '', window.location.pathname);
-          router.replace('/home');
-          return;
-        }
-      }
-
-      // ── Cas normal : session existante ──
       const session = await AsyncStorage.getItem('harmonia_session');
       if (session) {
         const parsed = JSON.parse(session);
