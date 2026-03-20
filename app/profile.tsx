@@ -213,7 +213,7 @@ export default function ProfileScreen() {
       const token = await getValidToken();
       if (!token) return;
 
-      // Étape 1 — Demander le lien signé au backend
+      // Étape 1 — Demander le signed URL au backend
       const urlRes  = await fetch(PROFILE_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -222,13 +222,13 @@ export default function ProfileScreen() {
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
 
-      const { signedUrl, path } = urlData;
+      const { signed_url, path } = urlData;
 
-      // Étape 2 — Upload direct vers Supabase Storage
+      // Étape 2 — Upload direct vers Supabase Storage via le signed URL
       const imageUri  = result.assets[0].uri;
       const imageBlob = await uriToBlob(imageUri);
 
-      const uploadRes = await fetch(signedUrl, {
+      const uploadRes = await fetch(signed_url, {
         method:  'PUT',
         headers: { 'Content-Type': 'image/jpeg' },
         body:    imageBlob,
