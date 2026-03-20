@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -33,6 +33,13 @@ interface StatusMessage {
   visible: boolean;
 }
 
+// ─── Génère un identifiant unique pour le flux OAuth ─────────────────────────
+function generateSid(): string {
+  const random  = Math.random().toString(36).substring(2, 10)
+  const timePart = Date.now().toString(36)
+  return `${random}${timePart}`
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -54,7 +61,16 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [pendingEmail, setPendingEmail] = useState('');
 
-  useEffect(() => { checkExistingSession() }, []);
+  // Référence pour stopper le polling si le composant est démonté
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    checkExistingSession();
+    // Nettoyage au démontage
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (statusMessage.visible) {
@@ -260,25 +276,81 @@ export default function LoginPage() {
   // =====================
   // CONNEXION GOOGLE
   // =====================
+
+  // Démarre le polling toutes les 2s jusqu'à recevoir la session (max 60s)
+  const startPolling = (sid: string) => {
+    let attempts = 0;
+    const maxAttempts = 30; // 30 × 2s = 60s
+
+    pollIntervalRef.current = setInterval(async () => {
+      attempts++;
+
+      // Délai dépassé
+      if (attempts > maxAttempts) {
+        clearInterval(pollIntervalRef.current!);
+        pollIntervalRef.current = null;
+        showMessage('error', 'Délai dépassé (60s). Réessayez la connexion Google.');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(API_BASE, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'poll-session', sid }),
+        });
+        const data = await response.json();
+
+        if (data.ready && data.session) {
+          // ✅ Session reçue !
+          clearInterval(pollIntervalRef.current!);
+          pollIntervalRef.current = null;
+
+          await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
+          showMessage('success', 'Connexion Google réussie ! Bienvenue !');
+          setLoading(false);
+          setTimeout(() => router.replace('/home'), 1000);
+        }
+        // Si ready: false → on attend le prochain tick
+      } catch {
+        // Erreur réseau passagère → on continue le polling
+      }
+    }, 2000);
+  };
+
   const handleGoogleSignin = async () => {
+    // Stopper un éventuel polling précédent
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
     setLoading(true);
-    showMessage('info', 'Redirection vers Google...');
+    showMessage('info', 'Ouverture de Google...');
+
+    // Générer un identifiant unique pour ce flux OAuth
+    const sid = generateSid();
+
     try {
+      // 1. Demander l'URL OAuth au backend en envoyant notre sid
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'google-signin' }),
+        body:    JSON.stringify({ action: 'google-signin', sid }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erreur Google');
 
-      // Ouvrir l'URL OAuth Google dans le navigateur
+      // 2. Ouvrir l'URL dans le navigateur (fonctionne sur iOS, Android et Web)
       await Linking.openURL(data.url);
 
-      showMessage('info', 'Connectez-vous avec Google dans votre navigateur.');
+      // 3. Démarrer le polling en arrière-plan avec notre sid
+      showMessage('info', 'Connectez-vous avec Google, nous attendons… (60s max)');
+      startPolling(sid);
+
     } catch (error: any) {
       showMessage('error', error.message || 'Impossible de se connecter avec Google');
-    } finally {
       setLoading(false);
     }
   };
@@ -399,7 +471,7 @@ export default function LoginPage() {
           <View style={styles.loadingOverlay}>
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color="#8A2BE2" />
-              <Text style={styles.loadingText}>Chargement...</Text>
+              <Text style={styles.loadingText}>En attente de Google…</Text>
             </View>
           </View>
         )}
@@ -668,16 +740,11 @@ const styles = StyleSheet.create({
     marginVertical: 20, borderWidth: 1, borderColor: '#B0D4FF',
   },
   infoText: { fontSize: 14, color: '#333', lineHeight: 24 },
-
-  // ── Divider ──────────────────────────────────────────────────────────────────
   dividerContainer: {
-    flexDirection: 'row', alignItems: 'center',
-    marginVertical: 20,
+    flexDirection: 'row', alignItems: 'center', marginVertical: 20,
   },
   dividerLine: { flex: 1, height: 1, backgroundColor: '#E0E0E0' },
   dividerText: { marginHorizontal: 12, color: '#999', fontSize: 14 },
-
-  // ── Bouton Google ─────────────────────────────────────────────────────────────
   googleButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#fff', borderRadius: 12, paddingVertical: 14,
@@ -687,7 +754,6 @@ const styles = StyleSheet.create({
   },
   googleLogo:       { width: 22, height: 22, marginRight: 12 },
   googleButtonText: { fontSize: 16, color: '#333', fontWeight: '600' },
-
   statusMessageContainer: {
     position: 'absolute', top: 50, left: 20, right: 20,
     flexDirection: 'row', alignItems: 'center', padding: 15,
