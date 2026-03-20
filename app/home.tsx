@@ -13,9 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 
-// Import des écrans depuis app/
-import ActuScreen from './actu';
-import GamesScreen from './games';
+import ActuScreen    from './actu';
+import GamesScreen   from './games';
 import MessagesScreen from './messages';
 import FriendsScreen from './friends';
 import ProfileScreen from './profile';
@@ -24,12 +23,11 @@ type TabName = 'actu' | 'games' | 'messages' | 'friends' | 'profile';
 
 export default function HomePage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabName>('actu');
-  const [userSession, setUserSession] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [activeTab,    setActiveTab]    = useState<TabName>('actu');
+  const [userSession,  setUserSession]  = useState<any>(null);
+  const [loading,      setLoading]      = useState(true);
+  const [isChatOpen,   setIsChatOpen]   = useState(false);
 
-  // Animation pour la barre de navigation
   const tabBarTranslateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -38,14 +36,48 @@ export default function HomePage() {
 
   const checkAuth = async () => {
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      
-      if (!session) {
+      // ── Cas OAuth Web ───────────────────────────────────────────────────────
+      // Supabase redirige vers /home#access_token=xxx&refresh_token=xxx&token_type=bearer
+      // On lit le fragment, sauvegarde la session et nettoie l'URL
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location.hash) {
+        const hash   = window.location.hash.substring(1); // supprimer le #
+        const params = new URLSearchParams(hash);
+
+        const accessToken  = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        const expiresAt    = params.get('expires_at');
+        const tokenType    = params.get('token_type');
+
+        if (accessToken && tokenType === 'bearer') {
+          const session = {
+            access_token:  accessToken,
+            refresh_token: refreshToken  || '',
+            expires_at:    expiresAt ? parseInt(expiresAt) : null,
+          };
+          await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
+
+          // Nettoyer le fragment de l'URL (le token disparaît de la barre d'adresse)
+          window.history.replaceState(null, '', window.location.pathname);
+
+          setUserSession(session);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // ── Cas normal : session existante dans AsyncStorage ───────────────────
+      const raw = await AsyncStorage.getItem('harmonia_session');
+      if (!raw) {
         router.replace('/login');
         return;
       }
 
-      const parsed = JSON.parse(session);
+      const parsed = JSON.parse(raw);
+      if (!parsed.access_token) {
+        router.replace('/login');
+        return;
+      }
+
       setUserSession(parsed);
     } catch (error) {
       console.error('Auth check error:', error);
@@ -60,36 +92,30 @@ export default function HomePage() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     setActiveTab(tab);
-    
-    // Si on change d'onglet, fermer le chat et montrer la barre
     if (isChatOpen) {
       setIsChatOpen(false);
       showTabBar();
     }
   };
 
-  // Fonction pour cacher la barre de navigation (défilement vers le bas)
   const hideTabBar = () => {
     Animated.timing(tabBarTranslateY, {
-      toValue: 100, // Descend de 100px (hors écran)
+      toValue: 100,
       duration: 300,
       useNativeDriver: true,
     }).start();
   };
 
-  // Fonction pour montrer la barre de navigation (défilement vers le haut)
   const showTabBar = () => {
     Animated.timing(tabBarTranslateY, {
-      toValue: 0, // Remonte à sa position initiale
+      toValue: 0,
       duration: 300,
       useNativeDriver: true,
     }).start();
   };
 
-  // Callback pour MessagesScreen
   const handleChatModeChange = (isInChatMode: boolean) => {
     setIsChatOpen(isInChatMode);
-    
     if (isInChatMode) {
       hideTabBar();
     } else {
@@ -99,18 +125,12 @@ export default function HomePage() {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'actu':
-        return <ActuScreen />;
-      case 'games':
-        return <GamesScreen />;
-      case 'messages':
-        return <MessagesScreen onChatModeChange={handleChatModeChange} />;
-      case 'friends':
-        return <FriendsScreen />;
-      case 'profile':
-        return <ProfileScreen />;
-      default:
-        return <ActuScreen />;
+      case 'actu':     return <ActuScreen />;
+      case 'games':    return <GamesScreen />;
+      case 'messages': return <MessagesScreen onChatModeChange={handleChatModeChange} />;
+      case 'friends':  return <FriendsScreen />;
+      case 'profile':  return <ProfileScreen />;
+      default:         return <ActuScreen />;
     }
   };
 
@@ -126,18 +146,14 @@ export default function HomePage() {
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Contenu principal */}
       <View style={styles.content}>
         {renderContent()}
       </View>
 
-      {/* Bottom Tab Navigation avec animation */}
-      <Animated.View 
+      <Animated.View
         style={[
           styles.bottomTabsContainer,
-          {
-            transform: [{ translateY: tabBarTranslateY }]
-          }
+          { transform: [{ translateY: tabBarTranslateY }] }
         ]}
       >
         <LinearGradient
@@ -145,12 +161,8 @@ export default function HomePage() {
           style={styles.tabsGradient}
         >
           <View style={styles.tabs}>
-            {/* Actu Tab */}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={() => handleTabPress('actu')}
-              activeOpacity={0.7}
-            >
+
+            <TouchableOpacity style={styles.tab} onPress={() => handleTabPress('actu')} activeOpacity={0.7}>
               <Ionicons
                 name={activeTab === 'actu' ? 'home' : 'home-outline'}
                 size={26}
@@ -159,12 +171,7 @@ export default function HomePage() {
               {activeTab === 'actu' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
 
-            {/* Games Tab */}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={() => handleTabPress('games')}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={styles.tab} onPress={() => handleTabPress('games')} activeOpacity={0.7}>
               <Ionicons
                 name={activeTab === 'games' ? 'game-controller' : 'game-controller-outline'}
                 size={26}
@@ -173,12 +180,7 @@ export default function HomePage() {
               {activeTab === 'games' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
 
-            {/* Messages Tab */}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={() => handleTabPress('messages')}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={styles.tab} onPress={() => handleTabPress('messages')} activeOpacity={0.7}>
               <Ionicons
                 name={activeTab === 'messages' ? 'chatbubbles' : 'chatbubbles-outline'}
                 size={26}
@@ -187,12 +189,7 @@ export default function HomePage() {
               {activeTab === 'messages' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
 
-            {/* Friends Tab */}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={() => handleTabPress('friends')}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={styles.tab} onPress={() => handleTabPress('friends')} activeOpacity={0.7}>
               <Ionicons
                 name={activeTab === 'friends' ? 'people' : 'people-outline'}
                 size={26}
@@ -201,12 +198,7 @@ export default function HomePage() {
               {activeTab === 'friends' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
 
-            {/* Profile Tab */}
-            <TouchableOpacity
-              style={styles.tab}
-              onPress={() => handleTabPress('profile')}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={styles.tab} onPress={() => handleTabPress('profile')} activeOpacity={0.7}>
               <Ionicons
                 name={activeTab === 'profile' ? 'person' : 'person-outline'}
                 size={26}
@@ -214,6 +206,7 @@ export default function HomePage() {
               />
               {activeTab === 'profile' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
+
           </View>
         </LinearGradient>
       </Animated.View>
@@ -222,37 +215,15 @@ export default function HomePage() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-  },
-  content: {
-    flex: 1,
-  },
+  container:        { flex: 1, backgroundColor: '#F5F5F5' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5F5' },
+  content:          { flex: 1 },
   bottomTabsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    position: 'absolute', bottom: 0, left: 0, right: 0,
     ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 12,
-      },
-      web: {
-        boxShadow: '0 -4px 8px rgba(0, 0, 0, 0.15)',
-      },
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 8 },
+      android: { elevation: 12 },
+      web:     { boxShadow: '0 -4px 8px rgba(0, 0, 0, 0.15)' },
     }),
   },
   tabsGradient: {
@@ -266,24 +237,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   tab: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    minWidth: 60,
+    alignItems: 'center', justifyContent: 'center',
+    position: 'relative', paddingVertical: 8,
+    paddingHorizontal: 12, minWidth: 60,
   },
   activeIndicator: {
-    position: 'absolute',
-    bottom: -4,
-    width: 35,
-    height: 4,
-    backgroundColor: '#FFD700',
-    borderRadius: 2,
-    shadowColor: '#FFD700',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 4,
-    elevation: 4,
+    position: 'absolute', bottom: -4,
+    width: 35, height: 4,
+    backgroundColor: '#FFD700', borderRadius: 2,
+    shadowColor: '#FFD700', shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8, shadowRadius: 4, elevation: 4,
   },
 });
