@@ -6,86 +6,82 @@ import {
   Platform,
   Animated,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 
-import ActuScreen    from './actu';
-import GamesScreen   from './games';
+import ActuScreen     from './actu';
+import GamesScreen    from './games';
 import MessagesScreen from './messages';
-import FriendsScreen from './friends';
-import ProfileScreen from './profile';
+import FriendsScreen  from './friends';
+import ProfileScreen  from './profile';
 
 type TabName = 'actu' | 'games' | 'messages' | 'friends' | 'profile';
 
 export default function HomePage() {
   const router = useRouter();
-  const [activeTab,    setActiveTab]    = useState<TabName>('actu');
-  const [userSession,  setUserSession]  = useState<any>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [isChatOpen,   setIsChatOpen]   = useState(false);
+  const params = useLocalSearchParams();
+
+  const [activeTab,   setActiveTab]   = useState<TabName>('actu');
+  const [userSession, setUserSession] = useState<any>(null);
+  const [loading,     setLoading]     = useState(true);
+  const [isChatOpen,  setIsChatOpen]  = useState(false);
 
   const tabBarTranslateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    checkAuth();
+    initAuth();
   }, []);
 
-  const checkAuth = async () => {
+  // =====================================================
+  // INITIALISATION AUTH
+  // =====================================================
+
+  const initAuth = async () => {
     try {
-      // ── Cas OAuth Web ───────────────────────────────────────────────────────
-      // Supabase redirige vers /home#access_token=xxx&refresh_token=xxx&token_type=bearer
-      // On lit le fragment, sauvegarde la session et nettoie l'URL
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location.hash) {
-        const hash   = window.location.hash.substring(1); // supprimer le #
-        const params = new URLSearchParams(hash);
+      // ── Cas 1 : Session passee par login.tsx apres OAuth Google ────────────
+      // login.tsx a verifie le sid et passe la session en parametre
+      if (params.oauth_session) {
+        const session = JSON.parse(params.oauth_session as string)
 
-        const accessToken  = params.get('access_token');
-        const refreshToken = params.get('refresh_token');
-        const expiresAt    = params.get('expires_at');
-        const tokenType    = params.get('token_type');
-
-        if (accessToken && tokenType === 'bearer') {
-          const session = {
-            access_token:  accessToken,
-            refresh_token: refreshToken  || '',
-            expires_at:    expiresAt ? parseInt(expiresAt) : null,
-          };
-          await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
-
-          // Nettoyer le fragment de l'URL (le token disparaît de la barre d'adresse)
-          window.history.replaceState(null, '', window.location.pathname);
-
-          setUserSession(session);
-          setLoading(false);
-          return;
+        if (session?.access_token) {
+          // Enregistrer dans AsyncStorage — login.tsx nous a confie cette responsabilite
+          await AsyncStorage.setItem('harmonia_session', JSON.stringify(session))
+          setUserSession(session)
+          setLoading(false)
+          return
         }
       }
 
-      // ── Cas normal : session existante dans AsyncStorage ───────────────────
-      const raw = await AsyncStorage.getItem('harmonia_session');
+      // ── Cas 2 : Session existante dans AsyncStorage (app relancee) ──────────
+      const raw = await AsyncStorage.getItem('harmonia_session')
       if (!raw) {
-        router.replace('/login');
-        return;
+        router.replace('/login')
+        return
       }
 
-      const parsed = JSON.parse(raw);
-      if (!parsed.access_token) {
-        router.replace('/login');
-        return;
+      const parsed = JSON.parse(raw)
+      if (!parsed?.access_token) {
+        router.replace('/login')
+        return
       }
 
-      setUserSession(parsed);
+      setUserSession(parsed)
+
     } catch (error) {
-      console.error('Auth check error:', error);
-      router.replace('/login');
+      console.error('Auth check error:', error)
+      router.replace('/login')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
+
+  // =====================================================
+  // NAVIGATION TABS
+  // =====================================================
 
   const handleTabPress = (tab: TabName) => {
     if (Platform.OS !== 'web') {
@@ -100,27 +96,19 @@ export default function HomePage() {
 
   const hideTabBar = () => {
     Animated.timing(tabBarTranslateY, {
-      toValue: 100,
-      duration: 300,
-      useNativeDriver: true,
+      toValue: 100, duration: 300, useNativeDriver: true,
     }).start();
   };
 
   const showTabBar = () => {
     Animated.timing(tabBarTranslateY, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
+      toValue: 0, duration: 300, useNativeDriver: true,
     }).start();
   };
 
   const handleChatModeChange = (isInChatMode: boolean) => {
     setIsChatOpen(isInChatMode);
-    if (isInChatMode) {
-      hideTabBar();
-    } else {
-      showTabBar();
-    }
+    if (isInChatMode) { hideTabBar(); } else { showTabBar(); }
   };
 
   const renderContent = () => {
@@ -134,6 +122,10 @@ export default function HomePage() {
     }
   };
 
+  // =====================================================
+  // LOADING
+  // =====================================================
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -141,6 +133,10 @@ export default function HomePage() {
       </View>
     );
   }
+
+  // =====================================================
+  // RENDU PRINCIPAL
+  // =====================================================
 
   return (
     <View style={styles.container}>
@@ -213,6 +209,10 @@ export default function HomePage() {
     </View>
   );
 }
+
+// =====================================================
+// STYLES
+// =====================================================
 
 const styles = StyleSheet.create({
   container:        { flex: 1, backgroundColor: '#F5F5F5' },
