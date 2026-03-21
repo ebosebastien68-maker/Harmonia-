@@ -11,15 +11,15 @@ import {
   KeyboardAvoidingView,
   Image,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter }      from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
-import HarmoniaLogo from '../components/HarmoniaLogo';
+import { StatusBar }      from 'expo-status-bar';
+import AsyncStorage       from '@react-native-async-storage/async-storage';
+import { Ionicons }       from '@expo/vector-icons';
+import DateTimePicker     from '@react-native-community/datetimepicker';
+import * as Haptics       from 'expo-haptics';
+import * as WebBrowser    from 'expo-web-browser';
+import HarmoniaLogo       from '../components/HarmoniaLogo';
 
 // Necessaire pour que le modal se ferme correctement sur mobile
 WebBrowser.maybeCompleteAuthSession();
@@ -27,7 +27,6 @@ WebBrowser.maybeCompleteAuthSession();
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-// URL de retour selon la plateforme — doit correspondre a Supabase Redirect URLs
 const REDIRECT_WEB    = 'https://www.harmoniaworld.world/login';
 const REDIRECT_MOBILE = 'harmoniaworld://login';
 
@@ -35,8 +34,8 @@ type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
 
 interface StatusMessage {
-  type: MessageType;
-  text: string;
+  type:    MessageType;
+  text:    string;
   visible: boolean;
 }
 
@@ -45,22 +44,22 @@ interface StatusMessage {
 // =====================================================
 
 function generateSid(): string {
-  const random   = Math.random().toString(36).substring(2, 10)
-  const timePart = Date.now().toString(36)
-  return `${random}${timePart}`
+  const random   = Math.random().toString(36).substring(2, 10);
+  const timePart = Date.now().toString(36);
+  return `${random}${timePart}`;
 }
 
 function parseOAuthReturn(url: string): {
-  sid:          string | null
-  accessToken:  string | null
-  refreshToken: string | null
-  expiresAt:    string | null
-  tokenType:    string | null
+  sid:          string | null;
+  accessToken:  string | null;
+  refreshToken: string | null;
+  expiresAt:    string | null;
+  tokenType:    string | null;
 } {
-  const queryPart      = url.split('?')[1]?.split('#')[0] ?? ''
-  const queryParams    = new URLSearchParams(queryPart)
-  const fragment       = url.split('#')[1] ?? ''
-  const fragmentParams = new URLSearchParams(fragment)
+  const queryPart      = url.split('?')[1]?.split('#')[0] ?? '';
+  const queryParams    = new URLSearchParams(queryPart);
+  const fragment       = url.split('#')[1] ?? '';
+  const fragmentParams = new URLSearchParams(fragment);
 
   return {
     sid:          queryParams.get('sid'),
@@ -68,7 +67,7 @@ function parseOAuthReturn(url: string): {
     refreshToken: fragmentParams.get('refresh_token'),
     expiresAt:    fragmentParams.get('expires_at'),
     tokenType:    fragmentParams.get('token_type'),
-  }
+  };
 }
 
 // =====================================================
@@ -95,7 +94,7 @@ export default function LoginPage() {
   const [showPassword,     setShowPassword]     = useState(false);
   const [pendingEmail,     setPendingEmail]     = useState('');
 
-  // sid en memoire — ne disparait jamais car le modal ne quitte pas l app
+  // sid en memoire — reste intact car WebBrowser ne quitte pas l app
   const sidRef = useRef<string | null>(null);
 
   // =====================================================
@@ -103,7 +102,7 @@ export default function LoginPage() {
   // =====================================================
 
   useEffect(() => {
-    checkExistingSession()
+    checkExistingSession();
   }, []);
 
   useEffect(() => {
@@ -117,12 +116,14 @@ export default function LoginPage() {
 
   const checkExistingSession = async () => {
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (session) {
-        const parsed = JSON.parse(session);
-        if (parsed.access_token) router.replace('/home');
+      const raw = await AsyncStorage.getItem('harmonia_session');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.access_token) router.replace('/home');
       }
-    } catch { console.log('No existing session') }
+    } catch {
+      console.log('No existing session');
+    }
   };
 
   // =====================================================
@@ -158,8 +159,7 @@ export default function LoginPage() {
   };
 
   const isValidDate = (dateString: string): boolean => {
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!regex.test(dateString)) return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
     const date = new Date(dateString);
     return date instanceof Date && !isNaN(date.getTime());
   };
@@ -242,6 +242,7 @@ export default function LoginPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erreur de verification');
       if (data.verified) {
+        // Enregistrer directement dans AsyncStorage
         await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
         showMessage('success', 'Email verifie ! Bienvenue sur Harmonia !');
         setTimeout(() => router.replace('/home'), 1500);
@@ -278,6 +279,7 @@ export default function LoginPage() {
         }
         throw new Error(data.error || 'Identifiants incorrects');
       }
+      // Enregistrer directement dans AsyncStorage
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
       showMessage('success', 'Connexion reussie ! Bienvenue !');
       setTimeout(() => router.replace('/home'), 1500);
@@ -323,13 +325,13 @@ export default function LoginPage() {
   // CONNEXION GOOGLE — WebBrowser modal
   //
   // openAuthSessionAsync ouvre un modal integre :
-  // - iOS     : SFSafariViewController
-  // - Android : Chrome Custom Tab
-  // - Web     : popup
+  // iOS     : SFSafariViewController
+  // Android : Chrome Custom Tab
+  // Web     : popup
   //
-  // L app ne quitte JAMAIS → sidRef.current reste intact ✅
-  // Quand l utilisateur finit, le modal se ferme et
-  // result.url contient le token dans le fragment
+  // L app ne quitte JAMAIS → sidRef.current reste intact
+  // Une fois termine, on enregistre dans AsyncStorage
+  // home.tsx lit AsyncStorage comme profile.tsx ✅
   // =====================================================
 
   const handleGoogleSignin = async () => {
@@ -337,14 +339,13 @@ export default function LoginPage() {
     showMessage('info', 'Ouverture de Google...');
 
     // Generer le sid et le garder en memoire
-    const sid      = generateSid()
-    sidRef.current = sid
+    const sid      = generateSid();
+    sidRef.current = sid;
 
-    // URL de retour selon la plateforme
-    const redirectUrl = Platform.OS === 'web' ? REDIRECT_WEB : REDIRECT_MOBILE
+    const redirectUrl = Platform.OS === 'web' ? REDIRECT_WEB : REDIRECT_MOBILE;
 
     try {
-      // 1. Demander l URL OAuth au backend avec le sid et la plateforme
+      // 1. Demander l URL OAuth au backend
       const response = await fetch(API_BASE, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -358,58 +359,52 @@ export default function LoginPage() {
       if (!response.ok) throw new Error(data.error || 'Erreur Google');
 
       // 2. Ouvrir le modal — l app reste active, sidRef.current intact
-      const result = await WebBrowser.openAuthSessionAsync(
-        data.url,
-        redirectUrl,
-      )
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
 
-      // 3. Traiter le resultat
       if (result.type !== 'success') {
-        // Utilisateur a ferme le modal sans se connecter
         showMessage('warning', 'Connexion Google annulee');
-        sidRef.current = null
-        setLoading(false)
-        return
+        sidRef.current = null;
+        setLoading(false);
+        return;
       }
 
-      // 4. Parser l URL de retour
-      const { sid: returnedSid, accessToken, refreshToken, expiresAt, tokenType } = parseOAuthReturn(result.url)
+      // 3. Parser l URL de retour
+      const { sid: returnedSid, accessToken, refreshToken, expiresAt, tokenType } = parseOAuthReturn(result.url);
 
-      // 5. Verifier le sid — securite anti-injection
+      // 4. Verifier le sid — securite anti-injection
       if (!returnedSid || returnedSid !== sidRef.current) {
         showMessage('error', 'Identifiant de session invalide — reessayez');
-        sidRef.current = null
-        setLoading(false)
-        return
+        sidRef.current = null;
+        setLoading(false);
+        return;
       }
 
-      // 6. Verifier le token
+      // 5. Verifier le token
       if (!accessToken || tokenType !== 'bearer') {
         showMessage('error', 'Token manquant — reessayez');
-        sidRef.current = null
-        setLoading(false)
-        return
+        sidRef.current = null;
+        setLoading(false);
+        return;
       }
 
-      // 7. Construire la session et la passer a home.tsx
+      // 6. Construire la session
       const session = {
         access_token:  accessToken,
         refresh_token: refreshToken  ?? '',
         expires_at:    expiresAt ? parseInt(expiresAt) : null,
-      }
+      };
 
-      sidRef.current = null
-      showMessage('success', 'Connexion Google reussie ! Bienvenue !')
+      // 7. Enregistrer dans AsyncStorage — meme methode que login classique
+      await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
 
-      setTimeout(() => {
-        router.replace({
-          pathname: '/home',
-          params:   { oauth_session: JSON.stringify(session) },
-        })
-      }, 800)
+      sidRef.current = null;
+      showMessage('success', 'Connexion Google reussie ! Bienvenue !');
+
+      // 8. home.tsx lira AsyncStorage comme profile.tsx — aucun param a passer
+      setTimeout(() => router.replace('/home'), 800);
 
     } catch (error: any) {
-      sidRef.current = null
+      sidRef.current = null;
       showMessage('error', error.message || 'Impossible de se connecter avec Google');
       setLoading(false);
     }
