@@ -6,12 +6,12 @@ import {
   Platform,
   Animated,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
+import { useRouter }      from 'expo-router';
+import AsyncStorage       from '@react-native-async-storage/async-storage';
+import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
-import * as Haptics from 'expo-haptics';
+import { StatusBar }      from 'expo-status-bar';
+import * as Haptics       from 'expo-haptics';
 
 import ActuScreen     from './actu';
 import GamesScreen    from './games';
@@ -23,61 +23,55 @@ type TabName = 'actu' | 'games' | 'messages' | 'friends' | 'profile';
 
 export default function HomePage() {
   const router = useRouter();
-  const params = useLocalSearchParams();
 
-  const [activeTab,   setActiveTab]   = useState<TabName>('actu');
-  const [userSession, setUserSession] = useState<any>(null);
-  const [loading,     setLoading]     = useState(true);
-  const [isChatOpen,  setIsChatOpen]  = useState(false);
+  const [activeTab,  setActiveTab]  = useState<TabName>('actu');
+  const [loading,    setLoading]    = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  // Meme pattern que profile.tsx — tokens en memoire via useRef
+  const accessTokenRef  = useRef<string>('');
+  const refreshTokenRef = useRef<string>('');
+  const expiresAtRef    = useRef<number>(0);
 
   const tabBarTranslateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    initAuth();
+    initSession();
   }, []);
 
   // =====================================================
-  // INITIALISATION AUTH
+  // INIT SESSION — identique a profile.tsx
+  // Lit AsyncStorage → stocke en useRef → pret pour tous les ecrans
   // =====================================================
 
-  const initAuth = async () => {
+  const initSession = async () => {
     try {
-      // ── Cas 1 : Session passee par login.tsx apres OAuth Google ────────────
-      // login.tsx a verifie le sid et passe la session en parametre
-      if (params.oauth_session) {
-        const session = JSON.parse(params.oauth_session as string)
+      const raw = await AsyncStorage.getItem('harmonia_session');
 
-        if (session?.access_token) {
-          // Enregistrer dans AsyncStorage — login.tsx nous a confie cette responsabilite
-          await AsyncStorage.setItem('harmonia_session', JSON.stringify(session))
-          setUserSession(session)
-          setLoading(false)
-          return
-        }
-      }
-
-      // ── Cas 2 : Session existante dans AsyncStorage (app relancee) ──────────
-      const raw = await AsyncStorage.getItem('harmonia_session')
       if (!raw) {
-        router.replace('/login')
-        return
+        router.replace('/login');
+        return;
       }
 
-      const parsed = JSON.parse(raw)
-      if (!parsed?.access_token) {
-        router.replace('/login')
-        return
+      const session = JSON.parse(raw);
+
+      if (!session?.access_token) {
+        router.replace('/login');
+        return;
       }
 
-      setUserSession(parsed)
+      // Stocker en memoire via useRef — meme methode que profile.tsx
+      accessTokenRef.current  = session.access_token  || '';
+      refreshTokenRef.current = session.refresh_token || '';
+      expiresAtRef.current    = session.expires_at    || 0;
 
     } catch (error) {
-      console.error('Auth check error:', error)
-      router.replace('/login')
+      console.error('Auth check error:', error);
+      router.replace('/login');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   // =====================================================
   // NAVIGATION TABS
