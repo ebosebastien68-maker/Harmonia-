@@ -387,14 +387,29 @@ export default function LoginPage() {
         return;
       }
 
-      // 6. Construire la session
+      // 6. Decoder le JWT pour extraire user.id et user.email
+      let userId    = '';
+      let userEmail = '';
+      try {
+        const payload = JSON.parse(atob(accessToken.split('.')[1]));
+        userId    = payload.sub   || '';
+        userEmail = payload.email || '';
+      } catch {
+        console.warn('Impossible de decoder le JWT');
+      }
+
+      // 7. Construire la session — meme format que login classique
       const session = {
         access_token:  accessToken,
-        refresh_token: refreshToken  ?? '',
+        refresh_token: refreshToken ?? '',
         expires_at:    expiresAt ? parseInt(expiresAt) : null,
+        user: {
+          id:    userId,
+          email: userEmail,
+        },
       };
 
-      // 7. Enregistrer dans AsyncStorage — meme methode que login classique
+      // 8. Enregistrer dans AsyncStorage — meme methode que login classique
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
 
       sidRef.current = null;
