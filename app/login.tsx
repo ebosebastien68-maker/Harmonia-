@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
-  Linking,
   Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -19,10 +18,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
+import * as WebBrowser from 'expo-web-browser';
 import HarmoniaLogo from '../components/HarmoniaLogo';
+
+// Necessaire pour que le modal se ferme correctement sur mobile
+WebBrowser.maybeCompleteAuthSession();
 
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
+
+// URL de retour selon la plateforme — doit correspondre a Supabase Redirect URLs
+const REDIRECT_WEB    = 'https://www.harmoniaworld.world/login';
+const REDIRECT_MOBILE = 'harmoniaworld://login';
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -37,14 +44,12 @@ interface StatusMessage {
 // UTILITAIRES
 // =====================================================
 
-// Genere un identifiant unique pour securiser le flux OAuth
 function generateSid(): string {
   const random   = Math.random().toString(36).substring(2, 10)
   const timePart = Date.now().toString(36)
   return `${random}${timePart}`
 }
 
-// Extrait les query params et le fragment d une URL
 function parseOAuthReturn(url: string): {
   sid:          string | null
   accessToken:  string | null
@@ -52,12 +57,9 @@ function parseOAuthReturn(url: string): {
   expiresAt:    string | null
   tokenType:    string | null
 } {
-  // Query params : ?sid=xxx
-  const queryPart   = url.split('?')[1]?.split('#')[0] ?? ''
-  const queryParams = new URLSearchParams(queryPart)
-
-  // Fragment : #access_token=yyy&refresh_token=zzz&...
-  const fragment      = url.split('#')[1] ?? ''
+  const queryPart      = url.split('?')[1]?.split('#')[0] ?? ''
+  const queryParams    = new URLSearchParams(queryPart)
+  const fragment       = url.split('#')[1] ?? ''
   const fragmentParams = new URLSearchParams(fragment)
 
   return {
@@ -90,11 +92,10 @@ export default function LoginPage() {
   const [dateNaissance,    setDateNaissance]    = useState<Date>(new Date(2000, 0, 1));
   const [dateNaissanceWeb, setDateNaissanceWeb] = useState<string>('2000-01-01');
   const [showDatePicker,   setShowDatePicker]   = useState(false);
+  const [showPassword,     setShowPassword]     = useState(false);
+  const [pendingEmail,     setPendingEmail]     = useState('');
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [pendingEmail, setPendingEmail] = useState('');
-
-  // sid genere pour le flux OAuth en cours — conserve entre les rendus
+  // sid en memoire — ne disparait jamais car le modal ne quitte pas l app
   const sidRef = useRef<string | null>(null);
 
   // =====================================================
@@ -103,28 +104,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     checkExistingSession()
-
-    // Web : verifier si on revient d un flux OAuth
-    // Supabase redirige vers /login?sid=xxx#access_token=yyy
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const fullUrl = window.location.href
-      handleOAuthReturn(fullUrl)
-    }
-
-    // Mobile : ecouter les deep links entrants
-    // harmoniaworld://login?sid=xxx#access_token=yyy
-    const subscription = Linking.addEventListener('url', ({ url }) => {
-      handleOAuthReturn(url)
-    })
-
-    // Verifier si l app a ete ouverte via un deep link
-    Linking.getInitialURL().then((url) => {
-      if (url) handleOAuthReturn(url)
-    })
-
-    return () => {
-      subscription.remove()
-    }
   }, []);
 
   useEffect(() => {
@@ -135,10 +114,6 @@ export default function LoginPage() {
       return () => clearTimeout(timer);
     }
   }, [statusMessage.visible]);
-
-  // =====================================================
-  // VERIFICATION SESSION EXISTANTE
-  // =====================================================
 
   const checkExistingSession = async () => {
     try {
@@ -151,55 +126,7 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // INTERCEPTEUR OAUTH — Web + Mobile
-  // =====================================================
-
-  const handleOAuthReturn = (url: string) => {
-    // Verifier que l URL contient bien un token OAuth
-    if (!url.includes('access_token') && !url.includes('error')) return
-
-    const { sid, accessToken, refreshToken, expiresAt, tokenType } = parseOAuthReturn(url)
-
-    // Nettoyer l URL web pour ne pas ré-intercepter au rechargement
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.history.replaceState(null, '', window.location.pathname)
-    }
-
-    // Verifier la presence du token
-    if (!accessToken || tokenType !== 'bearer') {
-      showMessage('error', 'Token manquant — veuillez reessayer')
-      setLoading(false)
-      return
-    }
-
-    // Verifier le sid — securite anti-injection
-    if (!sid || sid !== sidRef.current) {
-      showMessage('error', 'Identifiant de session invalide — veuillez reessayer')
-      setLoading(false)
-      return
-    }
-
-    // Tout est valide — construire la session
-    const session = {
-      access_token:  accessToken,
-      refresh_token: refreshToken  ?? '',
-      expires_at:    expiresAt ? parseInt(expiresAt) : null,
-    }
-
-    // Passer la session a home.tsx qui se charge de l enregistrer
-    showMessage('success', 'Connexion Google reussie ! Bienvenue !')
-    sidRef.current = null // reinitialiser le sid
-
-    setTimeout(() => {
-      router.replace({
-        pathname: '/home',
-        params:   { oauth_session: JSON.stringify(session) },
-      })
-    }, 800)
-  }
-
-  // =====================================================
-  // AFFICHAGE DES MESSAGES
+  // MESSAGES
   // =====================================================
 
   const showMessage = (type: MessageType, text: string) => {
@@ -266,10 +193,10 @@ export default function LoginPage() {
           return;
         }
       } else {
-        showMessage('error', 'Impossible de verifier les inscriptions. Reessayez plus tard.'); return;
+        showMessage('error', 'Impossible de verifier les inscriptions.'); return;
       }
     } catch {
-      showMessage('error', 'Impossible de joindre le serveur. Verifiez votre connexion.'); return;
+      showMessage('error', 'Impossible de joindre le serveur.'); return;
     }
 
     setLoading(true);
@@ -393,39 +320,93 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // CONNEXION GOOGLE
+  // CONNEXION GOOGLE — WebBrowser modal
+  //
+  // openAuthSessionAsync ouvre un modal integre :
+  // - iOS     : SFSafariViewController
+  // - Android : Chrome Custom Tab
+  // - Web     : popup
+  //
+  // L app ne quitte JAMAIS → sidRef.current reste intact ✅
+  // Quand l utilisateur finit, le modal se ferme et
+  // result.url contient le token dans le fragment
   // =====================================================
 
   const handleGoogleSignin = async () => {
     setLoading(true);
     showMessage('info', 'Ouverture de Google...');
 
-    // Generer un nouveau sid et le garder en memoire
+    // Generer le sid et le garder en memoire
     const sid      = generateSid()
     sidRef.current = sid
 
+    // URL de retour selon la plateforme
+    const redirectUrl = Platform.OS === 'web' ? REDIRECT_WEB : REDIRECT_MOBILE
+
     try {
-      // Demander l URL OAuth au backend avec le sid et la plateforme
+      // 1. Demander l URL OAuth au backend avec le sid et la plateforme
       const response = await fetch(API_BASE, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           action:   'google-signin',
           sid,
-          platform: Platform.OS,  // 'ios' | 'android' | 'web'
+          platform: Platform.OS,
         }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erreur Google');
 
-      // Ouvrir l URL dans le navigateur
-      // Sur web   : ouvre la page Google dans le meme onglet
-      // Sur mobile: ouvre le navigateur externe, l app sera reveilee par le deep link
-      await Linking.openURL(data.url);
+      // 2. Ouvrir le modal — l app reste active, sidRef.current intact
+      const result = await WebBrowser.openAuthSessionAsync(
+        data.url,
+        redirectUrl,
+      )
 
-      // Sur web le loading s arrete quand la page est quittee
-      // Sur mobile on garde le loading jusqu au retour du deep link
-      if (Platform.OS === 'web') setLoading(false);
+      // 3. Traiter le resultat
+      if (result.type !== 'success') {
+        // Utilisateur a ferme le modal sans se connecter
+        showMessage('warning', 'Connexion Google annulee');
+        sidRef.current = null
+        setLoading(false)
+        return
+      }
+
+      // 4. Parser l URL de retour
+      const { sid: returnedSid, accessToken, refreshToken, expiresAt, tokenType } = parseOAuthReturn(result.url)
+
+      // 5. Verifier le sid — securite anti-injection
+      if (!returnedSid || returnedSid !== sidRef.current) {
+        showMessage('error', 'Identifiant de session invalide — reessayez');
+        sidRef.current = null
+        setLoading(false)
+        return
+      }
+
+      // 6. Verifier le token
+      if (!accessToken || tokenType !== 'bearer') {
+        showMessage('error', 'Token manquant — reessayez');
+        sidRef.current = null
+        setLoading(false)
+        return
+      }
+
+      // 7. Construire la session et la passer a home.tsx
+      const session = {
+        access_token:  accessToken,
+        refresh_token: refreshToken  ?? '',
+        expires_at:    expiresAt ? parseInt(expiresAt) : null,
+      }
+
+      sidRef.current = null
+      showMessage('success', 'Connexion Google reussie ! Bienvenue !')
+
+      setTimeout(() => {
+        router.replace({
+          pathname: '/home',
+          params:   { oauth_session: JSON.stringify(session) },
+        })
+      }, 800)
 
     } catch (error: any) {
       sidRef.current = null
@@ -552,7 +533,7 @@ export default function LoginPage() {
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color="#8A2BE2" />
               <Text style={styles.loadingText}>
-                {sidRef.current ? 'En attente de Google...' : 'Chargement...'}
+                {sidRef.current ? 'Connexion Google en cours...' : 'Chargement...'}
               </Text>
             </View>
           </View>
