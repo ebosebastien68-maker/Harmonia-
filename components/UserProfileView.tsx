@@ -201,6 +201,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
   const [showPosts,       setShowPosts]       = useState(false);
   const [friendLoading,   setFriendLoading]   = useState(false);
 
+  const [showAvatarViewer,        setShowAvatarViewer]        = useState(false);
   const [showCommentsModal,       setShowCommentsModal]       = useState(false);
   const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
   const [showLikersModal,         setShowLikersModal]         = useState(false);
@@ -347,11 +348,13 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
 
           {/* Header */}
           <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.header}>
-            {profile.avatar_url
-              ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-              : <View style={[styles.avatar, styles.avatarFallback]}>
-                  <Text style={styles.avatarFallbackText}>{getInitials(profile.nom, profile.prenom)}</Text>
-                </View>}
+            <TouchableOpacity onPress={() => profile.avatar_url && setShowAvatarViewer(true)} activeOpacity={profile.avatar_url ? 0.8 : 1}>
+              {profile.avatar_url
+                ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                : <View style={[styles.avatar, styles.avatarFallback]}>
+                    <Text style={styles.avatarFallbackText}>{getInitials(profile.nom, profile.prenom)}</Text>
+                  </View>}
+            </TouchableOpacity>
             <Text style={styles.headerName}>{profile.prenom} {profile.nom}</Text>
             <Text style={styles.headerSub}>Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</Text>
 
@@ -425,6 +428,16 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
 
         </ScrollView>
       )}
+
+      {/* ── VIEWER PLEIN ÉCRAN ──────────────────────────────────────────── */}
+      <Modal visible={showAvatarViewer} transparent animationType="fade" onRequestClose={() => setShowAvatarViewer(false)} statusBarTranslucent>
+        <View style={styles.viewerOverlay}>
+          <TouchableOpacity style={styles.viewerClose} onPress={() => setShowAvatarViewer(false)}>
+            <Ionicons name="close" size={30} color="#fff" />
+          </TouchableOpacity>
+          {profile?.avatar_url && <Image source={{ uri: profile.avatar_url }} style={styles.viewerImage} resizeMode="contain" />}
+        </View>
+      </Modal>
 
       <CommentsModal
         visible={showCommentsModal} postId={selectedPostForComments} userId={viewerId}
@@ -507,4 +520,9 @@ const styles = StyleSheet.create({
   actionText:        { fontSize: 12, fontWeight: '600', color: '#666' },
   actionTextActive:  { color: '#FFF' },
   saveBtn:           { padding: 8 },
+
+  // Viewer plein écran
+  viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
+  viewerClose:   { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
+  viewerImage:   { width: '100%', height: '80%' },
 });
