@@ -38,7 +38,7 @@ interface UserProfile {
   prenom:         string;
   avatar_url?:    string;
   trophies_count: number;
-  posts_count:    number;
+  friends_count:  number;
   created_at:     string;
 }
 
@@ -361,8 +361,8 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
             {/* Stats */}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
-                <Text style={styles.statValue}>{profile.posts_count}</Text>
-                <Text style={styles.statLabel}>Publications</Text>
+                <Text style={styles.statValue}>{profile.friends_count || 0}</Text>
+                <Text style={styles.statLabel}>Amis</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
