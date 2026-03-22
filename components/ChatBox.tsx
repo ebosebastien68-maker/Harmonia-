@@ -1,4 +1,4 @@
-// ChatBox.tsx — v5
+// ChatBox.tsx — v6
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
@@ -27,6 +27,7 @@ interface ChatBoxProps {
   conversationId:   string;
   conversationType: 'private' | 'group';
   userId:           string;
+  userName?:        string;   // nom affiché dans les events typing groupe
   accessToken:      string;
   otherUser?: {
     id: string; nom: string; prenom: string;
@@ -36,12 +37,12 @@ interface ChatBoxProps {
   memberCount?:    number;
   onBack:          () => void;
   onNewMessage?:   () => void;
-  onProfilePress?: (userId: string) => void;  // ← AJOUT : ouvre UserProfileView
+  onProfilePress?: (userId: string) => void;
 }
 
 export default function ChatBox({
-  conversationId, conversationType, userId, accessToken,
-  otherUser, groupName, memberCount,
+  conversationId, conversationType, userId, userName = 'Moi',
+  accessToken, otherUser, groupName, memberCount,
   onBack, onNewMessage, onProfilePress,
 }: ChatBoxProps) {
 
@@ -70,66 +71,133 @@ export default function ChatBox({
     };
   }, [conversationId, accessToken]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // SOCKET PRIVÉ
+  // ─────────────────────────────────────────────────────────────────────────
+
   const buildPrivateSocket = (): Socket => {
     const socket = io(`${WS_BASE}/private-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
+
     socket.on('connect', () => {
       console.log('[ChatBox] Socket privé connecté');
-      socket.emit('join_conversation', { conversation_id: conversationId, user_id: userId, access_token: accessToken });
+      socket.emit('join_conversation', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+      });
     });
+
     socket.on('joined', (data: { conversation_id: string; messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
       setLoading(false);
       scrollToEnd();
     });
+
     socket.on('message_sent', (data: { message: Message }) => {
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       setSending(false);
       scrollToEnd();
     });
+
     socket.on('new_message', (raw: any) => {
-      console.log('[DEBUG new_message raw]', JSON.stringify(raw));
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
+
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false);
       setLoadingMore(false);
     });
+
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
       if (data.user_id !== userId) setOtherTyping(data.is_typing);
     });
+
     socket.on('error',      (err: { message: string }) => { console.warn('[ChatBox] Erreur socket privé :', err.message); setSending(false); });
     socket.on('disconnect', () => console.log('[ChatBox] Socket privé déconnecté'));
+
     return socket;
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // SOCKET GROUPE
+  // ─────────────────────────────────────────────────────────────────────────
+
   const buildGroupSocket = (): Socket => {
     const socket = io(`${WS_BASE}/group-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
+
     socket.on('connect', () => {
       console.log('[ChatBox] Socket groupe connecté');
-      socket.emit('join_group', { group_id: conversationId, user_id: userId, access_token: accessToken });
+      socket.emit('join_group', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
+      });
     });
+
     socket.on('joined', (data: { messages: Message[]; group: any }) => {
-      if (data?.messages) { setMessages(data.messages.map(normalizeMsg)); setLoading(false); scrollToEnd(); }
+      const msgs = data?.messages ?? [];
+      setMessages(msgs.map(normalizeMsg));
+      // has_more : si on a reçu exactement 10 messages (limite initiale), il peut en exister plus
+      setHasMore(msgs.length >= 10);
+      setLoading(false);
+      scrollToEnd();
     });
+
+    // Confirmation d'envoi à l'émetteur (is_from_me: true)
+    socket.on('message_sent', (data: { message: Message }) => {
+      const msg = normalizeMsg(data.message);
+      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+      setSending(false);
+      scrollToEnd();
+    });
+
+    // Nouveau message diffusé aux autres membres (is_from_me: false)
     socket.on('new_message', (raw: any) => {
-      console.log('[DEBUG groupe new_message raw]', JSON.stringify(raw));
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
-    socket.on('error',      (err: { message: string }) => console.warn('[ChatBox] Groupe erreur :', err.message));
+
+    // Pagination
+    socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
+      setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
+      setHasMore(data.has_more ?? false);
+      setLoadingMore(false);
+    });
+
+    // Typing des autres membres
+    socket.on('typing_status', (data: { user_id: string; user_name: string; is_typing: boolean }) => {
+      if (data.user_id !== userId) setOtherTyping(data.is_typing);
+    });
+
+    socket.on('message_deleted', (data: { message_id: string }) => {
+      setMessages(prev => prev.map(m =>
+        m.id === data.message_id ? { ...m, content: '' } : m
+      ));
+    });
+
+    socket.on('error',      (err: { message: string }) => { console.warn('[ChatBox] Groupe erreur :', err.message); setSending(false); });
     socket.on('disconnect', () => console.log('[ChatBox] Socket groupe déconnecté'));
+
     return socket;
   };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ACTIONS
+  // ─────────────────────────────────────────────────────────────────────────
 
   const scrollToEnd = () => {
     if (Platform.OS === 'web') {
@@ -146,7 +214,23 @@ export default function ChatBox({
   const loadMore = () => {
     if (loadingMore || !hasMore || messages.length === 0) return;
     setLoadingMore(true);
-    socketRef.current?.emit('load_more', { conversation_id: conversationId, user_id: userId, access_token: accessToken, before: messages[0]?.createdAt });
+
+    if (conversationType === 'private') {
+      socketRef.current?.emit('load_more', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+        before:          messages[0]?.createdAt,
+      });
+    } else {
+      // Backend groupe attend group_id, pas conversation_id
+      socketRef.current?.emit('load_more', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
+        before:       messages[0]?.createdAt,
+      });
+    }
   };
 
   const sendMessage = () => {
@@ -155,31 +239,88 @@ export default function ChatBox({
     const content = input.trim();
     setInput('');
     setSending(true);
-    if (conversationType === 'private' && isTypingRef.current) {
-      isTypingRef.current = false;
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing: false });
-    }
+
     if (conversationType === 'private') {
-      socketRef.current?.emit('send_message', { conversation_id: conversationId, user_id: userId, access_token: accessToken, content });
+      // Stopper le typing avant d'envoyer
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        socketRef.current?.emit('typing', {
+          conversation_id: conversationId,
+          user_id:         userId,
+          is_typing:       false,
+        });
+      }
+      socketRef.current?.emit('send_message', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+        content,
+      });
     } else {
-      socketRef.current?.emit('send_message', { content });
-      setSending(false);
+      // Backend groupe attend group_id + user_id + access_token
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        socketRef.current?.emit('typing', {
+          group_id:  conversationId,
+          user_id:   userId,
+          user_name: userName,
+          is_typing: false,
+        });
+      }
+      socketRef.current?.emit('send_message', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
+        content,
+      });
+      // Ne pas setSending(false) ici — on attend la confirmation message_sent
     }
     scrollToEnd();
   };
 
   const handleTyping = (text: string) => {
     setInput(text);
-    if (conversationType !== 'private') return;
-    if (text.length > 0 && !isTypingRef.current) {
-      isTypingRef.current = true;
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing: true });
+
+    if (conversationType === 'private') {
+      if (text.length > 0 && !isTypingRef.current) {
+        isTypingRef.current = true;
+        socketRef.current?.emit('typing', {
+          conversation_id: conversationId,
+          user_id:         userId,
+          is_typing:       true,
+        });
+      }
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => {
+        isTypingRef.current = false;
+        socketRef.current?.emit('typing', {
+          conversation_id: conversationId,
+          user_id:         userId,
+          is_typing:       false,
+        });
+      }, 2000);
+    } else {
+      // Groupe : payload différent, inclut user_name
+      if (text.length > 0 && !isTypingRef.current) {
+        isTypingRef.current = true;
+        socketRef.current?.emit('typing', {
+          group_id:  conversationId,
+          user_id:   userId,
+          user_name: userName,
+          is_typing: true,
+        });
+      }
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => {
+        isTypingRef.current = false;
+        socketRef.current?.emit('typing', {
+          group_id:  conversationId,
+          user_id:   userId,
+          user_name: userName,
+          is_typing: false,
+        });
+      }, 2000);
     }
-    if (typingTimer.current) clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => {
-      isTypingRef.current = false;
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing: false });
-    }, 2000);
   };
 
   const fmtTime = (value: string | number | null | undefined): string => {
@@ -201,16 +342,20 @@ export default function ChatBox({
     isRead:       msg.isRead       ?? msg.is_read       ?? false,
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDU
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <SafeAreaView style={S.container}>
 
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <TouchableOpacity onPress={onBack} style={S.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
 
         {conversationType === 'private' ? (
-          // ── Clic sur nom/avatar → profil (si onProfilePress fourni) ─────────
           <TouchableOpacity
             style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
             onPress={() => otherUser && onProfilePress?.(otherUser.id)}
@@ -235,38 +380,62 @@ export default function ChatBox({
             </View>
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{groupName}</Text>
-              <Text style={S.headerStatus}>{memberCount} membres</Text>
+              <Text style={S.headerStatus}>
+                {otherTyping ? "Quelqu'un écrit..." : `${memberCount} membres`}
+              </Text>
             </View>
           </View>
         )}
       </LinearGradient>
 
+      {/* ── Zone messages ───────────────────────────────────────────────── */}
       <ScrollView
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
         {...(Platform.OS !== 'web' && { onContentSizeChange: () => scrollRef.current?.scrollToEnd({ animated: true }) })}
       >
+        {/* Charger plus */}
         {hasMore && !loading && (
-          <TouchableOpacity onPress={loadMore} disabled={loadingMore} style={{ alignSelf: 'center', marginBottom: 12, marginTop: 4, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#F0E8FF', borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {loadingMore ? <ActivityIndicator size="small" color="#8A2BE2" /> : <Ionicons name="chevron-up" size={16} color="#8A2BE2" />}
-            <Text style={{ fontSize: 13, color: '#8A2BE2', fontWeight: '600' }}>{loadingMore ? 'Chargement...' : 'Voir les messages précédents'}</Text>
+          <TouchableOpacity
+            onPress={loadMore}
+            disabled={loadingMore}
+            style={{ alignSelf: 'center', marginBottom: 12, marginTop: 4, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#F0E8FF', borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
+            {loadingMore
+              ? <Text style={{ fontSize: 13, color: '#8A2BE2', fontWeight: '600' }}>Chargement des données</Text>
+              : <>
+                  <Ionicons name="chevron-up" size={16} color="#8A2BE2" />
+                  <Text style={{ fontSize: 13, color: '#8A2BE2', fontWeight: '600' }}>Voir les messages précédents</Text>
+                </>
+            }
           </TouchableOpacity>
         )}
 
+        {/* États principaux */}
         {loading ? (
-          <ActivityIndicator size="large" color="#8A2BE2" style={{ marginTop: 40 }} />
+          <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+            <Text style={{ fontSize: 14, color: '#999' }}>Chargement des données</Text>
+          </View>
         ) : messages.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 80 }}>
             <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#999', marginTop: 15 }}>Aucun message</Text>
-            <Text style={{ fontSize: 14, color: '#999', marginTop: 5 }}>Commencez la conversation !</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#888', marginTop: 15 }}>
+              Vous n'avez aucun message
+            </Text>
+            <Text style={{ fontSize: 14, color: '#aaa', marginTop: 6, textAlign: 'center' }}>
+              Démarrez la discussion avec vos amis
+            </Text>
           </View>
         ) : (
           messages.map(msg => (
             <View key={msg.id} style={[S.bubble, msg.isFromMe ? S.bubbleMe : S.bubbleThem]}>
-              {!msg.isFromMe && conversationType === 'group' && <Text style={S.senderName}>{msg.senderName}</Text>}
-              <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
+              {!msg.isFromMe && conversationType === 'group' && (
+                <Text style={S.senderName}>{msg.senderName}</Text>
+              )}
+              <Text style={[S.msgText, msg.isFromMe ? S.msgTextMe : S.msgTextThem]}>
+                {msg.content || <Text style={{ fontStyle: 'italic', opacity: 0.5 }}>Message supprimé</Text>}
+              </Text>
               <Text style={[S.msgTime, msg.isFromMe ? S.msgTimeMe : S.msgTimeThem]}>
                 {fmtTime(msg.createdAt)}{msg.isFromMe && msg.isRead ? ' ✓✓' : ''}
               </Text>
@@ -275,14 +444,29 @@ export default function ChatBox({
         )}
       </ScrollView>
 
+      {/* ── Saisie ──────────────────────────────────────────────────────── */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={S.inputWrap}>
           <TextInput
-            style={S.input} placeholder="Écrivez un message..." placeholderTextColor="#999"
-            value={input} onChangeText={handleTyping} multiline maxLength={1000} editable={!sending}
+            style={S.input}
+            placeholder="Écrivez un message..."
+            placeholderTextColor="#999"
+            value={input}
+            onChangeText={handleTyping}
+            multiline
+            maxLength={1000}
+            editable={!sending}
           />
-          <TouchableOpacity style={[S.sendBtn, (!input.trim() || sending) && S.sendBtnDisabled]} onPress={sendMessage} disabled={!input.trim() || sending} activeOpacity={0.7}>
-            {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={20} color="#fff" />}
+          <TouchableOpacity
+            style={[S.sendBtn, (!input.trim() || sending) && S.sendBtnDisabled]}
+            onPress={sendMessage}
+            disabled={!input.trim() || sending}
+            activeOpacity={0.7}
+          >
+            {sending
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Ionicons name="send" size={20} color="#fff" />
+            }
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
