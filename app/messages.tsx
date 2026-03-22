@@ -1,12 +1,4 @@
 // MessagesScreen.tsx — v5
-// Messagerie privée + groupes — Socket.IO Render
-//
-// Gestion automatique du token :
-//  · Session stockée dans AsyncStorage (access_token, refresh_token, expires_at)
-//  · getValidToken() vérifie la validité avant chaque appel (marge 60s)
-//  · Si expiré → appel POST /refresh-token → mise à jour AsyncStorage
-//  · Les réponses backend peuvent inclure new_token → mise à jour silencieuse
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
@@ -18,12 +10,11 @@ import AsyncStorage       from '@react-native-async-storage/async-storage';
 import * as Haptics       from 'expo-haptics';
 import { io, Socket }     from 'socket.io-client';
 import ChatBox            from '../components/ChatBox';
+import UserProfileView    from '../components/UserProfileView';  // ← AJOUT
 
 const WS_BASE      = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const SESSION_KEY  = 'harmonia_session';
-const TOKEN_MARGIN = 60; // secondes avant expiration pour déclencher le refresh
-
-// ── Types ──────────────────────────────────────────────────────────────────────
+const TOKEN_MARGIN = 60;
 
 type ViewMode    = 'tabs' | 'chat';
 type TabMode     = 'history' | 'online' | 'friends' | 'groups';
@@ -46,91 +37,45 @@ interface Conversation {
 }
 interface MessagesScreenProps { onChatModeChange?: (b: boolean) => void }
 
-// ── Gestion du token ───────────────────────────────────────────────────────────
-
-/**
- * Lit la session depuis AsyncStorage.
- * Si le token est expiré (ou expire dans moins de TOKEN_MARGIN secondes),
- * appelle POST /refresh-token et met à jour la session localement.
- * Retourne toujours un access_token frais, ou null si la session est introuvable.
- */
 async function getValidToken(): Promise<string | null> {
   try {
     const raw = await AsyncStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-
     const session      = JSON.parse(raw);
     const accessToken  = session?.access_token  ?? null;
     const refreshToken = session?.refresh_token  ?? null;
-    const expiresAt    = session?.expires_at     ?? 0; // timestamp secondes (Supabase)
-
+    const expiresAt    = session?.expires_at     ?? 0;
     if (!accessToken || !refreshToken) return null;
-
-    const nowSeconds     = Math.floor(Date.now() / 1000);
-    const tokenStillValid = expiresAt - nowSeconds > TOKEN_MARGIN;
-
-    if (tokenStillValid) return accessToken;
-
-    // ── Token expiré ou sur le point d'expirer → refresh ──────────────────────
-    console.log('[Token] Expiration imminente — rafraîchissement...');
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (expiresAt - nowSeconds > TOKEN_MARGIN) return accessToken;
     const res = await fetch(`${WS_BASE}/refresh-token`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ refresh_token: refreshToken }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
     });
-
-    if (!res.ok) {
-      console.warn('[Token] Refresh échoué :', res.status);
-      return null; // session expirée → rediriger vers login
-    }
-
+    if (!res.ok) return null;
     const { access_token, refresh_token: new_refresh, expires_at } = await res.json();
-
-    // Mise à jour de la session locale
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...session,
-      access_token:  access_token,
-      refresh_token: new_refresh ?? refreshToken,
-      expires_at:    expires_at,
+      ...session, access_token, refresh_token: new_refresh ?? refreshToken, expires_at,
     }));
-
-    console.log('[Token] Session rafraîchie avec succès');
     return access_token;
-
-  } catch (e) {
-    console.error('[Token] getValidToken erreur :', e);
-    return null;
-  }
+  } catch { return null; }
 }
 
-/**
- * Met à jour silencieusement le token si le backend en renvoie un nouveau
- * (champ new_token dans la réponse).
- */
 async function handleNewTokenFromResponse(data: any): Promise<void> {
   if (!data?.new_token) return;
   try {
     const raw = await AsyncStorage.getItem(SESSION_KEY);
     if (!raw) return;
-    const session = JSON.parse(raw);
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...session,
-      access_token: data.new_token,
-    }));
-    console.log('[Token] Mis à jour depuis la réponse backend');
+    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({ ...JSON.parse(raw), access_token: data.new_token }));
   } catch {}
 }
-
-// ── Fonctions API ──────────────────────────────────────────────────────────────
-// getValidToken() est appelé avant chaque requête → token toujours frais
 
 async function api(action: string, userId: string, extra?: any): Promise<any> {
   const token = await getValidToken();
   if (!token) return { success: false, error: 'session_expired' };
   const res  = await fetch(`${WS_BASE}/messages`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ action, user_id: userId, access_token: token, ...extra }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, user_id: userId, access_token: token, ...extra }),
   });
   const data = await res.json();
   await handleNewTokenFromResponse(data);
@@ -141,16 +86,13 @@ async function groupsApi(action: string, userId: string, extra?: any): Promise<a
   const token = await getValidToken();
   if (!token) return { success: false, error: 'session_expired' };
   const res  = await fetch(`${WS_BASE}/groups`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ action, user_id: userId, access_token: token, ...extra }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, user_id: userId, access_token: token, ...extra }),
   });
   const data = await res.json();
   await handleNewTokenFromResponse(data);
   return data;
 }
-
-// ── EmptyState ─────────────────────────────────────────────────────────────────
 
 function EmptyState({ icon, text }: { icon: string; text: string }) {
   return (
@@ -161,15 +103,13 @@ function EmptyState({ icon, text }: { icon: string; text: string }) {
   );
 }
 
-// ── Composant principal ────────────────────────────────────────────────────────
-
 export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps = {}) {
   const [viewMode,   setViewMode]   = useState<ViewMode>('tabs');
   const [activeTab,  setActiveTab]  = useState<TabMode>('history');
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [userId,      setUserId]      = useState('');
-  const accessTokenRef = useRef('');       // ref au lieu de state → évite le double render de ChatBox
+  const [userId,     setUserId]     = useState('');
+  const accessTokenRef = useRef('');
   const [conversations,  setConversations]  = useState<Conversation[]>([]);
   const [onlineFriends,  setOnlineFriends]  = useState<User[]>([]);
   const [allFriends,     setAllFriends]     = useState<User[]>([]);
@@ -181,20 +121,23 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const listSocketRef = useRef<Socket | null>(null);
 
+  // ── UserProfileView — même pattern que actu.tsx ───────────────────────────
+  const [selectedUserId,      setSelectedUserId]      = useState<string | null>(null);
+  const [showUserProfileModal, setShowUserProfileModal] = useState(false);
+
+  const openUserProfile = (targetUserId: string) => {
+    if (!targetUserId || targetUserId === userId) return;
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedUserId(targetUserId);
+    setShowUserProfileModal(true);
+  };
+
   const haptic = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  // ── Cycle de vie ─────────────────────────────────────────────────────────────
+  useEffect(() => { initSession(); }, []);
 
-  // 1. Au montage : lire la session
-  useEffect(() => {
-    initSession();
-  }, []);
-
-  // 2. Quand userId est prêt : charger les données + socket + présence
-  //    Séparé de initSession pour éviter la race condition :
-  //    les setState de loadAllDataWith sont commitées dans le même render que setUserId
   useEffect(() => {
     if (!userId || !accessTokenRef.current) return;
     loadAllDataWith(userId);
@@ -210,16 +153,11 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     };
   }, [userId]);
 
-  // 3. Onglet groupes
   useEffect(() => {
     if (activeTab === 'groups' && userId) {
       groupSubTab === 'mine' ? loadMyGroups() : loadAllGroups();
     }
   }, [activeTab, groupSubTab, userId]);
-
-  // ── Session ──────────────────────────────────────────────────────────────────
-  // initSession lit uniquement la session et set userId + accessTokenRef.
-  // Le chargement des données est déclenché par useEffect([userId]) ci-dessus.
 
   const initSession = async () => {
     try {
@@ -228,37 +166,20 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         const s   = JSON.parse(raw);
         const uid = s?.user?.id ?? '';
         const tok = await getValidToken();
-        if (uid && tok) {
-          accessTokenRef.current = tok; // ref → pas de re-render supplémentaire
-          setUserId(uid);               // déclenche useEffect([userId]) → charge tout
-        }
+        if (uid && tok) { accessTokenRef.current = tok; setUserId(uid); }
       }
-    } catch (e) {
-      console.error('[MessagesScreen] initSession:', e);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error('[MessagesScreen] initSession:', e); }
+    finally { setLoading(false); }
   };
 
-  // ── Socket liste ──────────────────────────────────────────────────────────────
-
   const setupListSocket = useCallback(() => {
-    // Nettoyer proprement l'ancien socket avant d'en créer un nouveau
-    if (listSocketRef.current) {
-      listSocketRef.current.removeAllListeners();
-      listSocketRef.current.disconnect();
-    }
-    const socket = io(`${WS_BASE}/private-chat`, {
-      transports: ['websocket'],
-      reconnectionDelay: 2000,
-    });
+    if (listSocketRef.current) { listSocketRef.current.removeAllListeners(); listSocketRef.current.disconnect(); }
+    const socket = io(`${WS_BASE}/private-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
     socket.on('connect',         () => console.log('[MessagesScreen] Socket connecté'));
     socket.on('disconnect',      () => console.log('[MessagesScreen] Socket déconnecté'));
     socket.on('presence-update', () => { loadOnlineFriends(); loadAllFriends(); });
     listSocketRef.current = socket;
   }, [userId]);
-
-  // ── Chargement des données ────────────────────────────────────────────────────
 
   const loadAllDataWith = async (uid: string) => {
     await Promise.all([
@@ -274,76 +195,33 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     await Promise.all([loadConversations(), loadOnlineFriends(), loadAllFriends(), loadMyGroups()]);
   }, [userId]);
 
-  const loadConversations = useCallback(async () => {
-    if (!userId) return;
-    try { const d = await api('getConversations', userId); if (d.success) setConversations(d.conversations ?? []); } catch {}
-  }, [userId]);
+  const loadConversations  = useCallback(async () => { if (!userId) return; try { const d = await api('getConversations', userId); if (d.success) setConversations(d.conversations ?? []); } catch {} }, [userId]);
+  const loadOnlineFriends  = useCallback(async () => { if (!userId) return; try { const d = await api('getFriendsOnline', userId); if (d.success) setOnlineFriends(d.friends ?? []); } catch {} }, [userId]);
+  const loadAllFriends     = useCallback(async () => { if (!userId) return; try { const d = await api('getAllFriends', userId); if (d.success) setAllFriends(d.friends ?? []); } catch {} }, [userId]);
+  const loadMyGroups       = useCallback(async () => { if (!userId) return; setGroupLoading(true); try { const d = await groupsApi('getUserGroups', userId); if (d.success) setMyGroups(d.groups ?? []); } catch {} finally { setGroupLoading(false); } }, [userId]);
+  const loadAllGroups      = useCallback(async () => { if (!userId) return; setGroupLoading(true); try { const d = await groupsApi('getAllGroups', userId); if (d.success) setAllGroups(d.groups ?? []); } catch {} finally { setGroupLoading(false); } }, [userId]);
 
-  const loadOnlineFriends = useCallback(async () => {
-    if (!userId) return;
-    try { const d = await api('getFriendsOnline', userId); if (d.success) setOnlineFriends(d.friends ?? []); } catch {}
-  }, [userId]);
-
-  const loadAllFriends = useCallback(async () => {
-    if (!userId) return;
-    try { const d = await api('getAllFriends', userId); if (d.success) setAllFriends(d.friends ?? []); } catch {}
-  }, [userId]);
-
-  const loadMyGroups = useCallback(async () => {
-    if (!userId) return;
-    setGroupLoading(true);
-    try { const d = await groupsApi('getUserGroups', userId); if (d.success) setMyGroups(d.groups ?? []); }
-    catch {} finally { setGroupLoading(false); }
-  }, [userId]);
-
-  const loadAllGroups = useCallback(async () => {
-    if (!userId) return;
-    setGroupLoading(true);
-    try { const d = await groupsApi('getAllGroups', userId); if (d.success) setAllGroups(d.groups ?? []); }
-    catch {} finally { setGroupLoading(false); }
-  }, [userId]);
-
-  // ── Présence ──────────────────────────────────────────────────────────────────
-
-  const updatePresence = async (uid: string, online: boolean) => {
-    try { await api('updatePresence', uid, { is_online: online }); } catch {}
-  };
-
-  // ── Actions ───────────────────────────────────────────────────────────────────
-
-  const onRefresh = async () => {
-    haptic(); setRefreshing(true); await loadAllData(); setRefreshing(false);
-  };
+  const updatePresence = async (uid: string, online: boolean) => { try { await api('updatePresence', uid, { is_online: online }); } catch {} };
+  const onRefresh = async () => { haptic(); setRefreshing(true); await loadAllData(); setRefreshing(false); };
 
   const joinGroup = async (group: GroupItem) => {
     setGroupAction(group.id);
-    try {
-      await groupsApi('joinGroup', userId, { group_id: group.id });
-      await Promise.all([loadMyGroups(), loadAllGroups()]);
-    } catch {} finally { setGroupAction(null); }
+    try { await groupsApi('joinGroup', userId, { group_id: group.id }); await Promise.all([loadMyGroups(), loadAllGroups()]); }
+    catch {} finally { setGroupAction(null); }
   };
 
   const askLeaveGroup = (group: GroupItem) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setGroupAction(group.id);
-    groupsApi('leaveGroup', userId, { group_id: group.id })
-      .then(() => Promise.all([loadMyGroups(), loadAllGroups()]))
-      .catch(() => {})
-      .finally(() => setGroupAction(null));
+    groupsApi('leaveGroup', userId, { group_id: group.id }).then(() => Promise.all([loadMyGroups(), loadAllGroups()])).catch(() => {}).finally(() => setGroupAction(null));
   };
 
   const openGroupChat = (group: GroupItem) => {
     haptic();
     setActiveConversation({
-      type: 'group', id: group.id, name: group.name,
-      description: group.description ?? undefined,
+      type: 'group', id: group.id, name: group.name, description: group.description ?? undefined,
       memberCount: group.member_count, createdAt: group.created_at,
-      lastMessage: group.last_message ? {
-        content:    group.last_message.content,
-        createdAt:  group.last_message.created_at,
-        isFromMe:   group.last_message.is_from_me,
-        senderName: group.last_message.is_from_me ? undefined : group.last_message.sender_name,
-      } : null,
+      lastMessage: group.last_message ? { content: group.last_message.content, createdAt: group.last_message.created_at, isFromMe: group.last_message.is_from_me, senderName: group.last_message.is_from_me ? undefined : group.last_message.sender_name } : null,
     });
     setViewMode('chat'); onChatModeChange?.(true);
   };
@@ -352,26 +230,12 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     haptic();
     try {
       const d = await api('getOrCreateConversation', userId, { friend_id: friend.id });
-      if (d.success) {
-        setActiveConversation({
-          type: 'private', id: d.conversation_id, otherUser: friend,
-          lastMessage: null, createdAt: new Date().toISOString(),
-        });
-        setViewMode('chat'); onChatModeChange?.(true);
-      }
+      if (d.success) { setActiveConversation({ type: 'private', id: d.conversation_id, otherUser: friend, lastMessage: null, createdAt: new Date().toISOString() }); setViewMode('chat'); onChatModeChange?.(true); }
     } catch {}
   };
 
-  const openConversation = (conv: Conversation) => {
-    haptic(); setActiveConversation(conv); setViewMode('chat'); onChatModeChange?.(true);
-  };
-
-  const backToList = () => {
-    haptic(); setViewMode('tabs'); setActiveConversation(null);
-    onChatModeChange?.(false); loadConversations();
-  };
-
-  // ── Helpers UI ────────────────────────────────────────────────────────────────
+  const openConversation = (conv: Conversation) => { haptic(); setActiveConversation(conv); setViewMode('chat'); onChatModeChange?.(true); };
+  const backToList = () => { haptic(); setViewMode('tabs'); setActiveConversation(null); onChatModeChange?.(false); loadConversations(); };
 
   const formatTime = (d: string) => {
     if (!d) return '';
@@ -379,7 +243,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     if (isNaN(date.getTime())) return '';
     const now = new Date();
     const m   = Math.floor((now.getTime() - date.getTime()) / 60000);
-    if (m < 1)  return "À l'instant";
+    if (m < 1) return "À l'instant";
     if (m < 60) return `${m}min`;
     const h = Math.floor(m / 60);
     if (h < 24) return `${h}h`;
@@ -388,26 +252,27 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
   };
 
+  // ── Avatar — clic → profil ────────────────────────────────────────────────
+  // L'avatar est un TouchableOpacity séparé de la ligne principale
   const renderAvatar = (user: User | undefined, size = 50) => {
     if (!user) return null;
     return (
-      <View style={[S.avatar, { width: size, height: size, borderRadius: size / 2 }]}>
+      <TouchableOpacity
+        onPress={() => openUserProfile(user.id)}
+        activeOpacity={0.75}
+        style={[S.avatar, { width: size, height: size, borderRadius: size / 2 }]}
+      >
         <Text style={[S.avatarText, { fontSize: size / 2.5 }]}>
           {user.prenom.charAt(0)}{user.nom.charAt(0)}
         </Text>
         {user.isOnline && (
-          <View style={[S.onlineIndicator, {
-            width: size / 4, height: size / 4, borderRadius: size / 8,
-            bottom: size / 20, right: size / 20,
-          }]} />
+          <View style={[S.onlineIndicator, { width: size / 4, height: size / 4, borderRadius: size / 8, bottom: size / 20, right: size / 20 }]} />
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
   const totalUnread = conversations.reduce((s, c) => s + (c.unreadCount || 0), 0);
-
-  // ── Rendu ChatBox ─────────────────────────────────────────────────────────────
 
   if (viewMode === 'chat' && activeConversation && accessTokenRef.current) {
     return (
@@ -421,20 +286,17 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         memberCount={activeConversation.memberCount}
         onBack={backToList}
         onNewMessage={loadConversations}
+        onProfilePress={openUserProfile}  // ← PASSÉ à ChatBox
       />
     );
   }
-
-  // ── Rendu liste ───────────────────────────────────────────────────────────────
 
   return (
     <View style={S.container}>
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <View style={S.headerContent}>
           <Text style={S.headerTitle}>Messages</Text>
-          {totalUnread > 0 && (
-            <View style={S.headerBadge}><Text style={S.headerBadgeTxt}>{totalUnread}</Text></View>
-          )}
+          {totalUnread > 0 && <View style={S.headerBadge}><Text style={S.headerBadgeTxt}>{totalUnread}</Text></View>}
         </View>
       </LinearGradient>
 
@@ -445,103 +307,82 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           { key: 'friends', icon: 'people-outline',        label: 'Amis'       },
           { key: 'groups',  icon: 'people-circle-outline', label: 'Groupes'    },
         ] as const).map(t => (
-          <TouchableOpacity
-            key={t.key} style={[S.tab, activeTab === t.key && S.tabActive]}
-            onPress={() => { haptic(); setActiveTab(t.key); }} activeOpacity={0.7}
-          >
+          <TouchableOpacity key={t.key} style={[S.tab, activeTab === t.key && S.tabActive]} onPress={() => { haptic(); setActiveTab(t.key); }} activeOpacity={0.7}>
             <Ionicons name={t.icon as any} size={20} color={activeTab === t.key ? '#8A2BE2' : '#999'} />
             <Text style={[S.tabText, activeTab === t.key && S.tabTextActive]}>{t.label}</Text>
-            {t.key === 'history' && totalUnread > 0 && (
-              <View style={S.tabBadge}><Text style={S.tabBadgeTxt}>{totalUnread}</Text></View>
-            )}
-            {t.key === 'online' && onlineFriends.length > 0 && (
-              <View style={[S.tabBadge, { backgroundColor: '#10B981' }]}>
-                <Text style={S.tabBadgeTxt}>{onlineFriends.length}</Text>
-              </View>
-            )}
+            {t.key === 'history' && totalUnread > 0 && <View style={S.tabBadge}><Text style={S.tabBadgeTxt}>{totalUnread}</Text></View>}
+            {t.key === 'online' && onlineFriends.length > 0 && <View style={[S.tabBadge, { backgroundColor: '#10B981' }]}><Text style={S.tabBadgeTxt}>{onlineFriends.length}</Text></View>}
           </TouchableOpacity>
         ))}
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}
-      >
+      <ScrollView style={{ flex: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}>
+
         {activeTab === 'history' && (
           <View style={S.section}>
-            {loading
-              ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
-              : conversations.length === 0
-                ? <EmptyState icon="chatbubbles-outline" text="Aucune conversation" />
-                : conversations.map(conv => (
-                  <TouchableOpacity key={conv.id} style={S.item} onPress={() => openConversation(conv)} activeOpacity={0.7}>
-                    {conv.type === 'private'
-                      ? renderAvatar(conv.otherUser)
-                      : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>}
-                    <View style={S.itemBody}>
-                      <View style={S.itemRow}>
-                        <Text style={S.itemName} numberOfLines={1}>
-                          {conv.type === 'private' ? `${conv.otherUser?.prenom} ${conv.otherUser?.nom}` : conv.name}
-                        </Text>
-                        <Text style={S.itemTime}>
-                          {conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}
-                        </Text>
-                      </View>
-                      <View style={S.itemRow}>
-                        <Text style={S.itemLast} numberOfLines={1}>
-                          {conv.lastMessage?.isFromMe && 'Vous : '}
-                          {conv.lastMessage?.senderName && `${conv.lastMessage.senderName} : `}
-                          {conv.lastMessage?.content || 'Aucun message'}
-                        </Text>
-                        {(conv.unreadCount || 0) > 0 && (
-                          <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>
-                        )}
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                ))
-            }
+            {loading ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
+            : conversations.length === 0 ? <EmptyState icon="chatbubbles-outline" text="Aucune conversation" />
+            : conversations.map(conv => (
+              <TouchableOpacity key={conv.id} style={S.item} onPress={() => openConversation(conv)} activeOpacity={0.7}>
+                {/* Avatar cliquable → profil (uniquement pour les conversations privées) */}
+                {conv.type === 'private'
+                  ? renderAvatar(conv.otherUser)
+                  : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>}
+                <View style={S.itemBody}>
+                  <View style={S.itemRow}>
+                    <Text style={S.itemName} numberOfLines={1}>
+                      {conv.type === 'private' ? `${conv.otherUser?.prenom} ${conv.otherUser?.nom}` : conv.name}
+                    </Text>
+                    <Text style={S.itemTime}>{conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}</Text>
+                  </View>
+                  <View style={S.itemRow}>
+                    <Text style={S.itemLast} numberOfLines={1}>
+                      {conv.lastMessage?.isFromMe && 'Vous : '}
+                      {conv.lastMessage?.senderName && `${conv.lastMessage.senderName} : `}
+                      {conv.lastMessage?.content || 'Aucun message'}
+                    </Text>
+                    {(conv.unreadCount || 0) > 0 && <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
         {activeTab === 'online' && (
           <View style={S.section}>
-            {onlineFriends.length === 0
-              ? <EmptyState icon="wifi-outline" text="Aucun ami en ligne" />
-              : onlineFriends.map(f => (
-                <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                  {renderAvatar({ ...f, isOnline: true })}
-                  <View style={S.itemBody}>
-                    <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                      <View style={S.onlineDot} />
-                      <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>En ligne</Text>
-                    </View>
+            {onlineFriends.length === 0 ? <EmptyState icon="wifi-outline" text="Aucun ami en ligne" />
+            : onlineFriends.map(f => (
+              <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
+                {/* Avatar → profil | ligne → chat */}
+                {renderAvatar({ ...f, isOnline: true })}
+                <View style={S.itemBody}>
+                  <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                    <View style={S.onlineDot} />
+                    <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>En ligne</Text>
                   </View>
-                  <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
-                </TouchableOpacity>
-              ))
-            }
+                </View>
+                <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
         {activeTab === 'friends' && (
           <View style={S.section}>
-            {allFriends.length === 0
-              ? <EmptyState icon="people-outline" text="Aucun ami" />
-              : allFriends.map(f => (
-                <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                  {renderAvatar(f)}
-                  <View style={S.itemBody}>
-                    <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
-                    <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }}>
-                      {f.isOnline ? 'En ligne' : 'Hors ligne'}
-                    </Text>
-                  </View>
-                  <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
-                </TouchableOpacity>
-              ))
-            }
+            {allFriends.length === 0 ? <EmptyState icon="people-outline" text="Aucun ami" />
+            : allFriends.map(f => (
+              <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
+                {/* Avatar → profil | ligne → chat */}
+                {renderAvatar(f)}
+                <View style={S.itemBody}>
+                  <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
+                  <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{f.isOnline ? 'En ligne' : 'Hors ligne'}</Text>
+                </View>
+                <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
@@ -549,89 +390,68 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           <View style={S.section}>
             <View style={S.subTabs}>
               {(['mine', 'explore'] as const).map(sub => (
-                <TouchableOpacity
-                  key={sub} style={[S.subTab, groupSubTab === sub && S.subTabActive]}
-                  onPress={() => { haptic(); setGroupSubTab(sub); }}
-                >
+                <TouchableOpacity key={sub} style={[S.subTab, groupSubTab === sub && S.subTabActive]} onPress={() => { haptic(); setGroupSubTab(sub); }}>
                   <Text style={[S.subTabTxt, groupSubTab === sub && S.subTabTxtActive]}>
                     {sub === 'mine' ? `Mes groupes${myGroups.length > 0 ? ` (${myGroups.length})` : ''}` : 'Explorer'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
-            {groupLoading
-              ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
-              : groupSubTab === 'mine'
-                ? myGroups.length === 0
-                  ? (
-                    <View>
-                      <EmptyState icon="people-circle-outline" text="Vous n'êtes dans aucun groupe" />
-                      <TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}>
-                        <Text style={S.ctaBtnTxt}>Explorer les groupes</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )
-                  : myGroups.map(g => (
-                    <View key={g.id} style={S.groupCard}>
-                      <TouchableOpacity
-                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }}
-                        onPress={() => openGroupChat(g)} activeOpacity={0.7}
-                      >
-                        <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                        <View style={S.itemBody}>
-                          <View style={S.itemRow}>
-                            <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
-                            {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
-                          </View>
-                          <Text style={S.itemLast} numberOfLines={1}>
-                            {g.last_message
-                              ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}`
-                              : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={S.leaveBtn} onPress={() => askLeaveGroup(g)} disabled={groupAction === g.id}>
-                        {groupAction === g.id
-                          ? <ActivityIndicator size="small" color="#DC2626" />
-                          : <Ionicons name="exit-outline" size={20} color="#DC2626" />}
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                : allGroups.length === 0
-                  ? <EmptyState icon="search-outline" text="Aucun groupe disponible" />
-                  : allGroups.map(g => (
-                    <View key={g.id} style={S.exploreCard}>
+            {groupLoading ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
+            : groupSubTab === 'mine'
+              ? myGroups.length === 0
+                ? <View><EmptyState icon="people-circle-outline" text="Vous n'êtes dans aucun groupe" /><TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}><Text style={S.ctaBtnTxt}>Explorer les groupes</Text></TouchableOpacity></View>
+                : myGroups.map(g => (
+                  <View key={g.id} style={S.groupCard}>
+                    <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }} onPress={() => openGroupChat(g)} activeOpacity={0.7}>
                       <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                      <View style={[S.itemBody, { marginLeft: 12 }]}>
-                        <Text style={S.itemName}>{g.name}</Text>
-                        <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>
-                          {g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
+                      <View style={S.itemBody}>
+                        <View style={S.itemRow}>
+                          <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
+                          {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
+                        </View>
+                        <Text style={S.itemLast} numberOfLines={1}>
+                          {g.last_message ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}` : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
                         </Text>
                       </View>
-                      {g.is_member
-                        ? (
-                          <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}>
-                            <Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" />
-                            <Text style={S.openBtnTxt}>Ouvrir</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}>
-                            {groupAction === g.id
-                              ? <ActivityIndicator size="small" color="#fff" />
-                              : <Text style={S.joinBtnTxt}>Rejoindre</Text>}
-                          </TouchableOpacity>
-                        )}
+                    </TouchableOpacity>
+                    <TouchableOpacity style={S.leaveBtn} onPress={() => askLeaveGroup(g)} disabled={groupAction === g.id}>
+                      {groupAction === g.id ? <ActivityIndicator size="small" color="#DC2626" /> : <Ionicons name="exit-outline" size={20} color="#DC2626" />}
+                    </TouchableOpacity>
+                  </View>
+                ))
+              : allGroups.length === 0
+                ? <EmptyState icon="search-outline" text="Aucun groupe disponible" />
+                : allGroups.map(g => (
+                  <View key={g.id} style={S.exploreCard}>
+                    <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
+                    <View style={[S.itemBody, { marginLeft: 12 }]}>
+                      <Text style={S.itemName}>{g.name}</Text>
+                      <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>{g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}</Text>
                     </View>
-                  ))
+                    {g.is_member
+                      ? <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}><Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" /><Text style={S.openBtnTxt}>Ouvrir</Text></TouchableOpacity>
+                      : <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}>{groupAction === g.id ? <ActivityIndicator size="small" color="#fff" /> : <Text style={S.joinBtnTxt}>Rejoindre</Text>}</TouchableOpacity>}
+                  </View>
+                ))
             }
           </View>
         )}
       </ScrollView>
+
+      {/* ── UserProfileView — même pattern que actu.tsx ──────────────────────── */}
+      {showUserProfileModal && selectedUserId && (
+        <UserProfileView
+          userId={selectedUserId}
+          viewerId={userId}
+          accessToken={accessTokenRef.current}
+          asModal
+          onClose={() => { setShowUserProfileModal(false); setSelectedUserId(null); }}
+        />
+      )}
     </View>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
