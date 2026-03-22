@@ -79,7 +79,9 @@ export default function ChatBox({
   const [currentRole,    setCurrentRole]    = useState(userRole);
 
   // Réponse en cours
+  // replyVisible : true = réponse publique, false = réponse privée (choix au moment de l'appui long)
   const [replyingTo,     setReplyingTo]     = useState<Message | null>(null);
+  const [replyVisible,   setReplyVisible]   = useState(true);
 
   // Action sheet (appui long)
   const [actionMsg,      setActionMsg]      = useState<Message | null>(null);
@@ -257,7 +259,7 @@ export default function ChatBox({
         type:         mediaType ?? 'text',
         media_url:    mediaUrl  ?? null,
         reply_to_id:  reply?.id ?? null,
-        is_visible:   true,
+        is_visible:   reply ? replyVisible : true,
       });
     }
     scrollToEnd();
@@ -568,9 +570,15 @@ export default function ChatBox({
       {replyingTo && (
         <View style={S.replyBar}>
           <View style={S.replyBarContent}>
-            <Ionicons name="return-down-forward" size={14} color="#8A2BE2" style={{ marginRight: 6 }} />
+            <Ionicons
+              name={replyVisible ? 'earth-outline' : 'lock-closed-outline'}
+              size={14}
+              color={replyVisible ? '#8A2BE2' : '#6B21A8'}
+              style={{ marginRight: 6 }}
+            />
             <View style={{ flex: 1 }}>
-              <Text style={S.replyBarAuthor} numberOfLines={1}>
+              <Text style={[S.replyBarAuthor, { color: replyVisible ? '#8A2BE2' : '#6B21A8' }]} numberOfLines={1}>
+                {replyVisible ? 'Réponse publique à ' : 'Réponse privée à '}
                 {replyingTo.senderName}
               </Text>
               <Text style={S.replyBarText} numberOfLines={1}>
@@ -578,7 +586,7 @@ export default function ChatBox({
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => setReplyingTo(null)} style={{ padding: 6 }}>
+          <TouchableOpacity onPress={() => { setReplyingTo(null); setReplyVisible(true); }} style={{ padding: 6 }}>
             <Ionicons name="close" size={18} color="#999" />
           </TouchableOpacity>
         </View>
@@ -642,18 +650,39 @@ export default function ChatBox({
           <View style={S.actionSheet}>
             {actionMsg && (
               <>
-                {/* Répondre — toujours disponible en groupe */}
+                {/* Répondre en public / en privé — groupe uniquement */}
                 {conversationType === 'group' && !actionMsg.deletedAt && !actionMsg.is_private_reply && (
-                  <TouchableOpacity
-                    style={S.actionItem}
-                    onPress={() => {
-                      setReplyingTo(actionMsg);
-                      setShowActionSheet(false);
-                    }}
-                  >
-                    <Ionicons name="return-down-forward-outline" size={20} color="#8A2BE2" />
-                    <Text style={[S.actionTxt, { color: '#8A2BE2' }]}>Répondre</Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity
+                      style={S.actionItem}
+                      onPress={() => {
+                        setReplyingTo(actionMsg);
+                        setReplyVisible(true);
+                        setShowActionSheet(false);
+                      }}
+                    >
+                      <Ionicons name="earth-outline" size={20} color="#8A2BE2" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[S.actionTxt, { color: '#8A2BE2' }]}>Répondre en public</Text>
+                        <Text style={S.actionSubTxt}>Tout le groupe voit la réponse</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={S.actionItem}
+                      onPress={() => {
+                        setReplyingTo(actionMsg);
+                        setReplyVisible(false);
+                        setShowActionSheet(false);
+                      }}
+                    >
+                      <Ionicons name="lock-closed-outline" size={20} color="#6B21A8" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[S.actionTxt, { color: '#6B21A8' }]}>Répondre en privé</Text>
+                        <Text style={S.actionSubTxt}>Visible uniquement par vous et le destinataire</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </>
                 )}
 
                 {/* Modifier visibilité — auteur d'une réponse uniquement */}
@@ -755,5 +784,6 @@ const S = StyleSheet.create({
   actionSheet:     { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Platform.OS === 'ios' ? 30 : 16, paddingTop: 8 },
   actionItem:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 },
   actionTxt:       { fontSize: 16, color: '#333', fontWeight: '500' },
+  actionSubTxt:    { fontSize: 12, color: '#999', marginTop: 1 },
   actionDivider:   { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
 });
