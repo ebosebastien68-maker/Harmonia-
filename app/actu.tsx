@@ -1122,10 +1122,10 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
             style={{ flex: 1 }}
             pagingEnabled
             showsVerticalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={e => {
+            scrollEventThrottle={1}
+            onScroll={e => {
               const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              setCurrentIndex(idx);
+              if (idx !== currentIndex) setCurrentIndex(idx);
             }}
           >
             {items.map((item, index) => (
@@ -1237,10 +1237,10 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
             style={{ flex: 1 }}
             pagingEnabled
             showsVerticalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={e => {
+            scrollEventThrottle={1}
+            onScroll={e => {
               const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              setCurrentIndex(idx);
+              if (idx !== currentIndex) setCurrentIndex(idx);
             }}
           >
             {items.map((item, index) => (
