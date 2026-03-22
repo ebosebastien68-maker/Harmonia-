@@ -1164,7 +1164,19 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
   const [totalVotes, setTotalVotes] = useState(item.total_votes);
   const [userVoted,  setUserVoted]  = useState(item.user_voted);
   const [isVoting,   setIsVoting]   = useState(false);
+  const videoRef = useRef<Video>(null);
+
   useEffect(() => { setTotalVotes(item.total_votes); setUserVoted(item.user_voted); }, [item]);
+
+  // shouldPlay ne réagit pas aux changements sur web — pilotage impératif
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (isActive) {
+      videoRef.current.playAsync().catch(() => {});
+    } else {
+      videoRef.current.pauseAsync().catch(() => {});
+    }
+  }, [isActive]);
 
   const handleVoteLocal = async () => {
     if (isVoting) return; if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setIsVoting(true);
@@ -1175,7 +1187,7 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
 
   return (
     <View style={tikStyles.item}>
-      <Video source={{ uri: item.videoUrl }} style={StyleSheet.absoluteFill} resizeMode={ResizeMode.COVER} isLooping isMuted={false} shouldPlay={isActive} useNativeControls={false} />
+      <Video ref={videoRef} source={{ uri: item.videoUrl }} style={StyleSheet.absoluteFill} resizeMode={ResizeMode.COVER} isLooping isMuted={false} shouldPlay={isActive} useNativeControls={false} />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={tikStyles.gradient} />
       <View style={tikStyles.infoRow}>
         {item.author.avatar_url
