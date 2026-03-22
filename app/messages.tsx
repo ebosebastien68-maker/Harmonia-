@@ -1,8 +1,8 @@
-// MessagesScreen.tsx — v5
+// MessagesScreen.tsx — v6
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
-  ActivityIndicator, Platform, RefreshControl,
+  Platform, RefreshControl, TextInput,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,7 +10,7 @@ import AsyncStorage       from '@react-native-async-storage/async-storage';
 import * as Haptics       from 'expo-haptics';
 import { io, Socket }     from 'socket.io-client';
 import ChatBox            from '../components/ChatBox';
-import UserProfileView    from '../components/UserProfileView';  // ← AJOUT
+import UserProfileView    from '../components/UserProfileView';
 
 const WS_BASE      = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const SESSION_KEY  = 'harmonia_session';
@@ -36,6 +36,8 @@ interface Conversation {
   unreadCount?: number; createdAt: string;
 }
 interface MessagesScreenProps { onChatModeChange?: (b: boolean) => void }
+
+// ── Helpers token ──────────────────────────────────────────────────────────────
 
 async function getValidToken(): Promise<string | null> {
   try {
@@ -94,35 +96,61 @@ async function groupsApi(action: string, userId: string, extra?: any): Promise<a
   return data;
 }
 
-function EmptyState({ icon, text }: { icon: string; text: string }) {
+// ── Composants utilitaires ─────────────────────────────────────────────────────
+
+function LoadingText() {
   return (
-    <View style={{ alignItems: 'center', paddingVertical: 60 }}>
-      <Ionicons name={icon as any} size={60} color="#ccc" />
-      <Text style={{ fontSize: 16, color: '#999', marginTop: 15 }}>{text}</Text>
+    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+      <Text style={{ fontSize: 14, color: '#999' }}>Chargement des données</Text>
     </View>
   );
 }
 
+function EmptyState({ icon, title, subtitle, children }: {
+  icon: string; title: string; subtitle?: string; children?: React.ReactNode;
+}) {
+  return (
+    <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 20 }}>
+      <Ionicons name={icon as any} size={60} color="#ccc" />
+      <Text style={{ fontSize: 17, fontWeight: '700', color: '#888', marginTop: 15, textAlign: 'center' }}>{title}</Text>
+      {subtitle && <Text style={{ fontSize: 14, color: '#aaa', marginTop: 6, textAlign: 'center' }}>{subtitle}</Text>}
+      {children}
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps = {}) {
   const [viewMode,   setViewMode]   = useState<ViewMode>('tabs');
   const [activeTab,  setActiveTab]  = useState<TabMode>('history');
+
+  // loading — reste true jusqu'à ce que la session ET les données initiales soient prêtes
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userId,     setUserId]     = useState('');
+  const [userName,   setUserName]   = useState('');
   const accessTokenRef = useRef('');
+
   const [conversations,  setConversations]  = useState<Conversation[]>([]);
   const [onlineFriends,  setOnlineFriends]  = useState<User[]>([]);
   const [allFriends,     setAllFriends]     = useState<User[]>([]);
+
   const [groupSubTab,  setGroupSubTab]  = useState<GroupSubTab>('mine');
   const [myGroups,     setMyGroups]     = useState<GroupItem[]>([]);
   const [allGroups,    setAllGroups]    = useState<GroupItem[]>([]);
   const [groupLoading, setGroupLoading] = useState(false);
   const [groupAction,  setGroupAction]  = useState<string | null>(null);
+
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const listSocketRef = useRef<Socket | null>(null);
 
-  // ── UserProfileView — même pattern que actu.tsx ───────────────────────────
-  const [selectedUserId,      setSelectedUserId]      = useState<string | null>(null);
+  // ── Recherche ──────────────────────────────────────────────────────────────
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery,   setSearchQuery]   = useState('');
+
+  // ── UserProfileView ────────────────────────────────────────────────────────
+  const [selectedUserId,       setSelectedUserId]       = useState<string | null>(null);
   const [showUserProfileModal, setShowUserProfileModal] = useState(false);
 
   const openUserProfile = (targetUserId: string) => {
@@ -136,13 +164,42 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  // ── Filtrage par recherche ─────────────────────────────────────────────────
+  const q = searchQuery.toLowerCase().trim();
+
+  const filteredConversations = q
+    ? conversations.filter(c => {
+        const name = c.type === 'private'
+          ? `${c.otherUser?.prenom ?? ''} ${c.otherUser?.nom ?? ''}`.toLowerCase()
+          : (c.name ?? '').toLowerCase();
+        return name.includes(q) || (c.lastMessage?.content ?? '').toLowerCase().includes(q);
+      })
+    : conversations;
+
+  const filteredOnlineFriends = q
+    ? onlineFriends.filter(f => `${f.prenom} ${f.nom}`.toLowerCase().includes(q))
+    : onlineFriends;
+
+  const filteredAllFriends = q
+    ? allFriends.filter(f => `${f.prenom} ${f.nom}`.toLowerCase().includes(q))
+    : allFriends;
+
+  const filteredMyGroups = q
+    ? myGroups.filter(g => g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q))
+    : myGroups;
+
+  const filteredAllGroups = q
+    ? allGroups.filter(g => g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q))
+    : allGroups;
+
+  // ── Cycle de vie ───────────────────────────────────────────────────────────
+
   useEffect(() => { initSession(); }, []);
 
   useEffect(() => {
     if (!userId || !accessTokenRef.current) return;
-    loadAllDataWith(userId);
-    updatePresence(userId, true);
     setupListSocket();
+    updatePresence(userId, true);
     return () => {
       if (listSocketRef.current) {
         listSocketRef.current.removeAllListeners();
@@ -159,6 +216,9 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     }
   }, [activeTab, groupSubTab, userId]);
 
+  // Fermer la recherche quand on change d'onglet
+  useEffect(() => { setSearchQuery(''); }, [activeTab]);
+
   const initSession = async () => {
     try {
       const raw = await AsyncStorage.getItem(SESSION_KEY);
@@ -166,10 +226,22 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         const s   = JSON.parse(raw);
         const uid = s?.user?.id ?? '';
         const tok = await getValidToken();
-        if (uid && tok) { accessTokenRef.current = tok; setUserId(uid); }
+        if (uid && tok) {
+          accessTokenRef.current = tok;
+          // Stocker le nom de l'utilisateur pour le typing groupe
+          const prenom = s?.user?.user_metadata?.prenom ?? s?.user?.prenom ?? '';
+          const nom    = s?.user?.user_metadata?.nom    ?? s?.user?.nom    ?? '';
+          setUserName(`${prenom} ${nom}`.trim() || 'Moi');
+          setUserId(uid);
+          // Charger les données initiales avant de lever loading
+          await loadAllDataWith(uid);
+        }
       }
-    } catch (e) { console.error('[MessagesScreen] initSession:', e); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error('[MessagesScreen] initSession:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const setupListSocket = useCallback(() => {
@@ -195,14 +267,48 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     await Promise.all([loadConversations(), loadOnlineFriends(), loadAllFriends(), loadMyGroups()]);
   }, [userId]);
 
-  const loadConversations  = useCallback(async () => { if (!userId) return; try { const d = await api('getConversations', userId); if (d.success) setConversations(d.conversations ?? []); } catch {} }, [userId]);
-  const loadOnlineFriends  = useCallback(async () => { if (!userId) return; try { const d = await api('getFriendsOnline', userId); if (d.success) setOnlineFriends(d.friends ?? []); } catch {} }, [userId]);
-  const loadAllFriends     = useCallback(async () => { if (!userId) return; try { const d = await api('getAllFriends', userId); if (d.success) setAllFriends(d.friends ?? []); } catch {} }, [userId]);
-  const loadMyGroups       = useCallback(async () => { if (!userId) return; setGroupLoading(true); try { const d = await groupsApi('getUserGroups', userId); if (d.success) setMyGroups(d.groups ?? []); } catch {} finally { setGroupLoading(false); } }, [userId]);
-  const loadAllGroups      = useCallback(async () => { if (!userId) return; setGroupLoading(true); try { const d = await groupsApi('getAllGroups', userId); if (d.success) setAllGroups(d.groups ?? []); } catch {} finally { setGroupLoading(false); } }, [userId]);
+  const loadConversations = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getConversations', userId); if (d.success) setConversations(d.conversations ?? []); } catch {}
+  }, [userId]);
 
-  const updatePresence = async (uid: string, online: boolean) => { try { await api('updatePresence', uid, { is_online: online }); } catch {} };
-  const onRefresh = async () => { haptic(); setRefreshing(true); await loadAllData(); setRefreshing(false); };
+  const loadOnlineFriends = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getFriendsOnline', userId); if (d.success) setOnlineFriends(d.friends ?? []); } catch {}
+  }, [userId]);
+
+  const loadAllFriends = useCallback(async () => {
+    if (!userId) return;
+    try { const d = await api('getAllFriends', userId); if (d.success) setAllFriends(d.friends ?? []); } catch {}
+  }, [userId]);
+
+  const loadMyGroups = useCallback(async () => {
+    if (!userId) return;
+    setGroupLoading(true);
+    try { const d = await groupsApi('getUserGroups', userId); if (d.success) setMyGroups(d.groups ?? []); } catch {}
+    finally { setGroupLoading(false); }
+  }, [userId]);
+
+  const loadAllGroups = useCallback(async () => {
+    if (!userId) return;
+    setGroupLoading(true);
+    try { const d = await groupsApi('getAllGroups', userId); if (d.success) setAllGroups(d.groups ?? []); } catch {}
+    finally { setGroupLoading(false); }
+  }, [userId]);
+
+  const updatePresence = async (uid: string, online: boolean) => {
+    try { await api('updatePresence', uid, { is_online: online }); } catch {}
+  };
+
+  const onRefresh = async () => {
+    haptic();
+    setRefreshing(true);
+    await loadAllData();
+    if (activeTab === 'groups') groupSubTab === 'mine' ? await loadMyGroups() : await loadAllGroups();
+    setRefreshing(false);
+  };
+
+  // ── Actions groupe ─────────────────────────────────────────────────────────
 
   const joinGroup = async (group: GroupItem) => {
     setGroupAction(group.id);
@@ -210,18 +316,28 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     catch {} finally { setGroupAction(null); }
   };
 
-  const askLeaveGroup = (group: GroupItem) => {
+  const leaveGroup = (group: GroupItem) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setGroupAction(group.id);
-    groupsApi('leaveGroup', userId, { group_id: group.id }).then(() => Promise.all([loadMyGroups(), loadAllGroups()])).catch(() => {}).finally(() => setGroupAction(null));
+    groupsApi('leaveGroup', userId, { group_id: group.id })
+      .then(() => Promise.all([loadMyGroups(), loadAllGroups()]))
+      .catch(() => {})
+      .finally(() => setGroupAction(null));
   };
+
+  // ── Navigation chat ────────────────────────────────────────────────────────
 
   const openGroupChat = (group: GroupItem) => {
     haptic();
     setActiveConversation({
-      type: 'group', id: group.id, name: group.name, description: group.description ?? undefined,
+      type: 'group', id: group.id, name: group.name,
+      description: group.description ?? undefined,
       memberCount: group.member_count, createdAt: group.created_at,
-      lastMessage: group.last_message ? { content: group.last_message.content, createdAt: group.last_message.created_at, isFromMe: group.last_message.is_from_me, senderName: group.last_message.is_from_me ? undefined : group.last_message.sender_name } : null,
+      lastMessage: group.last_message ? {
+        content: group.last_message.content, createdAt: group.last_message.created_at,
+        isFromMe: group.last_message.is_from_me,
+        senderName: group.last_message.is_from_me ? undefined : group.last_message.sender_name,
+      } : null,
     });
     setViewMode('chat'); onChatModeChange?.(true);
   };
@@ -230,12 +346,22 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     haptic();
     try {
       const d = await api('getOrCreateConversation', userId, { friend_id: friend.id });
-      if (d.success) { setActiveConversation({ type: 'private', id: d.conversation_id, otherUser: friend, lastMessage: null, createdAt: new Date().toISOString() }); setViewMode('chat'); onChatModeChange?.(true); }
+      if (d.success) {
+        setActiveConversation({ type: 'private', id: d.conversation_id, otherUser: friend, lastMessage: null, createdAt: new Date().toISOString() });
+        setViewMode('chat'); onChatModeChange?.(true);
+      }
     } catch {}
   };
 
-  const openConversation = (conv: Conversation) => { haptic(); setActiveConversation(conv); setViewMode('chat'); onChatModeChange?.(true); };
-  const backToList = () => { haptic(); setViewMode('tabs'); setActiveConversation(null); onChatModeChange?.(false); loadConversations(); };
+  const openConversation = (conv: Conversation) => {
+    haptic(); setActiveConversation(conv); setViewMode('chat'); onChatModeChange?.(true);
+  };
+
+  const backToList = () => {
+    haptic(); setViewMode('tabs'); setActiveConversation(null); onChatModeChange?.(false); loadConversations();
+  };
+
+  // ── Formatage ──────────────────────────────────────────────────────────────
 
   const formatTime = (d: string) => {
     if (!d) return '';
@@ -252,8 +378,8 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
   };
 
-  // ── Avatar — clic → profil ────────────────────────────────────────────────
-  // L'avatar est un TouchableOpacity séparé de la ligne principale
+  // ── Avatar ─────────────────────────────────────────────────────────────────
+
   const renderAvatar = (user: User | undefined, size = 50) => {
     if (!user) return null;
     return (
@@ -272,6 +398,10 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     );
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // VUE CHAT
+  // ─────────────────────────────────────────────────────────────────────────
+
   const totalUnread = conversations.reduce((s, c) => s + (c.unreadCount || 0), 0);
 
   if (viewMode === 'chat' && activeConversation && accessTokenRef.current) {
@@ -280,26 +410,68 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         conversationId={activeConversation.id}
         conversationType={activeConversation.type}
         userId={userId}
+        userName={userName}
         accessToken={accessTokenRef.current}
         otherUser={activeConversation.otherUser}
         groupName={activeConversation.name}
         memberCount={activeConversation.memberCount}
         onBack={backToList}
         onNewMessage={loadConversations}
-        onProfilePress={openUserProfile}  // ← PASSÉ à ChatBox
+        onProfilePress={openUserProfile}
       />
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // VUE LISTE
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <View style={S.container}>
+
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <View style={S.headerContent}>
           <Text style={S.headerTitle}>Messages</Text>
-          {totalUnread > 0 && <View style={S.headerBadge}><Text style={S.headerBadgeTxt}>{totalUnread}</Text></View>}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {totalUnread > 0 && (
+              <View style={S.headerBadge}>
+                <Text style={S.headerBadgeTxt}>{totalUnread}</Text>
+              </View>
+            )}
+            {/* Bouton recherche */}
+            <TouchableOpacity
+              onPress={() => { haptic(); setSearchVisible(v => !v); if (searchVisible) setSearchQuery(''); }}
+              style={S.searchIconBtn}
+              activeOpacity={0.75}
+            >
+              <Ionicons name={searchVisible ? 'close' : 'search'} size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Barre de recherche dépliable */}
+        {searchVisible && (
+          <View style={S.searchBar}>
+            <Ionicons name="search" size={16} color="#aaa" style={{ marginRight: 8 }} />
+            <TextInput
+              style={S.searchInput}
+              placeholder={`Rechercher dans ${
+                activeTab === 'history' ? 'les conversations' :
+                activeTab === 'online'  ? 'les amis en ligne'  :
+                activeTab === 'friends' ? 'mes amis'           : 'les groupes'
+              }...`}
+              placeholderTextColor="#aaa"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+              clearButtonMode="while-editing"
+            />
+          </View>
+        )}
       </LinearGradient>
 
+      {/* ── Onglets ─────────────────────────────────────────────────────── */}
       <View style={S.tabs}>
         {([
           { key: 'history', icon: 'time-outline',          label: 'Historique' },
@@ -307,27 +479,49 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           { key: 'friends', icon: 'people-outline',        label: 'Amis'       },
           { key: 'groups',  icon: 'people-circle-outline', label: 'Groupes'    },
         ] as const).map(t => (
-          <TouchableOpacity key={t.key} style={[S.tab, activeTab === t.key && S.tabActive]} onPress={() => { haptic(); setActiveTab(t.key); }} activeOpacity={0.7}>
+          <TouchableOpacity
+            key={t.key}
+            style={[S.tab, activeTab === t.key && S.tabActive]}
+            onPress={() => { haptic(); setActiveTab(t.key); }}
+            activeOpacity={0.7}
+          >
             <Ionicons name={t.icon as any} size={20} color={activeTab === t.key ? '#8A2BE2' : '#999'} />
             <Text style={[S.tabText, activeTab === t.key && S.tabTextActive]}>{t.label}</Text>
-            {t.key === 'history' && totalUnread > 0 && <View style={S.tabBadge}><Text style={S.tabBadgeTxt}>{totalUnread}</Text></View>}
-            {t.key === 'online' && onlineFriends.length > 0 && <View style={[S.tabBadge, { backgroundColor: '#10B981' }]}><Text style={S.tabBadgeTxt}>{onlineFriends.length}</Text></View>}
+            {t.key === 'history' && totalUnread > 0 && (
+              <View style={S.tabBadge}><Text style={S.tabBadgeTxt}>{totalUnread}</Text></View>
+            )}
+            {t.key === 'online' && onlineFriends.length > 0 && (
+              <View style={[S.tabBadge, { backgroundColor: '#10B981' }]}><Text style={S.tabBadgeTxt}>{onlineFriends.length}</Text></View>
+            )}
           </TouchableOpacity>
         ))}
       </View>
 
-      <ScrollView style={{ flex: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}>
+      {/* ── Contenu ─────────────────────────────────────────────────────── */}
+      <ScrollView
+        style={{ flex: 1 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}
+      >
 
+        {/* ── HISTORIQUE ──────────────────────────────────────────────── */}
         {activeTab === 'history' && (
           <View style={S.section}>
-            {loading ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
-            : conversations.length === 0 ? <EmptyState icon="chatbubbles-outline" text="Aucune conversation" />
-            : conversations.map(conv => (
+            {loading ? (
+              <LoadingText />
+            ) : filteredConversations.length === 0 ? (
+              q
+                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucune conversation pour « ${searchQuery} »`} />
+                : <EmptyState
+                    icon="chatbubbles-outline"
+                    title="Vous n'avez aucun message"
+                    subtitle="Démarrez la discussion avec vos amis"
+                  />
+            ) : filteredConversations.map(conv => (
               <TouchableOpacity key={conv.id} style={S.item} onPress={() => openConversation(conv)} activeOpacity={0.7}>
-                {/* Avatar cliquable → profil (uniquement pour les conversations privées) */}
                 {conv.type === 'private'
                   ? renderAvatar(conv.otherUser)
-                  : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>}
+                  : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
+                }
                 <View style={S.itemBody}>
                   <View style={S.itemRow}>
                     <Text style={S.itemName} numberOfLines={1}>
@@ -341,7 +535,9 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
                       {conv.lastMessage?.senderName && `${conv.lastMessage.senderName} : `}
                       {conv.lastMessage?.content || 'Aucun message'}
                     </Text>
-                    {(conv.unreadCount || 0) > 0 && <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>}
+                    {(conv.unreadCount || 0) > 0 && (
+                      <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>
+                    )}
                   </View>
                 </View>
               </TouchableOpacity>
@@ -349,12 +545,17 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           </View>
         )}
 
+        {/* ── EN LIGNE ────────────────────────────────────────────────── */}
         {activeTab === 'online' && (
           <View style={S.section}>
-            {onlineFriends.length === 0 ? <EmptyState icon="wifi-outline" text="Aucun ami en ligne" />
-            : onlineFriends.map(f => (
+            {loading ? (
+              <LoadingText />
+            ) : filteredOnlineFriends.length === 0 ? (
+              q
+                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami en ligne pour « ${searchQuery} »`} />
+                : <EmptyState icon="wifi-outline" title="Aucun ami en ligne" />
+            ) : filteredOnlineFriends.map(f => (
               <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                {/* Avatar → profil | ligne → chat */}
                 {renderAvatar({ ...f, isOnline: true })}
                 <View style={S.itemBody}>
                   <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
@@ -369,12 +570,17 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           </View>
         )}
 
+        {/* ── AMIS ────────────────────────────────────────────────────── */}
         {activeTab === 'friends' && (
           <View style={S.section}>
-            {allFriends.length === 0 ? <EmptyState icon="people-outline" text="Aucun ami" />
-            : allFriends.map(f => (
+            {loading ? (
+              <LoadingText />
+            ) : filteredAllFriends.length === 0 ? (
+              q
+                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami pour « ${searchQuery} »`} />
+                : <EmptyState icon="people-outline" title="Aucun ami" />
+            ) : filteredAllFriends.map(f => (
               <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                {/* Avatar → profil | ligne → chat */}
                 {renderAvatar(f)}
                 <View style={S.itemBody}>
                   <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
@@ -386,60 +592,100 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           </View>
         )}
 
+        {/* ── GROUPES ─────────────────────────────────────────────────── */}
         {activeTab === 'groups' && (
           <View style={S.section}>
             <View style={S.subTabs}>
               {(['mine', 'explore'] as const).map(sub => (
-                <TouchableOpacity key={sub} style={[S.subTab, groupSubTab === sub && S.subTabActive]} onPress={() => { haptic(); setGroupSubTab(sub); }}>
+                <TouchableOpacity
+                  key={sub}
+                  style={[S.subTab, groupSubTab === sub && S.subTabActive]}
+                  onPress={() => { haptic(); setGroupSubTab(sub); }}
+                >
                   <Text style={[S.subTabTxt, groupSubTab === sub && S.subTabTxtActive]}>
                     {sub === 'mine' ? `Mes groupes${myGroups.length > 0 ? ` (${myGroups.length})` : ''}` : 'Explorer'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
-            {groupLoading ? <ActivityIndicator color="#8A2BE2" style={{ marginTop: 40 }} />
-            : groupSubTab === 'mine'
-              ? myGroups.length === 0
-                ? <View><EmptyState icon="people-circle-outline" text="Vous n'êtes dans aucun groupe" /><TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}><Text style={S.ctaBtnTxt}>Explorer les groupes</Text></TouchableOpacity></View>
-                : myGroups.map(g => (
-                  <View key={g.id} style={S.groupCard}>
-                    <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }} onPress={() => openGroupChat(g)} activeOpacity={0.7}>
-                      <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                      <View style={S.itemBody}>
-                        <View style={S.itemRow}>
-                          <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
-                          {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
-                        </View>
-                        <Text style={S.itemLast} numberOfLines={1}>
-                          {g.last_message ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}` : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={S.leaveBtn} onPress={() => askLeaveGroup(g)} disabled={groupAction === g.id}>
-                      {groupAction === g.id ? <ActivityIndicator size="small" color="#DC2626" /> : <Ionicons name="exit-outline" size={20} color="#DC2626" />}
-                    </TouchableOpacity>
-                  </View>
-                ))
-              : allGroups.length === 0
-                ? <EmptyState icon="search-outline" text="Aucun groupe disponible" />
-                : allGroups.map(g => (
-                  <View key={g.id} style={S.exploreCard}>
+
+            {groupLoading ? (
+              <LoadingText />
+            ) : groupSubTab === 'mine' ? (
+              filteredMyGroups.length === 0 ? (
+                <View>
+                  {q
+                    ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
+                    : <EmptyState icon="people-circle-outline" title="Vous n'êtes dans aucun groupe">
+                        <TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}>
+                          <Text style={S.ctaBtnTxt}>Explorer les groupes</Text>
+                        </TouchableOpacity>
+                      </EmptyState>
+                  }
+                </View>
+              ) : filteredMyGroups.map(g => (
+                <View key={g.id} style={S.groupCard}>
+                  <TouchableOpacity
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }}
+                    onPress={() => openGroupChat(g)}
+                    activeOpacity={0.7}
+                  >
                     <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                    <View style={[S.itemBody, { marginLeft: 12 }]}>
-                      <Text style={S.itemName}>{g.name}</Text>
-                      <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>{g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}</Text>
+                    <View style={S.itemBody}>
+                      <View style={S.itemRow}>
+                        <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
+                        {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
+                      </View>
+                      <Text style={S.itemLast} numberOfLines={1}>
+                        {g.last_message
+                          ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}`
+                          : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`
+                        }
+                      </Text>
                     </View>
-                    {g.is_member
-                      ? <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}><Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" /><Text style={S.openBtnTxt}>Ouvrir</Text></TouchableOpacity>
-                      : <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}>{groupAction === g.id ? <ActivityIndicator size="small" color="#fff" /> : <Text style={S.joinBtnTxt}>Rejoindre</Text>}</TouchableOpacity>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={S.leaveBtn}
+                    onPress={() => leaveGroup(g)}
+                    disabled={groupAction === g.id}
+                  >
+                    <Ionicons name="exit-outline" size={20} color={groupAction === g.id ? '#ccc' : '#DC2626'} />
+                  </TouchableOpacity>
+                </View>
+              ))
+            ) : (
+              filteredAllGroups.length === 0 ? (
+                q
+                  ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
+                  : <EmptyState icon="search-outline" title="Aucun groupe disponible" />
+              ) : filteredAllGroups.map(g => (
+                <View key={g.id} style={S.exploreCard}>
+                  <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
+                  <View style={[S.itemBody, { marginLeft: 12 }]}>
+                    <Text style={S.itemName}>{g.name}</Text>
+                    <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>
+                      {g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
+                    </Text>
                   </View>
-                ))
-            }
+                  {g.is_member ? (
+                    <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}>
+                      <Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" />
+                      <Text style={S.openBtnTxt}>Ouvrir</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}>
+                      <Text style={S.joinBtnTxt}>{groupAction === g.id ? '...' : 'Rejoindre'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))
+            )}
           </View>
         )}
+
       </ScrollView>
 
-      {/* ── UserProfileView — même pattern que actu.tsx ──────────────────────── */}
+      {/* ── UserProfileView ─────────────────────────────────────────────── */}
       {showUserProfileModal && selectedUserId && (
         <UserProfileView
           userId={selectedUserId}
@@ -453,13 +699,20 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────────────────────────────────────
+
 const S = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
-  header:          { paddingTop: Platform.OS === 'ios' ? 50 : 40, paddingBottom: 15, paddingHorizontal: 20 },
+  header:          { paddingTop: Platform.OS === 'ios' ? 50 : 40, paddingBottom: 12, paddingHorizontal: 20 },
   headerContent:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerTitle:     { fontSize: 28, fontWeight: 'bold', color: '#fff' },
   headerBadge:     { backgroundColor: '#FF0080', borderRadius: 12, minWidth: 24, height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
   headerBadgeTxt:  { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  searchIconBtn:   { padding: 4 },
+  searchBar:       { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginTop: 10 },
+  searchInput:     { flex: 1, fontSize: 14, color: '#fff' },
   tabs:            { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E0E0E0' },
   tab:             { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, gap: 4, position: 'relative' },
   tabActive:       { borderBottomWidth: 3, borderBottomColor: '#8A2BE2' },
@@ -481,7 +734,7 @@ const S = StyleSheet.create({
   joinBtnTxt:      { color: '#fff', fontSize: 13, fontWeight: '700' },
   openBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#8A2BE2' },
   openBtnTxt:      { color: '#8A2BE2', fontSize: 13, fontWeight: '600' },
-  ctaBtn:          { alignSelf: 'center', marginTop: 8, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#F0E8FF', borderRadius: 10 },
+  ctaBtn:          { alignSelf: 'center', marginTop: 12, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#F0E8FF', borderRadius: 10 },
   ctaBtnTxt:       { color: '#8A2BE2', fontWeight: '700', fontSize: 14 },
   subTabs:         { flexDirection: 'row', marginHorizontal: 10, marginBottom: 10, backgroundColor: '#F0E8FF', borderRadius: 12, padding: 4 },
   subTab:          { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
