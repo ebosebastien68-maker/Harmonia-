@@ -1,3 +1,13 @@
+// =====================================================
+// PROFILE SCREEN
+//
+// Upload flow (avatar & médias post) :
+//   1. get-upload-url  → Signed URL + public_url depuis le serveur
+//   2. PUT direct vers Supabase Storage (aucun transit serveur)
+//   3. confirm-upload  → serveur enregistre l'URL en DB (avatar uniquement)
+//      Pour les médias post, public_url est déjà connue → intégrée à create-post
+// =====================================================
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, Image, TextInput,
@@ -30,7 +40,7 @@ interface MyProfile {
   avatar_url?:    string;
   solde_cfa:      number;
   trophies_count: number;
-  role:           string;     // ← inclut 'userpro' pour les media
+  role:           string;
   created_at:     string;
 }
 
@@ -146,12 +156,10 @@ const PostCard = React.memo(({
 
       <Text style={styles.postContent}>{post.content}</Text>
 
-      {/* Affichage image */}
       {post.imagepots && (
         <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
       )}
 
-      {/* Affichage vidéo — thumbnail */}
       {post.vidposts && (
         <View style={styles.videoThumb}>
           <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.9)" />
@@ -188,7 +196,6 @@ const PostCard = React.memo(({
           </View>
         </TouchableOpacity>
 
-        {/* ── Partager — uniquement si post public ── */}
         {post.visibility === 'public' && (
           <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
             <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
@@ -222,7 +229,6 @@ export default function ProfileScreen() {
   const [showCreatePost,   setShowCreatePost]   = useState(false);
   const [userId,           setUserId]           = useState('');
 
-  // Modals — même états que actu.tsx
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCommentsModal,       setShowCommentsModal]       = useState(false);
   const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
@@ -231,18 +237,15 @@ export default function ProfileScreen() {
   const [showEditModal,           setShowEditModal]           = useState(false);
   const [selectedPostForEdit,     setSelectedPostForEdit]     = useState<{ id: string; content: string } | null>(null);
 
-  // Profil
   const [nom,              setNom]              = useState('');
   const [prenom,           setPrenom]           = useState('');
   const [dateNaissance,    setDateNaissance]    = useState<Date>(new Date(2000, 0, 1));
   const [dateNaissanceWeb, setDateNaissanceWeb] = useState('');
   const [showDatePicker,   setShowDatePicker]   = useState(false);
 
-  // Création post
   const [postContent,    setPostContent]    = useState('');
   const [postVisibility, setPostVisibility] = useState<Visibility>('friends');
   const [creatingPost,   setCreatingPost]   = useState(false);
-  // Media post (pro only)
   const [postImageUrl,   setPostImageUrl]   = useState<string | null>(null);
   const [postVideoUrl,   setPostVideoUrl]   = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
@@ -270,14 +273,23 @@ export default function ProfileScreen() {
     const now = Math.floor(Date.now() / 1000);
     if (expiresAtRef.current - now > 60) return accessTokenRef.current;
     try {
-      const res  = await fetch(REFRESH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refreshTokenRef.current }) });
+      const res  = await fetch(REFRESH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshTokenRef.current }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       accessTokenRef.current  = data.access_token;
       refreshTokenRef.current = data.refresh_token;
       expiresAtRef.current    = data.expires_at;
       const raw = await AsyncStorage.getItem('harmonia_session');
-      if (raw) await AsyncStorage.setItem('harmonia_session', JSON.stringify({ ...JSON.parse(raw), access_token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at }));
+      if (raw) await AsyncStorage.setItem('harmonia_session', JSON.stringify({
+        ...JSON.parse(raw),
+        access_token:  data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at:    data.expires_at,
+      }));
       return data.access_token;
     } catch { router.replace('/login'); return ''; }
   };
@@ -292,7 +304,11 @@ export default function ProfileScreen() {
     try {
       const token = await getValidToken();
       if (!token) return;
-      const res  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-profile', access_token: token }) });
+      const res  = await fetch(PROFILE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get-profile', access_token: token }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setProfile(data.profile);
@@ -303,8 +319,9 @@ export default function ProfileScreen() {
         setDateNaissance(d);
         setDateNaissanceWeb(data.profile.date_naissance);
       }
-    } catch (err: any) { showToast('error', err.message || 'Impossible de charger le profil'); }
-    finally { setLoading(false); }
+    } catch (err: any) {
+      showToast('error', err.message || 'Impossible de charger le profil');
+    } finally { setLoading(false); }
   };
 
   const loadPosts = useCallback(async () => {
@@ -312,32 +329,53 @@ export default function ProfileScreen() {
     try {
       const token = await getValidToken();
       if (!token) return;
-      const res  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-posts', access_token: token }) });
+      const res  = await fetch(PROFILE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get-posts', access_token: token }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // Les posts arrivent déjà avec reactions + user states depuis le backend
       setPosts(data.posts || []);
     } catch (err: any) { console.error('[loadPosts]', err.message); }
     finally { setLoadingPosts(false); }
   }, []);
 
-  // ── Interactions posts — même logique que actu.tsx ────────────────────────
+  // ── Interactions posts ────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
-    const res  = await fetch(API_BASE_POSTS, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' }, body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: userId, post_id: postId }) });
+    const res  = await fetch(API_BASE_POSTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: userId, post_id: postId }),
+    });
     const data = await res.json();
-    if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p));
+    if (data.success) setPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p
+    ));
   }, [userId]);
 
   const handleShare = useCallback(async (postId: string, shared: boolean) => {
-    const res  = await fetch(API_BASE_POSTS, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' }, body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: userId, post_id: postId }) });
+    const res  = await fetch(API_BASE_POSTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: userId, post_id: postId }),
+    });
     const data = await res.json();
-    if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p));
+    if (data.success) setPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p
+    ));
   }, [userId]);
 
   const handleSave = useCallback(async (postId: string, saved: boolean) => {
-    const res  = await fetch(API_BASE_POSTS, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' }, body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: userId, post_id: postId }) });
+    const res  = await fetch(API_BASE_POSTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
+      body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: userId, post_id: postId }),
+    });
     const data = await res.json();
-    if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, user_saved: saved } : p));
+    if (data.success) setPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, user_saved: saved } : p
+    ));
   }, [userId]);
 
   const handleOpenComments = useCallback((postId: string) => {
@@ -355,7 +393,86 @@ export default function ProfileScreen() {
 
   const handleLongPress = useCallback((post: Post) => { setSelectedPost(post); }, []);
 
-  // ── Upload media (pro only) ───────────────────────────────────────────────
+  // ── HELPER : URI → Blob ───────────────────────────────────────────────────
+  const uriToBlob = (uri: string): Promise<Blob> =>
+    new Promise((resolve, reject) => {
+      if (Platform.OS === 'web') {
+        fetch(uri).then(r => r.blob()).then(resolve).catch(reject);
+      } else {
+        const xhr = new XMLHttpRequest();
+        xhr.onload  = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('Blob échoué'));
+        xhr.responseType = 'blob';
+        xhr.open('GET', uri, true);
+        xhr.send(null);
+      }
+    });
+
+  // ── HELPER : Upload direct vers Supabase Storage ──────────────────────────
+  // Étape commune : PUT sur la signed URL sans passer par le serveur
+  const uploadToStorage = async (signedUrl: string, uri: string, contentType: string): Promise<void> => {
+    const blob      = await uriToBlob(uri);
+    const uploadRes = await fetch(signedUrl, {
+      method:  'PUT',
+      headers: { 'Content-Type': contentType },
+      body:    blob,
+    });
+    if (!uploadRes.ok) throw new Error('Échec upload vers Supabase Storage');
+  };
+
+  // ── AVATAR : pick → get-upload-url → PUT direct → confirm-upload ─────────
+  const pickAndUploadAvatar = async () => {
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') { Alert.alert('Permission refusée', "Accès aux photos requis."); return; }
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes:    ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect:        [1, 1],
+      quality:       0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    setUploadingAvatar(true);
+    try {
+      const token = await getValidToken();
+      if (!token) return;
+
+      // 1. Obtenir la Signed Upload URL
+      const urlRes  = await fetch(PROFILE_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'get-upload-url', access_token: token, context: 'avatar' }),
+      });
+      const urlData = await urlRes.json();
+      if (!urlRes.ok) throw new Error(urlData.error);
+
+      const { signed_url, path } = urlData;
+
+      // 2. Upload DIRECT vers Supabase Storage (aucun transit serveur)
+      await uploadToStorage(signed_url, result.assets[0].uri, 'image/jpeg');
+
+      // 3. Confirmer → le serveur enregistre l'URL en DB
+      const confirmRes  = await fetch(PROFILE_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'confirm-upload', access_token: token, context: 'avatar', path }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok) throw new Error(confirmData.error);
+
+      await loadProfile();
+      showToast('success', 'Photo de profil mise à jour !');
+    } catch (err: any) {
+      showToast('error', err.message || "Impossible de mettre à jour la photo");
+    } finally { setUploadingAvatar(false); }
+  };
+
+  // ── MÉDIAS POST (pro) : get-upload-url → PUT direct → stocker public_url ──
+  // Pas de confirm-upload : la public_url est connue dès l'étape 1
+  // et sera intégrée à create-post
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -363,10 +480,12 @@ export default function ProfileScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: mediaType === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, quality: 0.8,
+      mediaTypes:    mediaType === 'video'
+        ? ImagePicker.MediaTypeOptions.Videos
+        : ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality:       0.8,
     });
-
     if (result.canceled || !result.assets[0]) return;
 
     setUploadingMedia(true);
@@ -374,29 +493,30 @@ export default function ProfileScreen() {
       const token = await getValidToken();
       if (!token) return;
 
-      // 1. Demander le signed URL
-      const urlRes  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-media-url', access_token: token, media_type: mediaType }) });
+      // 1. Obtenir la Signed Upload URL + public_url
+      const context = mediaType === 'image' ? 'image' : 'video';
+      const urlRes  = await fetch(PROFILE_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'get-upload-url', access_token: token, context }),
+      });
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
 
       const { signed_url, public_url } = urlData;
-
-      // 2. Upload
-      const blob = await uriToBlob(result.assets[0].uri);
       const contentType = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
-      const uploadRes = await fetch(signed_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob });
-      if (!uploadRes.ok) throw new Error("Échec upload");
 
-      // 3. Stocker l'URL publique
+      // 2. Upload DIRECT vers Supabase Storage (aucun transit serveur)
+      await uploadToStorage(signed_url, result.assets[0].uri, contentType);
+
+      // 3. Stocker la public_url dans le state — intégrée à create-post ensuite
       if (mediaType === 'image') setPostImageUrl(public_url);
-      else setPostVideoUrl(public_url);
+      else                       setPostVideoUrl(public_url);
 
       showToast('success', `${mediaType === 'image' ? 'Image' : 'Vidéo'} ajoutée !`);
     } catch (err: any) {
-      showToast('error', err.message || `Impossible d'ajouter le média`);
-    } finally {
-      setUploadingMedia(false);
-    }
+      showToast('error', err.message || "Impossible d'ajouter le média");
+    } finally { setUploadingMedia(false); }
   };
 
   // ── Créer un post ─────────────────────────────────────────────────────────
@@ -408,22 +528,29 @@ export default function ProfileScreen() {
       const token = await getValidToken();
       if (!token) return;
       const res  = await fetch(PROFILE_URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create-post', access_token: token,
-          content: postContent.trim(), visibility: postVisibility,
-          imagepots: postImageUrl || undefined,
-          vidposts:  postVideoUrl || undefined,
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          action:     'create-post',
+          access_token: token,
+          content:    postContent.trim(),
+          visibility: postVisibility,
+          imagepots:  postImageUrl || undefined,
+          vidposts:   postVideoUrl || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setPostContent(''); setPostVisibility('friends'); setPostImageUrl(null); setPostVideoUrl(null);
+      setPostContent('');
+      setPostVisibility('friends');
+      setPostImageUrl(null);
+      setPostVideoUrl(null);
       setShowCreatePost(false);
       await loadPosts();
       showToast('success', 'Post publié !');
-    } catch (err: any) { showToast('error', err.message || 'Impossible de publier'); }
-    finally { setCreatingPost(false); }
+    } catch (err: any) {
+      showToast('error', err.message || 'Impossible de publier');
+    } finally { setCreatingPost(false); }
   };
 
   // ── Profil update ─────────────────────────────────────────────────────────
@@ -433,62 +560,59 @@ export default function ProfileScreen() {
     try {
       const token = await getValidToken();
       if (!token) return;
-      const dateForAPI = Platform.OS === 'web' ? dateNaissanceWeb : `${dateNaissance.getFullYear()}-${(dateNaissance.getMonth()+1).toString().padStart(2,'0')}-${dateNaissance.getDate().toString().padStart(2,'0')}`;
-      const res  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-profile', access_token: token, nom: nom.trim(), prenom: prenom.trim(), date_naissance: dateForAPI }) });
+      const dateForAPI = Platform.OS === 'web'
+        ? dateNaissanceWeb
+        : `${dateNaissance.getFullYear()}-${(dateNaissance.getMonth() + 1).toString().padStart(2, '0')}-${dateNaissance.getDate().toString().padStart(2, '0')}`;
+      const res  = await fetch(PROFILE_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'update-profile', access_token: token, nom: nom.trim(), prenom: prenom.trim(), date_naissance: dateForAPI }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      await loadProfile(); setEditMode(false); showToast('success', 'Profil mis à jour !');
-    } catch (err: any) { showToast('error', err.message || 'Impossible de sauvegarder'); }
-    finally { setSaving(false); }
+      await loadProfile();
+      setEditMode(false);
+      showToast('success', 'Profil mis à jour !');
+    } catch (err: any) {
+      showToast('error', err.message || 'Impossible de sauvegarder');
+    } finally { setSaving(false); }
   };
 
-  // ── Avatar ────────────────────────────────────────────────────────────────
-  const pickAndUploadAvatar = async () => {
-    if (Platform.OS !== 'web') {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') { Alert.alert('Permission refusée', "Accès aux photos requis."); return; }
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
-    if (result.canceled || !result.assets[0]) return;
-    setUploadingAvatar(true);
-    try {
-      const token = await getValidToken();
-      if (!token) return;
-      const urlRes  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-upload-url', access_token: token }) });
-      const urlData = await urlRes.json();
-      if (!urlRes.ok) throw new Error(urlData.error);
-      const blob = await uriToBlob(result.assets[0].uri);
-      const uploadRes = await fetch(urlData.signed_url, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
-      if (!uploadRes.ok) throw new Error("Échec upload");
-      const updateRes  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-avatar', access_token: token, path: urlData.path }) });
-      const updateData = await updateRes.json();
-      if (!updateRes.ok) throw new Error(updateData.error);
-      await loadProfile(); showToast('success', 'Photo de profil mise à jour !');
-    } catch (err: any) { showToast('error', err.message || "Impossible de mettre à jour la photo"); }
-    finally { setUploadingAvatar(false); }
+  const onDateChange = (_event: any, selectedDate?: Date) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (selectedDate) setDateNaissance(selectedDate);
   };
 
-  const uriToBlob = (uri: string): Promise<Blob> =>
-    new Promise((resolve, reject) => {
-      if (Platform.OS === 'web') { fetch(uri).then(r => r.blob()).then(resolve).catch(reject); }
-      else { const xhr = new XMLHttpRequest(); xhr.onload = () => resolve(xhr.response); xhr.onerror = () => reject(new Error('Blob échoué')); xhr.responseType = 'blob'; xhr.open('GET', uri, true); xhr.send(null); }
-    });
-
-  const onDateChange = (_event: any, selectedDate?: Date) => { setShowDatePicker(Platform.OS === 'ios'); if (selectedDate) setDateNaissance(selectedDate); };
   const formatDateDisplay  = (d: Date) => `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`;
   const formatDateReadable = (iso: string) => !iso ? '—' : new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
   const handleLogout = async () => {
     Alert.alert('Déconnexion', 'Voulez-vous vraiment vous déconnecter ?', [
       { text: 'Annuler', style: 'cancel' },
-      { text: 'Déconnecter', style: 'destructive', onPress: async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); } },
+      { text: 'Déconnecter', style: 'destructive', onPress: async () => {
+        await AsyncStorage.removeItem('harmonia_session');
+        router.replace('/login');
+      }},
     ]);
   };
 
   const isPro = profile?.role === 'userpro';
 
-  if (loading) return (<View style={styles.centered}><ActivityIndicator size="large" color="#7B1FE8" /><Text style={styles.loadingText}>Chargement...</Text></View>);
-  if (!profile) return (<View style={styles.centered}><Ionicons name="alert-circle-outline" size={64} color="#EF4444" /><Text style={styles.errorText}>Impossible de charger le profil</Text><TouchableOpacity onPress={loadProfile} style={styles.retryButton}><Text style={styles.retryButtonText}>Réessayer</Text></TouchableOpacity></View>);
+  if (loading) return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" color="#7B1FE8" />
+      <Text style={styles.loadingText}>Chargement...</Text>
+    </View>
+  );
+  if (!profile) return (
+    <View style={styles.centered}>
+      <Ionicons name="alert-circle-outline" size={64} color="#EF4444" />
+      <Text style={styles.errorText}>Impossible de charger le profil</Text>
+      <TouchableOpacity onPress={loadProfile} style={styles.retryButton}>
+        <Text style={styles.retryButtonText}>Réessayer</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -517,7 +641,9 @@ export default function ProfileScreen() {
             <View style={styles.createPostAuthorRow}>
               {profile.avatar_url
                 ? <Image source={{ uri: profile.avatar_url }} style={styles.createPostAvatar} />
-                : <View style={[styles.createPostAvatar, styles.avatarPlaceholder]}><Text style={styles.avatarText}>{getInitials(profile.nom, profile.prenom)}</Text></View>}
+                : <View style={[styles.createPostAvatar, styles.avatarPlaceholder]}>
+                    <Text style={styles.avatarText}>{getInitials(profile.nom, profile.prenom)}</Text>
+                  </View>}
               <View>
                 <Text style={styles.createPostAuthorName}>{profile.prenom} {profile.nom}</Text>
                 {isPro && <View style={styles.proBadge}><Text style={styles.proBadgeText}>⭐ PRO</Text></View>}
@@ -534,10 +660,18 @@ export default function ProfileScreen() {
               </View>
             </View>
 
-            <TextInput style={styles.createPostInput} placeholder="Quoi de neuf ?" placeholderTextColor="#bbb" value={postContent} onChangeText={setPostContent} multiline maxLength={1000} autoFocus />
+            <TextInput
+              style={styles.createPostInput}
+              placeholder="Quoi de neuf ?"
+              placeholderTextColor="#bbb"
+              value={postContent}
+              onChangeText={setPostContent}
+              multiline
+              maxLength={1000}
+              autoFocus
+            />
             <Text style={styles.charCount}>{postContent.length}/1000</Text>
 
-            {/* Préview image */}
             {postImageUrl && (
               <View style={styles.mediaPreviewContainer}>
                 <Image source={{ uri: postImageUrl }} style={styles.mediaPreview} resizeMode="cover" />
@@ -547,7 +681,6 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {/* Préview vidéo */}
             {postVideoUrl && (
               <View style={styles.mediaPreviewContainer}>
                 <View style={[styles.mediaPreview, styles.videoPreviewBg]}>
@@ -560,7 +693,6 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {/* Boutons media — pro uniquement */}
             {isPro && !postImageUrl && !postVideoUrl && (
               <View style={styles.mediaButtons}>
                 <TouchableOpacity style={styles.mediaBtn} onPress={() => handlePickMedia('image')} disabled={uploadingMedia}>
@@ -576,8 +708,15 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            <TouchableOpacity style={[styles.publishBtn, !postContent.trim() && styles.publishBtnDisabled]} onPress={handleCreatePost} disabled={creatingPost || !postContent.trim()} activeOpacity={0.8}>
-              {creatingPost ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="send" size={18} color="#fff" /><Text style={styles.publishBtnText}>Publier</Text></>}
+            <TouchableOpacity
+              style={[styles.publishBtn, !postContent.trim() && styles.publishBtnDisabled]}
+              onPress={handleCreatePost}
+              disabled={creatingPost || !postContent.trim()}
+              activeOpacity={0.8}
+            >
+              {creatingPost
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <><Ionicons name="send" size={18} color="#fff" /><Text style={styles.publishBtnText}>Publier</Text></>}
             </TouchableOpacity>
           </View>
         </View>
@@ -592,7 +731,9 @@ export default function ProfileScreen() {
               <View style={styles.modalInfo}><Text style={styles.modalLabel}>Auteur :</Text><Text style={styles.modalValue}>{selectedPost.author.prenom} {selectedPost.author.nom}</Text></View>
               <View style={styles.modalInfo}><Text style={styles.modalLabel}>Publié :</Text><Text style={styles.modalValue}>{formatTimeAgo(selectedPost.created_at)}</Text></View>
               <View style={styles.modalInfo}><Text style={styles.modalLabel}>Réactions :</Text><Text style={styles.modalValue}>❤️ {selectedPost.reactions.likes} · 💬 {selectedPost.reactions.comments} · 🔄 {selectedPost.reactions.shares}</Text></View>
-              <TouchableOpacity style={styles.modalBtn} onPress={() => setSelectedPost(null)}><Text style={styles.modalBtnText}>Fermer</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setSelectedPost(null)}>
+                <Text style={styles.modalBtnText}>Fermer</Text>
+              </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </Modal>
@@ -663,12 +804,21 @@ export default function ProfileScreen() {
           ) : (
             <View style={styles.card}>
               <Text style={styles.fieldLabel}>Nom</Text>
-              <View style={styles.inputContainer}><Ionicons name="person-outline" size={18} color="#999" style={styles.inputIcon} /><TextInput style={styles.input} value={nom} onChangeText={setNom} placeholder="Votre nom" placeholderTextColor="#bbb" autoCapitalize="words" /></View>
+              <View style={styles.inputContainer}>
+                <Ionicons name="person-outline" size={18} color="#999" style={styles.inputIcon} />
+                <TextInput style={styles.input} value={nom} onChangeText={setNom} placeholder="Votre nom" placeholderTextColor="#bbb" autoCapitalize="words" />
+              </View>
               <Text style={styles.fieldLabel}>Prénom</Text>
-              <View style={styles.inputContainer}><Ionicons name="person-outline" size={18} color="#999" style={styles.inputIcon} /><TextInput style={styles.input} value={prenom} onChangeText={setPrenom} placeholder="Votre prénom" placeholderTextColor="#bbb" autoCapitalize="words" /></View>
+              <View style={styles.inputContainer}>
+                <Ionicons name="person-outline" size={18} color="#999" style={styles.inputIcon} />
+                <TextInput style={styles.input} value={prenom} onChangeText={setPrenom} placeholder="Votre prénom" placeholderTextColor="#bbb" autoCapitalize="words" />
+              </View>
               <Text style={styles.fieldLabel}>Date de naissance</Text>
               {Platform.OS === 'web' ? (
-                <View style={styles.inputContainer}><Ionicons name="calendar-outline" size={18} color="#999" style={styles.inputIcon} /><input type="date" value={dateNaissanceWeb} onChange={e => setDateNaissanceWeb(e.target.value)} max={new Date().toISOString().split('T')[0]} min="1900-01-01" style={{ flex: 1, padding: 12, fontSize: 15, border: 'none', outline: 'none', backgroundColor: 'transparent', color: '#333' }} /></View>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="calendar-outline" size={18} color="#999" style={styles.inputIcon} />
+                  <input type="date" value={dateNaissanceWeb} onChange={e => setDateNaissanceWeb(e.target.value)} max={new Date().toISOString().split('T')[0]} min="1900-01-01" style={{ flex: 1, padding: 12, fontSize: 15, border: 'none', outline: 'none', backgroundColor: 'transparent', color: '#333' }} />
+                </View>
               ) : (
                 <>
                   <TouchableOpacity style={styles.inputContainer} onPress={() => setShowDatePicker(true)}>
@@ -680,8 +830,12 @@ export default function ProfileScreen() {
                 </>
               )}
               <View style={styles.editActions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => { setEditMode(false); setNom(profile.nom); setPrenom(profile.prenom); }}><Text style={styles.cancelBtnText}>Annuler</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveProfile} disabled={saving}>{saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveBtnText}>Enregistrer</Text>}</TouchableOpacity>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => { setEditMode(false); setNom(profile.nom); setPrenom(profile.prenom); }}>
+                  <Text style={styles.cancelBtnText}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveProfile} disabled={saving}>
+                  {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveBtnText}>Enregistrer</Text>}
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -691,7 +845,10 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Publications ({posts.length})</Text>
-            <TouchableOpacity style={styles.newPostBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePost(true); }}>
+            <TouchableOpacity style={styles.newPostBtn} onPress={() => {
+              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              setShowCreatePost(true);
+            }}>
               <LinearGradient colors={['#FF0080', '#FF8C00']} style={styles.newPostGrad}>
                 <Ionicons name="add" size={16} color="#fff" />
                 <Text style={styles.newPostText}>Publier</Text>
@@ -709,7 +866,8 @@ export default function ProfileScreen() {
             </View>
           ) : (
             posts.map(post => (
-              <PostCard key={post.id} post={post} userId={userId}
+              <PostCard
+                key={post.id} post={post} userId={userId}
                 onLike={handleLike} onShare={handleShare} onSave={handleSave}
                 onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers}
                 onOpenEdit={handleOpenEdit} onLongPress={handleLongPress}
@@ -721,25 +879,48 @@ export default function ProfileScreen() {
       </ScrollView>
 
       {/* ── MODALS ─────────────────────────────────────────────────────── */}
-      <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => loadPosts()} />
-      <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
-      <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(); }} />
+      <CommentsModal
+        visible={showCommentsModal}
+        postId={selectedPostForComments}
+        userId={userId}
+        onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }}
+        onCommentAdded={() => loadPosts()}
+      />
+      <LikersModal
+        visible={showLikersModal}
+        postId={selectedPostForLikers}
+        onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }}
+      />
+      <EditPostModal
+        visible={showEditModal}
+        postId={selectedPostForEdit?.id || null}
+        userId={userId}
+        initialContent={selectedPostForEdit?.content || ''}
+        onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }}
+        onPostUpdated={async () => { await loadPosts(); }}
+      />
 
     </KeyboardAvoidingView>
   );
 }
 
+// ─── SOUS-COMPOSANTS ──────────────────────────────────────────────────────────
+
 function InfoRow({ icon, label, value }: { icon: any; label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
       <View style={styles.infoIconBox}><Ionicons name={icon} size={20} color="#7B1FE8" /></View>
-      <View style={{ flex: 1 }}><Text style={styles.infoLabel}>{label}</Text><Text style={styles.infoValue}>{value}</Text></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{value}</Text>
+      </View>
     </View>
   );
 }
 
 function Separator() { return <View style={styles.separator} />; }
 
+// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:     { flex: 1, backgroundColor: '#F5F5F5' },
   scrollContent: { paddingBottom: 100 },
@@ -749,21 +930,21 @@ const styles = StyleSheet.create({
   retryButton:   { marginTop: 20, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#7B1FE8', borderRadius: 10 },
   retryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 
-  toast: { position: 'absolute', top: Platform.OS === 'ios' ? 55 : 15, left: 20, right: 20, zIndex: 100, flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, gap: 10 },
+  toast:         { position: 'absolute', top: Platform.OS === 'ios' ? 55 : 15, left: 20, right: 20, zIndex: 100, flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, gap: 10 },
   toast_success: { backgroundColor: '#10B981' },
   toast_error:   { backgroundColor: '#EF4444' },
   toast_info:    { backgroundColor: '#3B82F6' },
   toastText:     { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
 
-  header:           { paddingTop: Platform.OS === 'ios' ? 64 : 44, paddingBottom: 36, alignItems: 'center', position: 'relative' },
-  logoutBtn:        { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, padding: 6 },
-  avatarWrapper:    { position: 'relative', marginBottom: 14 },
-  avatar:           { width: 110, height: 110, borderRadius: 55, borderWidth: 4, borderColor: '#fff', backgroundColor: '#E0E0E0' },
-  cameraBtn:        { position: 'absolute', bottom: 2, right: 2, width: 36, height: 36, borderRadius: 18, backgroundColor: '#FF8C00', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
-  headerName:       { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
-  headerProBadge:   { backgroundColor: 'rgba(255,215,0,0.2)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, marginBottom: 6 },
-  headerProText:    { color: '#FFD700', fontSize: 12, fontWeight: '700' },
-  headerSub:        { fontSize: 13, color: 'rgba(255,255,255,0.75)' },
+  header:         { paddingTop: Platform.OS === 'ios' ? 64 : 44, paddingBottom: 36, alignItems: 'center', position: 'relative' },
+  logoutBtn:      { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, padding: 6 },
+  avatarWrapper:  { position: 'relative', marginBottom: 14 },
+  avatar:         { width: 110, height: 110, borderRadius: 55, borderWidth: 4, borderColor: '#fff', backgroundColor: '#E0E0E0' },
+  cameraBtn:      { position: 'absolute', bottom: 2, right: 2, width: 36, height: 36, borderRadius: 18, backgroundColor: '#FF8C00', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  headerName:     { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
+  headerProBadge: { backgroundColor: 'rgba(255,215,0,0.2)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, marginBottom: 6 },
+  headerProText:  { color: '#FFD700', fontSize: 12, fontWeight: '700' },
+  headerSub:      { fontSize: 13, color: 'rgba(255,255,255,0.75)' },
 
   statsRow:  { flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginTop: 20, marginBottom: 8 },
   statCard:  { flex: 1, borderRadius: 16, padding: 20, alignItems: 'center', gap: 4 },
@@ -801,7 +982,6 @@ const styles = StyleSheet.create({
   emptyPostsText: { fontSize: 16, color: '#999', fontWeight: '600' },
   emptyPostsSub:  { fontSize: 13, color: '#bbb' },
 
-  // PostCard
   postCard:          { backgroundColor: '#fff', marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
   postHeader:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
   postAuthor:        { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
@@ -826,12 +1006,10 @@ const styles = StyleSheet.create({
   actionTextActive:  { color: '#FFF' },
   saveBtn:           { padding: 8 },
 
-  // Viewer
   viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   viewerClose:   { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   viewerImage:   { width: '100%', height: '80%' },
 
-  // Modal créer post
   createPostOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   createPostCard:       { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
   createPostHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
@@ -849,20 +1027,19 @@ const styles = StyleSheet.create({
   createPostInput:      { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
   charCount:            { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
 
-  mediaButtons:       { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  mediaBtn:           { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
-  mediaBtnText:       { fontSize: 13, color: '#7B1FE8', fontWeight: '600' },
+  mediaButtons:          { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  mediaBtn:              { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
+  mediaBtnText:          { fontSize: 13, color: '#7B1FE8', fontWeight: '600' },
   mediaPreviewContainer: { position: 'relative', marginBottom: 12 },
-  mediaPreview:       { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  videoPreviewBg:     { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  videoPreviewLabel:  { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
-  mediaRemoveBtn:     { position: 'absolute', top: 8, right: 8 },
+  mediaPreview:          { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  videoPreviewBg:        { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  videoPreviewLabel:     { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  mediaRemoveBtn:        { position: 'absolute', top: 8, right: 8 },
 
   publishBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7B1FE8', borderRadius: 14, paddingVertical: 16 },
   publishBtnDisabled: { backgroundColor: '#C4B5FD' },
   publishBtnText:     { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 
-  // Modal détails
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
   modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 25, width: '85%', maxWidth: 400 },
   modalTitle:   { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
