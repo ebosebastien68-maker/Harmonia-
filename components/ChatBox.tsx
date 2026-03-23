@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, KeyboardAvoidingView,
-  Platform, SafeAreaView, Modal, Image,
+  Platform, SafeAreaView, Modal, Image, Dimensions,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -137,7 +137,11 @@ export default function ChatBox({
   const socketRef   = useRef<Socket | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
-  // Double tap
+  // Image plein écran
+  const [fullscreenUrl,    setFullscreenUrl]    = useState<string | null>(null);
+  const imgTapRef = useRef<{ url: string; time: number } | null>(null);
+
+  // Double tap bulle
   const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
@@ -514,11 +518,22 @@ export default function ChatBox({
 
     if (type === 'image') {
       return (
-        <Image
-          source={{ uri: url }}
-          style={S.mediaImage}
-          resizeMode="cover"
-        />
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => {
+            const now = Date.now();
+            const last = imgTapRef.current;
+            if (last && last.url === url && now - last.time < 350) {
+              imgTapRef.current = null;
+              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setFullscreenUrl(url);
+            } else {
+              imgTapRef.current = { url, time: now };
+            }
+          }}
+        >
+          <Image source={{ uri: url }} style={S.mediaImage} resizeMode="cover" />
+        </TouchableOpacity>
       );
     }
 
@@ -873,6 +888,38 @@ export default function ChatBox({
         </TouchableOpacity>
       </Modal>
 
+      {/* ── Visionneuse plein écran — double tap sur image ───────────── */}
+      <Modal
+        visible={!!fullscreenUrl}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFullscreenUrl(null)}
+      >
+        <TouchableOpacity
+          style={S.fsOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            const now = Date.now();
+            const last = imgTapRef.current;
+            if (last && last.url === fullscreenUrl && now - last.time < 350) {
+              imgTapRef.current = null;
+              setFullscreenUrl(null);
+            } else {
+              imgTapRef.current = { url: fullscreenUrl!, time: now };
+            }
+          }}
+        >
+          <Image
+            source={{ uri: fullscreenUrl ?? '' }}
+            style={S.fsImage}
+            resizeMode="contain"
+          />
+          <TouchableOpacity style={S.fsCloseBtn} onPress={() => setFullscreenUrl(null)}>
+            <Ionicons name="close-circle" size={36} color="rgba(255,255,255,0.85)" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -933,4 +980,8 @@ const S = StyleSheet.create({
   actionTxt:        { fontSize: 16, color: '#333', fontWeight: '500' },
   actionSubTxt:     { fontSize: 12, color: '#999', marginTop: 1 },
   actionDivider:    { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
+  // Visionneuse plein écran
+  fsOverlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
+  fsImage:          { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.82 },
+  fsCloseBtn:       { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 36, right: 20 },
 });
