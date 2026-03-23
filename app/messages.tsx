@@ -9,7 +9,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   Platform, RefreshControl, TextInput, Modal, Animated,
-  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -699,7 +698,12 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
       {/* Overlay de synchronisation manuelle */}
       <SyncOverlay state={syncState} />
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* ── Header — appui long pour synchronisation manuelle ─────────── */}
+      <TouchableOpacity
+        activeOpacity={1}
+        onLongPress={handleLongPressSync}
+        delayLongPress={600}
+      >
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <View style={S.headerContent}>
           <Text style={S.headerTitle}>Messages</Text>
@@ -730,6 +734,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
           </View>
         )}
       </LinearGradient>
+      </TouchableOpacity>
 
       <View style={S.tabs}>
         {([
@@ -747,9 +752,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         ))}
       </View>
 
-      {/* ── ScrollView avec appui long pour synchronisation ─────────────── */}
-      <TouchableWithoutFeedback onLongPress={handleLongPressSync} delayLongPress={600}>
-        <View style={{ flex: 1 }}>
+      {/* ── ScrollView ────────────────────────────────────────────────────── */}
           <ScrollView
             style={{ flex: 1 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}
@@ -895,8 +898,6 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
             )}
 
           </ScrollView>
-        </View>
-      </TouchableWithoutFeedback>
 
       {showUserProfileModal && selectedUserId && (
         <UserProfileView
