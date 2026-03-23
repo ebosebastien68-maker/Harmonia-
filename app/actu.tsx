@@ -28,7 +28,7 @@ const { width, height } = Dimensions.get('window');
 // ── SEUL POINT D'ENTRÉE : backend Render ──────────────────────────────────────
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HOME_URL    = `${BACKEND_URL}/home`;
-const PROFILE_URL = `${BACKEND_URL}/profile`;   // ← même backend que profile.tsx
+const PROFILE_URL = `${BACKEND_URL}/profile`;
 
 const HEADER_HEIGHT  = 75;
 const NATIVE         = Platform.OS !== 'web';
@@ -38,8 +38,9 @@ const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50  : 30;
 const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 const AUD_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 
+// ✅ artisanat ajouté
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
-type GameType    = 'arts' | 'performance' | 'music';
+type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
 type Visibility  = 'public' | 'friends' | 'private';
 type ToastType   = 'success' | 'error' | 'info';
 
@@ -83,7 +84,6 @@ type FeedItem = Post | Submission;
 
 interface UserProfile { solde_cfa: number; trophies_count: number }
 
-// Profil complet pour le modal de création de post
 interface MyProfile {
   id:        string;
   nom:       string;
@@ -317,7 +317,10 @@ const SubmissionCard = React.memo(({
 
   useEffect(() => { setTotalVotes(sub.total_votes); setUserVoted(sub.user_voted); }, [sub]);
 
+  // ✅ artisanat = vidéo comme performance
   const isPerformance = sub.game_type === 'performance';
+  const isArtisanat   = sub.game_type === 'artisanat';
+  const isVideo       = isPerformance || isArtisanat;
   const isMusic       = sub.game_type === 'music';
 
   const media: SubmissionMedia[] = sub.media
@@ -335,9 +338,10 @@ const SubmissionCard = React.memo(({
     finally { setIsVoting(false); }
   };
 
-  const badgeBg    = isPerformance ? '#FFF3E0' : isMusic ? '#E8F5E9' : '#F0E6FF';
-  const badgeColor = isPerformance ? '#E65100' : isMusic ? '#2E7D32' : '#8E44AD';
-  const badgeLabel = sub.badge ?? '🎨 Arts';
+  // ✅ couleurs et badge pour chaque type
+  const badgeBg    = isPerformance ? '#FFF3E0' : isArtisanat ? '#FFF8E1' : isMusic ? '#E8F5E9' : '#F0E6FF';
+  const badgeColor = isPerformance ? '#E65100' : isArtisanat ? '#B45309' : isMusic ? '#2E7D32' : '#8E44AD';
+  const badgeLabel = sub.badge ?? (isArtisanat ? '🪡 Artisanat' : '🎨 Arts');
 
   return (
     <View style={styles.subCard}>
@@ -377,12 +381,16 @@ const SubmissionCard = React.memo(({
                 <View style={styles.audioPlayIcon}><Ionicons name="play" size={18} color="rgba(255,255,255,0.9)" /></View>
                 <View style={styles.audioBadge}><Ionicons name="musical-notes" size={12} color="#FFF" /><Text style={styles.audioBadgeText}>Audio</Text></View>
               </TouchableOpacity>
-            ) : isPerformance ? (
+            ) : isVideo ? (
+              // ✅ performance ET artisanat → même rendu vidéo TikTok
               <TouchableOpacity activeOpacity={0.9} style={styles.videoThumbSub}
                 onPress={() => { const si = allVideoItems.findIndex(v => v.mediaId === item.id); openVideoModal(allVideoItems, si >= 0 ? si : 0); }}>
                 <Video source={{ uri: item.url }} style={StyleSheet.absoluteFill} resizeMode={ResizeMode.COVER} isLooping isMuted shouldPlay={activeIndex === index} />
                 <View style={styles.videoPlayOverlay}><Ionicons name="expand-outline" size={22} color="rgba(255,255,255,0.85)" /></View>
-                <View style={styles.videoBadge}><Ionicons name="videocam" size={12} color="#FFF" /><Text style={styles.videoBadgeText}>Vidéo</Text></View>
+                <View style={styles.videoBadge}>
+                  <Ionicons name="videocam" size={12} color="#FFF" />
+                  <Text style={styles.videoBadgeText}>{isArtisanat ? 'Artisanat' : 'Vidéo'}</Text>
+                </View>
               </TouchableOpacity>
             ) : (
               <Image source={{ uri: item.url }} style={styles.subImage} resizeMode="cover" />
@@ -428,17 +436,16 @@ export default function ActuScreen() {
   const [refreshing,   setRefreshing]  = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // ── Mon profil (pour le modal de création de post) ─────────────────────────
   const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
 
-  // ── Toast ──────────────────────────────────────────────────────────────────
+  // Toast
   const [toast, setToast] = useState<{ type: ToastType; text: string } | null>(null);
   const showToast = (type: ToastType, text: string) => {
     setToast({ type, text });
     setTimeout(() => setToast(null), 3500);
   };
 
-  // ── Création de post (même logique que profile.tsx) ────────────────────────
+  // Création de post
   const [showCreatePost,  setShowCreatePost]  = useState(false);
   const [postContent,     setPostContent]     = useState('');
   const [postVisibility,  setPostVisibility]  = useState<Visibility>('friends');
@@ -543,7 +550,7 @@ export default function ActuScreen() {
 
   const handleDismissPrompt = () => { setShowPushPrompt(false); setShowPushBtn(true); };
 
-  // ─── Charge mon profil (pour le modal de publication) ────────────────────
+  // ─── Charge mon profil ────────────────────────────────────────────────────
   const loadMyProfile = useCallback(async () => {
     try {
       const session = await getValidToken();
@@ -557,7 +564,7 @@ export default function ActuScreen() {
     } catch (err) { console.error('[loadMyProfile]', err); }
   }, []);
 
-  // ─── Charge posts (Render /home) ──────────────────────────────────────────
+  // ─── Charge posts ─────────────────────────────────────────────────────────
   const loadPosts = useCallback(async () => {
     try {
       const session = await getValidToken();
@@ -575,6 +582,7 @@ export default function ActuScreen() {
     } catch (err) { console.error('[loadPosts]', err); }
   }, []);
 
+  // ─── Charge soumissions ───────────────────────────────────────────────────
   const loadSubmissions = useCallback(async () => {
     try {
       const session = await getValidToken();
@@ -613,7 +621,7 @@ export default function ActuScreen() {
     if (mode !== 'posts') await loadSubmissions();
   };
 
-  // ─── Création de post — même backend que profile.tsx (PROFILE_URL) ────────
+  // ─── Création de post ─────────────────────────────────────────────────────
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -679,13 +687,15 @@ export default function ActuScreen() {
   const displayedItems: FeedItem[] = (() => {
     if (filterMode === 'posts')  return posts;
     if (filterMode === 'images') return submissions.filter(s => s.game_type === 'arts');
-    if (filterMode === 'videos') return submissions.filter(s => s.game_type === 'performance');
+    // ✅ filtre Vidéos = performance + artisanat
+    if (filterMode === 'videos') return submissions.filter(s => s.game_type === 'performance' || s.game_type === 'artisanat');
     if (filterMode === 'music')  return submissions.filter(s => s.game_type === 'music');
     return [...posts, ...submissions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   })();
 
+  // ✅ allVideoItems = performance + artisanat
   const allVideoItems: VideoFeedItem[] = displayedItems
-    .filter((item): item is Submission => item.item_type === 'submission' && item.game_type === 'performance')
+    .filter((item): item is Submission => item.item_type === 'submission' && (item.game_type === 'performance' || item.game_type === 'artisanat'))
     .flatMap(sub => (sub.media ?? []).map(m => ({
       mediaId: m.id, videoUrl: m.url, description: m.description ?? null,
       author: sub.author, run_number: sub.run_number, run_title: sub.run_title,
@@ -827,7 +837,6 @@ export default function ActuScreen() {
                   <Ionicons name="search-outline" size={22} color="#fff" />
                 </TouchableOpacity>
 
-                {/* ── Bouton + → ouvre le modal de publication intégré ── */}
                 <TouchableOpacity onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePost(true); }}>
                   <LinearGradient colors={['#FFD700','#FF0080']} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.createBtnGrad}>
                     <Ionicons name="add" size={18} color="#fff" />
@@ -919,11 +928,10 @@ export default function ActuScreen() {
           </TouchableOpacity>
         </Modal>
 
-        {/* ── MODAL CRÉER POST (intégré — même design que profile.tsx) ─── */}
+        {/* ── MODAL CRÉER POST ──────────────────────────────────────────── */}
         <Modal visible={showCreatePost} transparent animationType="slide" onRequestClose={() => setShowCreatePost(false)}>
           <View style={styles.cpOverlay}>
             <View style={styles.cpCard}>
-              {/* Header */}
               <View style={styles.cpHeader}>
                 <Text style={styles.cpTitle}>Nouvelle publication</Text>
                 <TouchableOpacity onPress={() => { setShowCreatePost(false); setPostImageUrl(null); setPostVideoUrl(null); setPostContent(''); }}>
@@ -931,7 +939,6 @@ export default function ActuScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Auteur + visibilité */}
               <View style={styles.cpAuthorRow}>
                 {myProfile?.avatar_url
                   ? <Image source={{ uri: myProfile.avatar_url }} style={styles.cpAvatar} />
@@ -970,7 +977,6 @@ export default function ActuScreen() {
                 </View>
               </View>
 
-              {/* Texte */}
               <TextInput
                 style={styles.cpInput}
                 placeholder="Quoi de neuf ?"
@@ -983,7 +989,6 @@ export default function ActuScreen() {
               />
               <Text style={styles.cpCharCount}>{postContent.length}/1000</Text>
 
-              {/* Préview image */}
               {postImageUrl && (
                 <View style={styles.cpMediaContainer}>
                   <Image source={{ uri: postImageUrl }} style={styles.cpMediaPreview} resizeMode="cover" />
@@ -993,7 +998,6 @@ export default function ActuScreen() {
                 </View>
               )}
 
-              {/* Préview vidéo */}
               {postVideoUrl && (
                 <View style={styles.cpMediaContainer}>
                   <View style={[styles.cpMediaPreview, styles.cpVideoPreviewBg]}>
@@ -1006,7 +1010,6 @@ export default function ActuScreen() {
                 </View>
               )}
 
-              {/* Boutons media — pro uniquement */}
               {isPro && !postImageUrl && !postVideoUrl && (
                 <View style={styles.cpMediaButtons}>
                   <TouchableOpacity style={styles.cpMediaBtn} onPress={() => handlePickMedia('image')} disabled={uploadingMedia}>
@@ -1022,7 +1025,6 @@ export default function ActuScreen() {
                 </View>
               )}
 
-              {/* Publier */}
               <TouchableOpacity
                 style={[styles.cpPublishBtn, !postContent.trim() && styles.cpPublishBtnDisabled]}
                 onPress={handleCreatePost}
@@ -1080,7 +1082,6 @@ export default function ActuScreen() {
 }
 
 // ─── TikTokVideoModal ─────────────────────────────────────────────────────────
-// FlatList (mobile) / ScrollView CSS-snap (web) — fix scroll sur web
 interface TikTokVideoModalProps {
   visible: boolean; items: VideoFeedItem[]; startIndex: number;
   onClose: () => void;
@@ -1096,7 +1097,6 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
     if (!visible || items.length === 0) return;
     setCurrentIndex(startIndex);
     if (Platform.OS === 'web') {
-      // Scroll CSS-snap : décale après le paint
       setTimeout(() => {
         webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false });
       }, 50);
@@ -1116,7 +1116,6 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
         </TouchableOpacity>
 
         {Platform.OS === 'web' ? (
-          /* ── Web : ScrollView avec CSS snap ── */
           <ScrollView
             ref={webScrollRef}
             style={{ flex: 1 }}
@@ -1135,7 +1134,6 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
             ))}
           </ScrollView>
         ) : (
-          /* ── Mobile : FlatList avec pagingEnabled ── */
           <FlatList
             ref={flatRef}
             data={items}
@@ -1168,7 +1166,6 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
 
   useEffect(() => { setTotalVotes(item.total_votes); setUserVoted(item.user_voted); }, [item]);
 
-  // shouldPlay ne réagit pas aux changements sur web — pilotage impératif
   useEffect(() => {
     if (!videoRef.current) return;
     if (isActive) {
@@ -1208,7 +1205,6 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
 }
 
 // ─── AudioFeedModal ───────────────────────────────────────────────────────────
-// FlatList (mobile) / ScrollView CSS-snap (web) — fix scroll sur web
 interface AudioFeedModalProps {
   visible: boolean; items: AudioFeedItem[]; startIndex: number;
   onClose: () => void;
@@ -1243,7 +1239,6 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
         </TouchableOpacity>
 
         {Platform.OS === 'web' ? (
-          /* ── Web : ScrollView avec CSS snap ── */
           <ScrollView
             ref={webScrollRef}
             style={{ flex: 1 }}
@@ -1262,7 +1257,6 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
             ))}
           </ScrollView>
         ) : (
-          /* ── Mobile : FlatList avec pagingEnabled ── */
           <FlatList
             ref={flatRef}
             data={items}
@@ -1369,51 +1363,51 @@ function AudioFeedItem({ item, isActive, onVote }: { item: AudioFeedItem; isActi
 
 // ─── tikStyles ────────────────────────────────────────────────────────────────
 const tikStyles = StyleSheet.create({
-  root:         { flex: 1, backgroundColor: '#000' },
-  closeBtn:     { position: 'absolute', top: TIK_CLOSE_TOP, right: 16, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  item:         { width, height, backgroundColor: '#000' },
-  gradient:     { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
-  infoRow:      { position: 'absolute', bottom: 60, left: 16, right: 80, flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
-  avatar:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
+  root:           { flex: 1, backgroundColor: '#000' },
+  closeBtn:       { position: 'absolute', top: TIK_CLOSE_TOP, right: 16, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  item:           { width, height, backgroundColor: '#000' },
+  gradient:       { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  infoRow:        { position: 'absolute', bottom: 60, left: 16, right: 80, flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  avatar:         { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
   avatarFallback: { backgroundColor: '#E65100', alignItems: 'center', justifyContent: 'center' },
-  avatarText:   { color: '#FFF', fontWeight: '800', fontSize: 14 },
-  infoText:     { flex: 1, gap: 3 },
-  authorName:   { color: '#FFF', fontWeight: '800', fontSize: 15 },
-  runLabel:     { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
-  desc:         { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18, marginTop: 2 },
-  voteBtn:      { position: 'absolute', right: 16, bottom: 80, alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30, paddingHorizontal: 10, paddingVertical: 12 },
-  voteBtnVoted: { backgroundColor: 'rgba(255,77,106,0.2)' },
-  voteCount:    { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  avatarText:     { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  infoText:       { flex: 1, gap: 3 },
+  authorName:     { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  runLabel:       { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  desc:           { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 18, marginTop: 2 },
+  voteBtn:        { position: 'absolute', right: 16, bottom: 80, alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30, paddingHorizontal: 10, paddingVertical: 12 },
+  voteBtnVoted:   { backgroundColor: 'rgba(255,77,106,0.2)' },
+  voteCount:      { color: '#FFF', fontSize: 13, fontWeight: '800' },
 });
 
 // ─── audStyles ────────────────────────────────────────────────────────────────
 const audStyles = StyleSheet.create({
-  root:             { flex: 1, backgroundColor: '#080810' },
-  closeBtn:         { position: 'absolute', top: AUD_CLOSE_TOP, right: 16, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  item:             { width, height, overflow: 'hidden' },
-  albumArt:         { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-  albumCircle:      { width: 180, height: 180, borderRadius: 90, backgroundColor: 'rgba(168,85,247,0.15)', borderWidth: 2, borderColor: 'rgba(168,85,247,0.3)', justifyContent: 'center', alignItems: 'center' },
-  trackInfo:        { position: 'absolute', top: 80, left: 24, right: 24, alignItems: 'center' },
-  trackTitle:       { color: '#FFF', fontWeight: '800', fontSize: 18, textAlign: 'center' },
-  trackSub:         { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginTop: 4 },
-  trackDesc:        { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 6, textAlign: 'center' },
-  progressContainer:{ position: 'absolute', bottom: 230, left: 32, right: 32 },
-  progressBg:       { height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
-  progressFill:     { height: 4, backgroundColor: '#A855F7', borderRadius: 2 },
-  timeRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
-  timeText:         { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
-  playBtn:          { position: 'absolute', bottom: 160, left: 0, right: 0, alignItems: 'center' },
-  gradient:         { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
-  infoRow:          { position: 'absolute', bottom: 60, left: 16, right: 80, flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
-  avatar:           { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
-  avatarFallback:   { backgroundColor: '#6200EA', alignItems: 'center', justifyContent: 'center' },
-  avatarText:       { color: '#FFF', fontWeight: '800', fontSize: 14 },
-  infoText:         { flex: 1, gap: 3 },
-  authorName:       { color: '#FFF', fontWeight: '800', fontSize: 15 },
-  runLabel:         { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
-  voteBtn:          { position: 'absolute', right: 16, bottom: 80, alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30, paddingHorizontal: 10, paddingVertical: 12 },
-  voteBtnVoted:     { backgroundColor: 'rgba(255,77,106,0.2)' },
-  voteCount:        { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  root:              { flex: 1, backgroundColor: '#080810' },
+  closeBtn:          { position: 'absolute', top: AUD_CLOSE_TOP, right: 16, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  item:              { width, height, overflow: 'hidden' },
+  albumArt:          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
+  albumCircle:       { width: 180, height: 180, borderRadius: 90, backgroundColor: 'rgba(168,85,247,0.15)', borderWidth: 2, borderColor: 'rgba(168,85,247,0.3)', justifyContent: 'center', alignItems: 'center' },
+  trackInfo:         { position: 'absolute', top: 80, left: 24, right: 24, alignItems: 'center' },
+  trackTitle:        { color: '#FFF', fontWeight: '800', fontSize: 18, textAlign: 'center' },
+  trackSub:          { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginTop: 4 },
+  trackDesc:         { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 6, textAlign: 'center' },
+  progressContainer: { position: 'absolute', bottom: 230, left: 32, right: 32 },
+  progressBg:        { height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
+  progressFill:      { height: 4, backgroundColor: '#A855F7', borderRadius: 2 },
+  timeRow:           { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  timeText:          { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
+  playBtn:           { position: 'absolute', bottom: 160, left: 0, right: 0, alignItems: 'center' },
+  gradient:          { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220 },
+  infoRow:           { position: 'absolute', bottom: 60, left: 16, right: 80, flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  avatar:            { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#FFF' },
+  avatarFallback:    { backgroundColor: '#6200EA', alignItems: 'center', justifyContent: 'center' },
+  avatarText:        { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  infoText:          { flex: 1, gap: 3 },
+  authorName:        { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  runLabel:          { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  voteBtn:           { position: 'absolute', right: 16, bottom: 80, alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 30, paddingHorizontal: 10, paddingVertical: 12 },
+  voteBtnVoted:      { backgroundColor: 'rgba(255,77,106,0.2)' },
+  voteCount:         { color: '#FFF', fontSize: 13, fontWeight: '800' },
 });
 
 // ─── styles ───────────────────────────────────────────────────────────────────
@@ -1519,32 +1513,32 @@ const styles = StyleSheet.create({
   modalBtn:      { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   modalBtnText:  { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 
-  // ── Modal Créer Post (cp_) — même design que profile.tsx ──────────────────
-  cpOverlay:           { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  cpCard:              { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
-  cpHeader:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  cpTitle:             { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
-  cpAuthorRow:         { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
-  cpAvatar:            { width: 44, height: 44, borderRadius: 22 },
-  cpAuthorName:        { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
-  cpProBadge:          { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
-  cpProBadgeText:      { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
-  cpVisibilityRow:     { flexDirection: 'row', gap: 6 },
-  cpVisibilityBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
+  // Modal Créer Post
+  cpOverlay:            { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  cpCard:               { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
+  cpHeader:             { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  cpTitle:              { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
+  cpAuthorRow:          { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
+  cpAvatar:             { width: 44, height: 44, borderRadius: 22 },
+  cpAuthorName:         { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
+  cpProBadge:           { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
+  cpProBadgeText:       { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
+  cpVisibilityRow:      { flexDirection: 'row', gap: 6 },
+  cpVisibilityBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
   cpVisibilityBtnActive:{ backgroundColor: '#8A2BE2', borderColor: '#8A2BE2' },
-  cpVisibilityText:    { fontSize: 11, color: '#666', fontWeight: '600' },
+  cpVisibilityText:     { fontSize: 11, color: '#666', fontWeight: '600' },
   cpVisibilityTextActive:{ color: '#fff' },
-  cpInput:             { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
-  cpCharCount:         { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
-  cpMediaButtons:      { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  cpMediaBtn:          { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
-  cpMediaBtnText:      { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
-  cpMediaContainer:    { position: 'relative', marginBottom: 12 },
-  cpMediaPreview:      { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  cpVideoPreviewBg:    { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  cpVideoPreviewLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
-  cpMediaRemove:       { position: 'absolute', top: 8, right: 8 },
-  cpPublishBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
-  cpPublishBtnDisabled:{ backgroundColor: '#C4B5FD' },
-  cpPublishBtnText:    { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  cpInput:              { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
+  cpCharCount:          { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
+  cpMediaButtons:       { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  cpMediaBtn:           { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
+  cpMediaBtnText:       { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  cpMediaContainer:     { position: 'relative', marginBottom: 12 },
+  cpMediaPreview:       { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  cpVideoPreviewBg:     { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  cpVideoPreviewLabel:  { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  cpMediaRemove:        { position: 'absolute', top: 8, right: 8 },
+  cpPublishBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
+  cpPublishBtnDisabled: { backgroundColor: '#C4B5FD' },
+  cpPublishBtnText:     { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });
