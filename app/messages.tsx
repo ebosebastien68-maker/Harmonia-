@@ -39,7 +39,7 @@ interface SyncState {
 
 const SYNC_MESSAGES: Record<SyncStep, string> = {
   idle:       '',
-  checking:   'Vérification de la session en cours…',
+  checking:   'Initialisation…',
   refreshing: 'Actualisation des credentials…',
   syncing:    'Synchronisation des données…',
   done:       'Synchronisation réussie',
