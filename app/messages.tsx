@@ -40,7 +40,7 @@ interface SyncState {
 const SYNC_MESSAGES: Record<SyncStep, string> = {
   idle:       '',
   checking:   'Initialisation…',
-  refreshing: 'Actualisation des credentials…',
+  refreshing: 'Actualisation…',
   syncing:    'Synchronisation des données…',
   done:       'Synchronisation réussie',
   error:      '',
@@ -191,8 +191,8 @@ function SyncOverlay({ state }: { state: SyncState }) {
   const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   const steps: { key: SyncStep; label: string }[] = [
-    { key: 'checking',   label: 'Vérification de la session' },
-    { key: 'refreshing', label: 'Actualisation des credentials' },
+    { key: 'checking',   label: 'Initialisation...' },
+    { key: 'refreshing', label: 'Actualisation...' },
     { key: 'syncing',    label: 'Synchronisation des données' },
   ];
 
@@ -339,7 +339,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     try { raw = await AsyncStorage.getItem(SESSION_KEY); } catch {}
 
     if (!raw) {
-      setSyncStep('error', 'Aucune session locale détectée. Veuillez vous reconnecter pour accéder à vos données.');
+      setSyncStep('error', 'Veuillez vous reconnecter pour accéder à vos données.');
       autoDismissSync();
       isSyncing.current = false;
       return;
@@ -347,7 +347,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
 
     let session: any;
     try { session = JSON.parse(raw); } catch {
-      setSyncStep('error', 'Les données de session sont corrompues. Veuillez vous reconnecter.');
+      setSyncStep('error', 'Veuillez vous reconnecter.');
       autoDismissSync();
       isSyncing.current = false;
       return;
@@ -357,7 +357,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     const storedAccessToken  = session?.access_token  ?? null;
 
     if (!storedAccessToken || !storedRefreshToken) {
-      setSyncStep('error', 'Credentials manquants ou invalides. Veuillez vous reconnecter pour restaurer votre session.');
+      setSyncStep('error', 'Veuillez vous reconnecter.');
       autoDismissSync();
       isSyncing.current = false;
       return;
@@ -392,7 +392,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     } catch {}
 
     if (!freshToken) {
-      setSyncStep('error', 'Impossible d\'actualiser la session. Votre session a peut-être expiré — veuillez vous reconnecter.');
+      setSyncStep('error', 'Impossible d\'actualiser les données.veuillez vous reconnecter.');
       autoDismissSync();
       isSyncing.current = false;
       return;
