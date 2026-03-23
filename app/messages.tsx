@@ -1,13 +1,15 @@
-// MessagesScreen.tsx — v7
-// Changements vs v6 :
-//   - État userRole — lu depuis le profil (session ou fetch /profile)
-//   - Passé à ChatBox via prop userRole
-//   - userName déjà présent en v6, conservé
+// MessagesScreen.tsx — v8
+// Changements vs v7 :
+//   - Appui long sur la ScrollView → synchronisation manuelle des données
+//   - Récupération du token depuis AsyncStorage + refresh via /refresh-token
+//   - Si token introuvable → message d'erreur professionnel avec invite à se reconnecter
+//   - Overlay de synchronisation animé (3 étapes) — visible uniquement lors du rechargement manuel
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
-  Platform, RefreshControl, TextInput,
+  Platform, RefreshControl, TextInput, Modal, Animated,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +26,28 @@ const TOKEN_MARGIN = 60;
 type ViewMode    = 'tabs' | 'chat';
 type TabMode     = 'history' | 'online' | 'friends' | 'groups';
 type GroupSubTab = 'mine' | 'explore';
+
+// ── Étapes de synchronisation ─────────────────────────────────────────────────
+
+type SyncStep = 'idle' | 'checking' | 'refreshing' | 'syncing' | 'done' | 'error';
+
+interface SyncState {
+  visible:  boolean;
+  step:     SyncStep;
+  message:  string;
+  error:    string | null;
+}
+
+const SYNC_MESSAGES: Record<SyncStep, string> = {
+  idle:       '',
+  checking:   'Vérification de la session en cours…',
+  refreshing: 'Actualisation des credentials…',
+  syncing:    'Synchronisation des données…',
+  done:       'Synchronisation réussie',
+  error:      '',
+};
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface User {
   id: string; nom: string; prenom: string;
@@ -124,6 +148,144 @@ function EmptyState({ icon, title, subtitle, children }: {
   );
 }
 
+// ── Overlay de synchronisation ─────────────────────────────────────────────────
+
+function SyncOverlay({ state }: { state: SyncState }) {
+  const spinAnim   = useRef(new Animated.Value(0)).current;
+  const fadeAnim   = useRef(new Animated.Value(0)).current;
+  const scaleAnim  = useRef(new Animated.Value(0.88)).current;
+  const checkAnim  = useRef(new Animated.Value(0)).current;
+
+  // Fade + scale à l'apparition
+  useEffect(() => {
+    if (state.visible) {
+      Animated.parallel([
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, friction: 6, tension: 80, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+    }
+  }, [state.visible]);
+
+  // Rotation continue pendant le chargement
+  useEffect(() => {
+    if (['checking', 'refreshing', 'syncing'].includes(state.step)) {
+      Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 900, useNativeDriver: true })
+      ).start();
+    } else {
+      spinAnim.stopAnimation();
+      spinAnim.setValue(0);
+    }
+  }, [state.step]);
+
+  // Animation checkmark à la fin
+  useEffect(() => {
+    if (state.step === 'done') {
+      Animated.spring(checkAnim, { toValue: 1, friction: 5, tension: 100, useNativeDriver: true }).start();
+    } else {
+      checkAnim.setValue(0);
+    }
+  }, [state.step]);
+
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  const steps: { key: SyncStep; label: string }[] = [
+    { key: 'checking',   label: 'Vérification de la session' },
+    { key: 'refreshing', label: 'Actualisation des credentials' },
+    { key: 'syncing',    label: 'Synchronisation des données' },
+  ];
+
+  const activeIdx = steps.findIndex(s => s.key === state.step);
+
+  if (!state.visible) return null;
+
+  return (
+    <Modal transparent animationType="none" visible={state.visible}>
+      <Animated.View style={[SO.backdrop, { opacity: fadeAnim }]}>
+        <Animated.View style={[SO.card, { transform: [{ scale: scaleAnim }] }]}>
+
+          {/* Icône principale */}
+          <View style={SO.iconWrap}>
+            {state.step === 'error' ? (
+              <View style={[SO.iconCircle, SO.iconCircleError]}>
+                <Ionicons name="alert-circle-outline" size={32} color="#DC2626" />
+              </View>
+            ) : state.step === 'done' ? (
+              <Animated.View style={[SO.iconCircle, SO.iconCircleDone, { transform: [{ scale: checkAnim }] }]}>
+                <Ionicons name="checkmark" size={32} color="#10B981" />
+              </Animated.View>
+            ) : (
+              <Animated.View style={[SO.iconCircle, { transform: [{ rotate: spin }] }]}>
+                <Ionicons name="sync-outline" size={32} color="#8A2BE2" />
+              </Animated.View>
+            )}
+          </View>
+
+          {/* Titre */}
+          <Text style={SO.title}>
+            {state.step === 'error' ? 'Synchronisation échouée'
+              : state.step === 'done' ? 'Données actualisées'
+              : 'Synchronisation en cours'}
+          </Text>
+
+          {/* Message courant */}
+          <Text style={SO.message}>
+            {state.step === 'error' ? state.error ?? 'Une erreur est survenue.' : SYNC_MESSAGES[state.step]}
+          </Text>
+
+          {/* Étapes visuelles — masquées en cas d'erreur ou de succès */}
+          {!['error', 'done', 'idle'].includes(state.step) && (
+            <View style={SO.steps}>
+              {steps.map((s, i) => {
+                const isDone    = i < activeIdx;
+                const isActive  = i === activeIdx;
+                const isPending = i > activeIdx;
+                return (
+                  <View key={s.key} style={SO.stepRow}>
+                    <View style={[
+                      SO.stepDot,
+                      isDone   && SO.stepDotDone,
+                      isActive && SO.stepDotActive,
+                      isPending && SO.stepDotPending,
+                    ]}>
+                      {isDone
+                        ? <Ionicons name="checkmark" size={11} color="#fff" />
+                        : <Text style={SO.stepDotTxt}>{i + 1}</Text>
+                      }
+                    </View>
+                    {i < steps.length - 1 && (
+                      <View style={[SO.stepLine, isDone && SO.stepLineDone]} />
+                    )}
+                    <Text style={[
+                      SO.stepLabel,
+                      isActive  && SO.stepLabelActive,
+                      isDone    && SO.stepLabelDone,
+                      isPending && SO.stepLabelPending,
+                    ]} numberOfLines={1}>
+                      {s.label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Message d'erreur avec CTA */}
+          {state.step === 'error' && (
+            <View style={SO.errorBox}>
+              <Ionicons name="information-circle-outline" size={15} color="#DC2626" style={{ marginRight: 6 }} />
+              <Text style={SO.errorBoxTxt}>{state.error}</Text>
+            </View>
+          )}
+
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps = {}) {
@@ -133,7 +295,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const [refreshing, setRefreshing] = useState(false);
   const [userId,     setUserId]     = useState('');
   const [userName,   setUserName]   = useState('');
-  const [userRole,   setUserRole]   = useState('user');   // ← NOUVEAU
+  const [userRole,   setUserRole]   = useState('user');
   const accessTokenRef = useRef('');
 
   const [conversations,  setConversations]  = useState<Conversation[]>([]);
@@ -153,6 +315,134 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   const [selectedUserId,       setSelectedUserId]       = useState<string | null>(null);
   const [showUserProfileModal, setShowUserProfileModal] = useState(false);
 
+  // ── État synchronisation manuelle ─────────────────────────────────────────────
+  const [syncState, setSyncState] = useState<SyncState>({
+    visible: false, step: 'idle', message: '', error: null,
+  });
+  const isSyncing = useRef(false);
+
+  const setSyncStep = (step: SyncStep, error: string | null = null) => {
+    setSyncState({ visible: true, step, message: SYNC_MESSAGES[step], error });
+  };
+
+  // ── Synchronisation manuelle déclenchée par appui long ───────────────────────
+
+  const handleLongPressSync = async () => {
+    if (isSyncing.current) return;
+    isSyncing.current = true;
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    // Étape 1 — Vérification de la session dans AsyncStorage
+    setSyncStep('checking');
+    await delay(500);
+
+    let raw: string | null = null;
+    try { raw = await AsyncStorage.getItem(SESSION_KEY); } catch {}
+
+    if (!raw) {
+      setSyncStep('error', 'Aucune session locale détectée. Veuillez vous reconnecter pour accéder à vos données.');
+      autoDismissSync();
+      isSyncing.current = false;
+      return;
+    }
+
+    let session: any;
+    try { session = JSON.parse(raw); } catch {
+      setSyncStep('error', 'Les données de session sont corrompues. Veuillez vous reconnecter.');
+      autoDismissSync();
+      isSyncing.current = false;
+      return;
+    }
+
+    const storedRefreshToken = session?.refresh_token ?? null;
+    const storedAccessToken  = session?.access_token  ?? null;
+
+    if (!storedAccessToken || !storedRefreshToken) {
+      setSyncStep('error', 'Credentials manquants ou invalides. Veuillez vous reconnecter pour restaurer votre session.');
+      autoDismissSync();
+      isSyncing.current = false;
+      return;
+    }
+
+    // Étape 2 — Actualisation du token via /refresh-token
+    setSyncStep('refreshing');
+    await delay(400);
+
+    let freshToken: string | null = null;
+    try {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expiresAt  = session?.expires_at ?? 0;
+
+      if (expiresAt - nowSeconds > TOKEN_MARGIN) {
+        // Token encore valide, pas besoin de rafraîchir
+        freshToken = storedAccessToken;
+      } else {
+        const res = await fetch(`${WS_BASE}/refresh-token`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: storedRefreshToken }),
+        });
+        if (res.ok) {
+          const { access_token, refresh_token: newRefresh, expires_at } = await res.json();
+          freshToken = access_token;
+          await AsyncStorage.setItem(SESSION_KEY, JSON.stringify({
+            ...session, access_token, refresh_token: newRefresh ?? storedRefreshToken, expires_at,
+          }));
+          accessTokenRef.current = access_token;
+        }
+      }
+    } catch {}
+
+    if (!freshToken) {
+      setSyncStep('error', 'Impossible d\'actualiser la session. Votre session a peut-être expiré — veuillez vous reconnecter.');
+      autoDismissSync();
+      isSyncing.current = false;
+      return;
+    }
+
+    accessTokenRef.current = freshToken;
+
+    // Étape 3 — Synchronisation des données
+    setSyncStep('syncing');
+    await delay(300);
+
+    try {
+      const uid = userId || session?.user?.id || '';
+      if (!uid) {
+        setSyncStep('error', 'Identifiant utilisateur introuvable. Veuillez vous reconnecter.');
+        autoDismissSync();
+        isSyncing.current = false;
+        return;
+      }
+
+      await loadAllDataWith(uid, freshToken);
+
+      if (activeTab === 'groups') {
+        groupSubTab === 'mine' ? await loadMyGroups() : await loadAllGroups();
+      }
+
+      // Succès
+      setSyncStep('done');
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await delay(1400);
+      setSyncState({ visible: false, step: 'idle', message: '', error: null });
+
+    } catch (err: any) {
+      setSyncStep('error', 'Une erreur est survenue lors de la synchronisation. Vérifiez votre connexion et réessayez.');
+      autoDismissSync();
+    }
+
+    isSyncing.current = false;
+  };
+
+  const autoDismissSync = async () => {
+    await delay(3000);
+    setSyncState({ visible: false, step: 'idle', message: '', error: null });
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  // ── Autres actions ────────────────────────────────────────────────────────────
+
   const openUserProfile = (targetUserId: string) => {
     if (!targetUserId || targetUserId === userId) return;
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -165,6 +455,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   };
 
   // ── Filtrage recherche ────────────────────────────────────────────────────────
+
   const q = searchQuery.toLowerCase().trim();
 
   const filteredConversations = q
@@ -241,7 +532,6 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
       api('getFriendsOnline', uid).then(d => { if (d.success) setOnlineFriends(d.friends ?? []); }).catch(() => {}),
       api('getAllFriends',    uid).then(d => { if (d.success) setAllFriends(d.friends ?? []); }).catch(() => {}),
       groupsApi('getUserGroups', uid).then(d => { if (d.success) setMyGroups(d.groups ?? []); }).catch(() => {}),
-      // Récupérer le rôle depuis /profile
       fetch(`${WS_BASE}/profile`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'getProfile', user_id: uid, access_token: tok }),
@@ -389,7 +679,7 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         conversationType={activeConversation.type}
         userId={userId}
         userName={userName}
-        userRole={userRole}          // ← NOUVEAU
+        userRole={userRole}
         accessToken={accessTokenRef.current}
         otherUser={activeConversation.otherUser}
         groupName={activeConversation.name}
@@ -406,6 +696,10 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
   return (
     <View style={S.container}>
 
+      {/* Overlay de synchronisation manuelle */}
+      <SyncOverlay state={syncState} />
+
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <View style={S.headerContent}>
           <Text style={S.headerTitle}>Messages</Text>
@@ -453,147 +747,156 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
         ))}
       </View>
 
-      <ScrollView style={{ flex: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}>
+      {/* ── ScrollView avec appui long pour synchronisation ─────────────── */}
+      <TouchableWithoutFeedback onLongPress={handleLongPressSync} delayLongPress={600}>
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8A2BE2" />}
+          >
 
-        {activeTab === 'history' && (
-          <View style={S.section}>
-            {loading ? <LoadingText />
-            : filteredConversations.length === 0
-              ? q
-                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucune conversation pour « ${searchQuery} »`} />
-                : <EmptyState icon="chatbubbles-outline" title="Vous n'avez aucun message" subtitle="Démarrez la discussion avec vos amis" />
-            : filteredConversations.map(conv => (
-              <TouchableOpacity key={conv.id} style={S.item} onPress={() => openConversation(conv)} activeOpacity={0.7}>
-                {conv.type === 'private'
-                  ? renderAvatar(conv.otherUser)
-                  : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                }
-                <View style={S.itemBody}>
-                  <View style={S.itemRow}>
-                    <Text style={S.itemName} numberOfLines={1}>
-                      {conv.type === 'private' ? `${conv.otherUser?.prenom} ${conv.otherUser?.nom}` : conv.name}
-                    </Text>
-                    <Text style={S.itemTime}>{conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}</Text>
-                  </View>
-                  <View style={S.itemRow}>
-                    <Text style={S.itemLast} numberOfLines={1}>
-                      {conv.lastMessage?.isFromMe && 'Vous : '}
-                      {conv.lastMessage?.senderName && `${conv.lastMessage.senderName} : `}
-                      {conv.lastMessage?.content || 'Aucun message'}
-                    </Text>
-                    {(conv.unreadCount || 0) > 0 && <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>}
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {activeTab === 'online' && (
-          <View style={S.section}>
-            {loading ? <LoadingText />
-            : filteredOnlineFriends.length === 0
-              ? q
-                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami en ligne pour « ${searchQuery} »`} />
-                : <EmptyState icon="wifi-outline" title="Aucun ami en ligne" />
-            : filteredOnlineFriends.map(f => (
-              <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                {renderAvatar({ ...f, isOnline: true })}
-                <View style={S.itemBody}>
-                  <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <View style={S.onlineDot} /><Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>En ligne</Text>
-                  </View>
-                </View>
-                <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {activeTab === 'friends' && (
-          <View style={S.section}>
-            {loading ? <LoadingText />
-            : filteredAllFriends.length === 0
-              ? q
-                ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami pour « ${searchQuery} »`} />
-                : <EmptyState icon="people-outline" title="Aucun ami" />
-            : filteredAllFriends.map(f => (
-              <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
-                {renderAvatar(f)}
-                <View style={S.itemBody}>
-                  <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
-                  <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{f.isOnline ? 'En ligne' : 'Hors ligne'}</Text>
-                </View>
-                <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {activeTab === 'groups' && (
-          <View style={S.section}>
-            <View style={S.subTabs}>
-              {(['mine', 'explore'] as const).map(sub => (
-                <TouchableOpacity key={sub} style={[S.subTab, groupSubTab === sub && S.subTabActive]} onPress={() => { haptic(); setGroupSubTab(sub); }}>
-                  <Text style={[S.subTabTxt, groupSubTab === sub && S.subTabTxtActive]}>
-                    {sub === 'mine' ? `Mes groupes${myGroups.length > 0 ? ` (${myGroups.length})` : ''}` : 'Explorer'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {groupLoading ? <LoadingText />
-            : groupSubTab === 'mine'
-              ? filteredMyGroups.length === 0
-                ? <View>{q
-                    ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
-                    : <EmptyState icon="people-circle-outline" title="Vous n'êtes dans aucun groupe">
-                        <TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}>
-                          <Text style={S.ctaBtnTxt}>Explorer les groupes</Text>
-                        </TouchableOpacity>
-                      </EmptyState>
-                  }</View>
-                : filteredMyGroups.map(g => (
-                  <View key={g.id} style={S.groupCard}>
-                    <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }} onPress={() => openGroupChat(g)} activeOpacity={0.7}>
-                      <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                      <View style={S.itemBody}>
-                        <View style={S.itemRow}>
-                          <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
-                          {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
-                        </View>
-                        <Text style={S.itemLast} numberOfLines={1}>
-                          {g.last_message ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}` : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={S.leaveBtn} onPress={() => leaveGroup(g)} disabled={groupAction === g.id}>
-                      <Ionicons name="exit-outline" size={20} color={groupAction === g.id ? '#ccc' : '#DC2626'} />
-                    </TouchableOpacity>
-                  </View>
-                ))
-              : filteredAllGroups.length === 0
-                ? q
-                  ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
-                  : <EmptyState icon="search-outline" title="Aucun groupe disponible" />
-                : filteredAllGroups.map(g => (
-                  <View key={g.id} style={S.exploreCard}>
-                    <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
-                    <View style={[S.itemBody, { marginLeft: 12 }]}>
-                      <Text style={S.itemName}>{g.name}</Text>
-                      <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>{g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}</Text>
-                    </View>
-                    {g.is_member
-                      ? <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}><Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" /><Text style={S.openBtnTxt}>Ouvrir</Text></TouchableOpacity>
-                      : <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}><Text style={S.joinBtnTxt}>{groupAction === g.id ? '...' : 'Rejoindre'}</Text></TouchableOpacity>
+            {activeTab === 'history' && (
+              <View style={S.section}>
+                {loading ? <LoadingText />
+                : filteredConversations.length === 0
+                  ? q
+                    ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucune conversation pour « ${searchQuery} »`} />
+                    : <EmptyState icon="chatbubbles-outline" title="Vous n'avez aucun message" subtitle="Démarrez la discussion avec vos amis" />
+                : filteredConversations.map(conv => (
+                  <TouchableOpacity key={conv.id} style={S.item} onPress={() => openConversation(conv)} activeOpacity={0.7}>
+                    {conv.type === 'private'
+                      ? renderAvatar(conv.otherUser)
+                      : <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
                     }
-                  </View>
-                ))
-            }
-          </View>
-        )}
-      </ScrollView>
+                    <View style={S.itemBody}>
+                      <View style={S.itemRow}>
+                        <Text style={S.itemName} numberOfLines={1}>
+                          {conv.type === 'private' ? `${conv.otherUser?.prenom} ${conv.otherUser?.nom}` : conv.name}
+                        </Text>
+                        <Text style={S.itemTime}>{conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}</Text>
+                      </View>
+                      <View style={S.itemRow}>
+                        <Text style={S.itemLast} numberOfLines={1}>
+                          {conv.lastMessage?.isFromMe && 'Vous : '}
+                          {conv.lastMessage?.senderName && `${conv.lastMessage.senderName} : `}
+                          {conv.lastMessage?.content || 'Aucun message'}
+                        </Text>
+                        {(conv.unreadCount || 0) > 0 && <View style={S.unreadBadge}><Text style={S.unreadBadgeTxt}>{conv.unreadCount}</Text></View>}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {activeTab === 'online' && (
+              <View style={S.section}>
+                {loading ? <LoadingText />
+                : filteredOnlineFriends.length === 0
+                  ? q
+                    ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami en ligne pour « ${searchQuery} »`} />
+                    : <EmptyState icon="wifi-outline" title="Aucun ami en ligne" />
+                : filteredOnlineFriends.map(f => (
+                  <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
+                    {renderAvatar({ ...f, isOnline: true })}
+                    <View style={S.itemBody}>
+                      <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <View style={S.onlineDot} /><Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>En ligne</Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {activeTab === 'friends' && (
+              <View style={S.section}>
+                {loading ? <LoadingText />
+                : filteredAllFriends.length === 0
+                  ? q
+                    ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun ami pour « ${searchQuery} »`} />
+                    : <EmptyState icon="people-outline" title="Aucun ami" />
+                : filteredAllFriends.map(f => (
+                  <TouchableOpacity key={f.id} style={S.item} onPress={() => openPrivateChat(f)} activeOpacity={0.7}>
+                    {renderAvatar(f)}
+                    <View style={S.itemBody}>
+                      <Text style={S.itemName}>{f.prenom} {f.nom}</Text>
+                      <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{f.isOnline ? 'En ligne' : 'Hors ligne'}</Text>
+                    </View>
+                    <Ionicons name="chatbubble-outline" size={22} color="#8A2BE2" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {activeTab === 'groups' && (
+              <View style={S.section}>
+                <View style={S.subTabs}>
+                  {(['mine', 'explore'] as const).map(sub => (
+                    <TouchableOpacity key={sub} style={[S.subTab, groupSubTab === sub && S.subTabActive]} onPress={() => { haptic(); setGroupSubTab(sub); }}>
+                      <Text style={[S.subTabTxt, groupSubTab === sub && S.subTabTxtActive]}>
+                        {sub === 'mine' ? `Mes groupes${myGroups.length > 0 ? ` (${myGroups.length})` : ''}` : 'Explorer'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {groupLoading ? <LoadingText />
+                : groupSubTab === 'mine'
+                  ? filteredMyGroups.length === 0
+                    ? <View>{q
+                        ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
+                        : <EmptyState icon="people-circle-outline" title="Vous n'êtes dans aucun groupe">
+                            <TouchableOpacity onPress={() => setGroupSubTab('explore')} style={S.ctaBtn}>
+                              <Text style={S.ctaBtnTxt}>Explorer les groupes</Text>
+                            </TouchableOpacity>
+                          </EmptyState>
+                      }</View>
+                    : filteredMyGroups.map(g => (
+                      <View key={g.id} style={S.groupCard}>
+                        <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14 }} onPress={() => openGroupChat(g)} activeOpacity={0.7}>
+                          <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
+                          <View style={S.itemBody}>
+                            <View style={S.itemRow}>
+                              <Text style={S.itemName} numberOfLines={1}>{g.name}</Text>
+                              {g.last_message && <Text style={S.itemTime}>{formatTime(g.last_message.created_at)}</Text>}
+                            </View>
+                            <Text style={S.itemLast} numberOfLines={1}>
+                              {g.last_message ? `${g.last_message.is_from_me ? 'Vous' : g.last_message.sender_name} : ${g.last_message.content}` : `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={S.leaveBtn} onPress={() => leaveGroup(g)} disabled={groupAction === g.id}>
+                          <Ionicons name="exit-outline" size={20} color={groupAction === g.id ? '#ccc' : '#DC2626'} />
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  : filteredAllGroups.length === 0
+                    ? q
+                      ? <EmptyState icon="search-outline" title="Aucun résultat" subtitle={`Aucun groupe pour « ${searchQuery} »`} />
+                      : <EmptyState icon="search-outline" title="Aucun groupe disponible" />
+                    : filteredAllGroups.map(g => (
+                      <View key={g.id} style={S.exploreCard}>
+                        <View style={[S.avatar, S.groupAvatar]}><Ionicons name="people" size={24} color="#fff" /></View>
+                        <View style={[S.itemBody, { marginLeft: 12 }]}>
+                          <Text style={S.itemName}>{g.name}</Text>
+                          <Text style={{ fontSize: 13, color: '#666' }} numberOfLines={1}>{g.description || `${g.member_count} membre${g.member_count !== 1 ? 's' : ''}`}</Text>
+                        </View>
+                        {g.is_member
+                          ? <TouchableOpacity style={S.openBtn} onPress={() => openGroupChat(g)}><Ionicons name="chatbubbles-outline" size={15} color="#8A2BE2" /><Text style={S.openBtnTxt}>Ouvrir</Text></TouchableOpacity>
+                          : <TouchableOpacity style={S.joinBtn} onPress={() => joinGroup(g)} disabled={groupAction === g.id}><Text style={S.joinBtnTxt}>{groupAction === g.id ? '...' : 'Rejoindre'}</Text></TouchableOpacity>
+                        }
+                      </View>
+                    ))
+                }
+              </View>
+            )}
+
+          </ScrollView>
+        </View>
+      </TouchableWithoutFeedback>
 
       {showUserProfileModal && selectedUserId && (
         <UserProfileView
@@ -607,6 +910,36 @@ export default function MessagesScreen({ onChatModeChange }: MessagesScreenProps
     </View>
   );
 }
+
+// ─── Styles overlay sync ──────────────────────────────────────────────────────
+
+const SO = StyleSheet.create({
+  backdrop:        { flex: 1, backgroundColor: 'rgba(10,0,30,0.55)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
+  card:            { width: '100%', backgroundColor: '#fff', borderRadius: 24, paddingVertical: 32, paddingHorizontal: 28, alignItems: 'center', shadowColor: '#4B0082', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 16 },
+  iconWrap:        { marginBottom: 18 },
+  iconCircle:      { width: 72, height: 72, borderRadius: 36, backgroundColor: '#F0E8FF', justifyContent: 'center', alignItems: 'center' },
+  iconCircleDone:  { backgroundColor: '#DCFCE7' },
+  iconCircleError: { backgroundColor: '#FEE2E2' },
+  title:           { fontSize: 18, fontWeight: '700', color: '#1A0033', marginBottom: 6, textAlign: 'center' },
+  message:         { fontSize: 13, color: '#6B21A8', textAlign: 'center', marginBottom: 22, lineHeight: 19 },
+  steps:           { width: '100%', gap: 0 },
+  stepRow:         { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  stepDot:         { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 10, flexShrink: 0 },
+  stepDotDone:     { backgroundColor: '#10B981' },
+  stepDotActive:   { backgroundColor: '#8A2BE2' },
+  stepDotPending:  { backgroundColor: '#E5E7EB' },
+  stepDotTxt:      { fontSize: 11, color: '#fff', fontWeight: '700' },
+  stepLine:        { display: 'none' },
+  stepLineDone:    { display: 'none' },
+  stepLabel:       { fontSize: 13, flex: 1 },
+  stepLabelActive: { color: '#8A2BE2', fontWeight: '700' },
+  stepLabelDone:   { color: '#10B981', fontWeight: '600' },
+  stepLabelPending:{ color: '#9CA3AF' },
+  errorBox:        { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#FEF2F2', borderRadius: 10, padding: 12, marginTop: 4, width: '100%' },
+  errorBoxTxt:     { fontSize: 13, color: '#DC2626', flex: 1, lineHeight: 18 },
+});
+
+// ─── Styles principaux ────────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#F5F5F5' },
