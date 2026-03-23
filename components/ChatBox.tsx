@@ -38,6 +38,7 @@ interface Message {
   is_visible?:      boolean;
   is_private_reply?: boolean;
   replyTo?:         ReplyTo | null;
+  mediaType?:       string | null;  // 'image' | 'video' | 'audio' | 'document' | 'file'
 }
 
 interface ChatBoxProps {
@@ -488,6 +489,7 @@ export default function ChatBox({
     is_visible:       msg.is_visible   ?? true,
     is_private_reply: msg.is_private_reply ?? false,
     replyTo:          msg.reply_to     ?? msg.replyTo    ?? null,
+    mediaType:        msg.mediaType    ?? msg.type       ?? null,
   });
 
   const fmtTime = (value: string | null | undefined): string => {
@@ -505,8 +507,10 @@ export default function ChatBox({
     if (!msg.media_url) return null;
 
     const url  = msg.media_url;
-    const ext  = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
-    const type = detectMediaType(resolveMimeType(url), url);
+    // Priorité : type stocké dans le message → détection depuis l'URL en fallback
+    const type = (msg.mediaType && msg.mediaType !== 'text')
+      ? msg.mediaType
+      : detectMediaType(resolveMimeType(url), url);
 
     if (type === 'image') {
       return (
