@@ -1,4 +1,4 @@
-// ChatBox.tsx — v7
+// ChatBox.tsx — v8
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
@@ -58,6 +58,52 @@ interface ChatBoxProps {
   onProfilePress?: (userId: string) => void;
 }
 
+// ─── Helpers media ────────────────────────────────────────────────────────────
+
+/**
+ * Détecte le type media à partir du mimeType ou de l'extension
+ * Retourne : 'image' | 'video' | 'audio' | 'document' | 'file'
+ */
+function detectMediaType(mimeType: string, fileName: string): string {
+  const mime = mimeType.toLowerCase();
+  if (mime.startsWith('image/'))  return 'image';
+  if (mime.startsWith('video/'))  return 'video';
+  if (mime.startsWith('audio/'))  return 'audio';
+  if (
+    mime === 'application/pdf' ||
+    mime.includes('word') || mime.includes('excel') ||
+    mime.includes('powerpoint') || mime.includes('spreadsheet') ||
+    mime.includes('presentation') || mime === 'text/plain' ||
+    mime === 'text/csv'
+  ) return 'document';
+
+  // Fallback sur l'extension si le mimeType est générique
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  if (['jpg','jpeg','png','webp','gif','bmp','tiff','svg','heic','heif'].includes(ext)) return 'image';
+  if (['mp4','mov','webm','avi','mkv','m4v','3gp'].includes(ext))                        return 'video';
+  if (['mp3','aac','wav','ogg','m4a','flac','opus','weba'].includes(ext))                return 'audio';
+  if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv'].includes(ext))          return 'document';
+  return 'file';
+}
+
+/**
+ * Déduit le mimeType à partir de l'extension si non fourni
+ */
+function resolveMimeType(uri: string, mimeType?: string | null): string {
+  if (mimeType) return mimeType;
+  const ext = uri.split('.').pop()?.toLowerCase() ?? '';
+  const map: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+    gif: 'image/gif', heic: 'image/heic', heif: 'image/heif',
+    mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+    avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+    mp3: 'audio/mpeg', aac: 'audio/aac', wav: 'audio/wav',
+    ogg: 'audio/ogg', m4a: 'audio/x-m4a', flac: 'audio/flac',
+    pdf: 'application/pdf',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
 // ─── Composant ────────────────────────────────────────────────────────────────
 
 export default function ChatBox({
@@ -67,32 +113,31 @@ export default function ChatBox({
   onBack, onNewMessage, onProfilePress,
 }: ChatBoxProps) {
 
-  const [messages,       setMessages]       = useState<Message[]>([]);
-  const [input,          setInput]          = useState('');
-  const [loading,        setLoading]        = useState(true);
-  const [sending,        setSending]        = useState(false);
-  const [uploading,      setUploading]      = useState(false);
-  const [otherTyping,    setOtherTyping]    = useState(false);
-  const [otherOnline,    setOtherOnline]    = useState(otherUser?.isOnline ?? false);
-  const [hasMore,        setHasMore]        = useState(false);
-  const [loadingMore,    setLoadingMore]    = useState(false);
-  const [currentRole,    setCurrentRole]    = useState(userRole);
+  const [messages,        setMessages]        = useState<Message[]>([]);
+  const [input,           setInput]           = useState('');
+  const [loading,         setLoading]         = useState(true);
+  const [sending,         setSending]         = useState(false);
+  const [uploading,       setUploading]       = useState(false);
+  const [otherTyping,     setOtherTyping]     = useState(false);
+  const [otherOnline,     setOtherOnline]     = useState(otherUser?.isOnline ?? false);
+  const [hasMore,         setHasMore]         = useState(false);
+  const [loadingMore,     setLoadingMore]     = useState(false);
+  const [currentRole,     setCurrentRole]     = useState(userRole);
 
   // Réponse en cours
-  // replyVisible : true = réponse publique, false = réponse privée (choix au moment de l'appui long)
-  const [replyingTo,     setReplyingTo]     = useState<Message | null>(null);
-  const [replyVisible,   setReplyVisible]   = useState(true);
+  const [replyingTo,      setReplyingTo]      = useState<Message | null>(null);
+  const [replyVisible,    setReplyVisible]    = useState(true);
 
   // Action sheet (appui long)
-  const [actionMsg,      setActionMsg]      = useState<Message | null>(null);
+  const [actionMsg,       setActionMsg]       = useState<Message | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
 
-  const scrollRef    = useRef<ScrollView>(null);
-  const socketRef    = useRef<Socket | null>(null);
-  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef  = useRef(false);
+  const scrollRef   = useRef<ScrollView>(null);
+  const socketRef   = useRef<Socket | null>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
   // Double tap
-  const lastTapRef   = useRef<{ id: string; time: number } | null>(null);
+  const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -157,7 +202,6 @@ export default function ChatBox({
       const msgs = data?.messages ?? [];
       setMessages(msgs.map(normalizeMsg));
       setHasMore(msgs.length >= 10);
-      // Récupérer le rôle du user courant depuis la liste des membres
       const me = (data.members ?? []).find((m: any) => m.user_id === userId);
       if (me?.role) setCurrentRole(me.role);
       setLoading(false);
@@ -237,7 +281,6 @@ export default function ChatBox({
     const reply = replyingTo;
     setReplyingTo(null);
 
-    // Stopper le typing
     if (isTypingRef.current) {
       isTypingRef.current = false;
       emitTyping(false);
@@ -313,7 +356,6 @@ export default function ChatBox({
   };
 
   const handleTap = (msg: Message) => {
-    // Double tap → toggle visibilité (auteur d'une réponse uniquement)
     if (conversationType !== 'group') return;
     const now  = Date.now();
     const last = lastTapRef.current;
@@ -327,7 +369,12 @@ export default function ChatBox({
     }
   };
 
-  // ── Upload media (userpro) ───────────────────────────────────────────────────
+  // ── Upload media — Signed URL (userpro) ──────────────────────────────────────
+  //
+  // Flux en 3 étapes :
+  //   1. getUploadUrl  → le serveur génère une Signed URL + path
+  //   2. PUT direct    → le client uploade le fichier binaire vers Supabase
+  //   3. confirmUpload → le serveur vérifie et retourne l'URL publique
 
   const pickAndUploadMedia = async () => {
     try {
@@ -339,45 +386,83 @@ export default function ChatBox({
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.All,
-        base64:     true,
         quality:    0.8,
+        // ⚠️ Plus de base64 — on lit le fichier via son URI
       });
 
       if (result.canceled || !result.assets?.[0]) return;
 
-      const asset     = result.assets[0];
-      const base64    = asset.base64;
-      const uri       = asset.uri;
-      const mimeType  = asset.mimeType ?? (uri.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg');
-      const fileName  = uri.split('/').pop() ?? `media_${Date.now()}`;
-
-      if (!base64) { alert('Impossible de lire le fichier'); return; }
+      const asset    = result.assets[0];
+      const uri      = asset.uri;
+      const mimeType = resolveMimeType(uri, asset.mimeType);
+      const fileName = uri.split('/').pop() ?? `media_${Date.now()}`;
 
       setUploading(true);
 
-      const res  = await fetch(`${WS_BASE}/media`, {
+      // ── Étape 1 : obtenir la Signed Upload URL ─────────────────────────
+      const urlRes = await fetch(`${WS_BASE}/media`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          user_id:     userId,
+          function:     'getUploadUrl',
+          user_id:      userId,
           access_token: accessToken,
-          file_base64: base64,
-          file_name:   fileName,
-          file_type:   mimeType,
-          context:     'media-premium',
+          file_name:    fileName,
+          file_type:    mimeType,
+          context:      'media-premium',
         }),
       });
 
-      const data = await res.json();
-      setUploading(false);
+      const urlData = await urlRes.json();
 
-      if (!data.success) {
-        alert(data.error ?? 'Erreur upload');
+      if (!urlData.success) {
+        setUploading(false);
+        alert(urlData.error ?? 'Erreur génération URL upload');
         return;
       }
 
-      const mediaType = mimeType.startsWith('video') ? 'video' : 'image';
-      sendMessage(data.url, mediaType);
+      const { signed_url, path, bucket } = urlData;
+
+      // ── Étape 2 : upload direct binaire vers Supabase ──────────────────
+      const fileBlob = await fetch(uri).then(r => r.blob());
+
+      const uploadRes = await fetch(signed_url, {
+        method:  'PUT',
+        headers: { 'Content-Type': mimeType },
+        body:    fileBlob,
+      });
+
+      if (!uploadRes.ok) {
+        setUploading(false);
+        alert('Erreur lors de l\'upload vers le stockage');
+        console.error('[ChatBox] PUT Supabase erreur:', uploadRes.status, await uploadRes.text());
+        return;
+      }
+
+      // ── Étape 3 : confirmer l'upload et récupérer l'URL publique ───────
+      const confirmRes = await fetch(`${WS_BASE}/media`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          function:     'confirmUpload',
+          user_id:      userId,
+          access_token: accessToken,
+          path,
+          bucket,
+        }),
+      });
+
+      const confirmData = await confirmRes.json();
+      setUploading(false);
+
+      if (!confirmData.success) {
+        alert(confirmData.error ?? 'Erreur confirmation upload');
+        return;
+      }
+
+      // ── Envoyer le message avec l'URL publique ─────────────────────────
+      const mediaType = detectMediaType(mimeType, fileName);
+      sendMessage(confirmData.url, mediaType);
 
     } catch (err) {
       setUploading(false);
@@ -414,12 +499,75 @@ export default function ChatBox({
 
   const isAuthor = (msg: Message) => msg.senderId === userId;
 
+  // ── Rendu media dans la bulle ────────────────────────────────────────────────
+
+  const renderMediaContent = (msg: Message, fromMe: boolean) => {
+    if (!msg.media_url) return null;
+
+    const url  = msg.media_url;
+    const ext  = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
+    const type = detectMediaType(resolveMimeType(url), url);
+
+    if (type === 'image') {
+      return (
+        <Image
+          source={{ uri: url }}
+          style={S.mediaImage}
+          resizeMode="cover"
+        />
+      );
+    }
+
+    if (type === 'video') {
+      return (
+        <View style={S.mediaFileWrap}>
+          <Ionicons name="videocam-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
+            {url.split('/').pop()?.split('?')[0] ?? 'Vidéo'}
+          </Text>
+        </View>
+      );
+    }
+
+    if (type === 'audio') {
+      return (
+        <View style={S.mediaFileWrap}>
+          <Ionicons name="musical-notes-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
+            {url.split('/').pop()?.split('?')[0] ?? 'Audio'}
+          </Text>
+        </View>
+      );
+    }
+
+    if (type === 'document') {
+      return (
+        <View style={S.mediaFileWrap}>
+          <Ionicons name="document-text-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
+            {url.split('/').pop()?.split('?')[0] ?? 'Document'}
+          </Text>
+        </View>
+      );
+    }
+
+    // Fichier générique
+    return (
+      <View style={S.mediaFileWrap}>
+        <Ionicons name="attach-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
+          {url.split('/').pop()?.split('?')[0] ?? 'Fichier'}
+        </Text>
+      </View>
+    );
+  };
+
   // ── Rendu bulle ──────────────────────────────────────────────────────────────
 
   const renderBubble = (msg: Message) => {
-    const fromMe   = msg.isFromMe;
-    const deleted  = !!msg.deletedAt;
-    const isGroup  = conversationType === 'group';
+    const fromMe  = msg.isFromMe;
+    const deleted = !!msg.deletedAt;
+    const isGroup = conversationType === 'group';
 
     return (
       <TouchableOpacity
@@ -457,11 +605,7 @@ export default function ChatBox({
             </Text>
           </View>
         ) : msg.media_url ? (
-          <Image
-            source={{ uri: msg.media_url }}
-            style={S.mediaImage}
-            resizeMode="cover"
-          />
+          renderMediaContent(msg, fromMe)
         ) : (
           <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem]}>
             {msg.content}
@@ -470,7 +614,6 @@ export default function ChatBox({
 
         {/* Footer : heure + badge visibilité */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
-          {/* Badge visibilité pour les réponses de l'auteur */}
           {isGroup && isAuthor(msg) && msg.reply_to_id && !deleted && (
             <Ionicons
               name={msg.is_visible ? 'eye-outline' : 'eye-off-outline'}
@@ -605,7 +748,7 @@ export default function ChatBox({
             >
               {uploading
                 ? <ActivityIndicator size="small" color="#8A2BE2" />
-                : <Ionicons name="image-outline" size={24} color="#8A2BE2" />
+                : <Ionicons name="attach-outline" size={24} color="#8A2BE2" />
               }
             </TouchableOpacity>
           )}
@@ -650,7 +793,6 @@ export default function ChatBox({
           <View style={S.actionSheet}>
             {actionMsg && (
               <>
-                {/* Répondre en public / en privé — groupe uniquement */}
                 {conversationType === 'group' && !actionMsg.deletedAt && !actionMsg.is_private_reply && (
                   <>
                     <TouchableOpacity
@@ -685,7 +827,6 @@ export default function ChatBox({
                   </>
                 )}
 
-                {/* Modifier visibilité — auteur d'une réponse uniquement */}
                 {conversationType === 'group' && isAuthor(actionMsg) && actionMsg.reply_to_id && !actionMsg.deletedAt && (
                   <TouchableOpacity
                     style={S.actionItem}
@@ -705,7 +846,6 @@ export default function ChatBox({
                   </TouchableOpacity>
                 )}
 
-                {/* Supprimer — auteur uniquement */}
                 {isAuthor(actionMsg) && !actionMsg.deletedAt && (
                   <TouchableOpacity
                     style={S.actionItem}
@@ -736,54 +876,57 @@ export default function ChatBox({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: '#F5F5F5' },
-  header:          { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 10 : 20, paddingBottom: 15, paddingHorizontal: 15 },
-  backBtn:         { marginRight: 12, padding: 5 },
-  avatar:          { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center', position: 'relative' },
-  avatarTxt:       { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  onlineDot:       { position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#fff', bottom: 2, right: 2 },
-  headerInfo:      { flex: 1, marginLeft: 10 },
-  headerName:      { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  headerStatus:    { fontSize: 12, color: '#E0D0FF', marginTop: 2 },
-  msgs:            { flex: 1 },
-  loadMoreBtn:     { alignSelf: 'center', marginBottom: 12, marginTop: 4, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#F0E8FF', borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  loadMoreTxt:     { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
-  bubble:          { maxWidth: '78%', padding: 12, borderRadius: 18, marginBottom: 8 },
-  bubbleMe:        { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
-  bubbleThem:      { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
-  senderName:      { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
+  container:        { flex: 1, backgroundColor: '#F5F5F5' },
+  header:           { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 10 : 20, paddingBottom: 15, paddingHorizontal: 15 },
+  backBtn:          { marginRight: 12, padding: 5 },
+  avatar:           { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center', position: 'relative' },
+  avatarTxt:        { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  onlineDot:        { position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#fff', bottom: 2, right: 2 },
+  headerInfo:       { flex: 1, marginLeft: 10 },
+  headerName:       { fontSize: 18, fontWeight: 'bold', color: '#fff' },
+  headerStatus:     { fontSize: 12, color: '#E0D0FF', marginTop: 2 },
+  msgs:             { flex: 1 },
+  loadMoreBtn:      { alignSelf: 'center', marginBottom: 12, marginTop: 4, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#F0E8FF', borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  loadMoreTxt:      { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  bubble:           { maxWidth: '78%', padding: 12, borderRadius: 18, marginBottom: 8 },
+  bubbleMe:         { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
+  bubbleThem:       { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
+  senderName:       { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
   // Citation (reply)
-  replyBlock:      { borderRadius: 8, padding: 8, marginBottom: 6 },
-  replyBlockMe:    { backgroundColor: 'rgba(255,255,255,0.15)' },
-  replyBlockThem:  { backgroundColor: '#F0E8FF' },
-  replyAuthor:     { fontSize: 11, fontWeight: '700', color: '#8A2BE2', marginBottom: 2 },
-  replyContent:    { fontSize: 12, color: '#555' },
+  replyBlock:       { borderRadius: 8, padding: 8, marginBottom: 6 },
+  replyBlockMe:     { backgroundColor: 'rgba(255,255,255,0.15)' },
+  replyBlockThem:   { backgroundColor: '#F0E8FF' },
+  replyAuthor:      { fontSize: 11, fontWeight: '700', color: '#8A2BE2', marginBottom: 2 },
+  replyContent:     { fontSize: 12, color: '#555' },
   // Contenu message
-  msgText:         { fontSize: 15, lineHeight: 20 },
-  msgTextMe:       { color: '#fff' },
-  msgTextThem:     { color: '#333' },
-  msgDeleted:      { color: '#aaa', fontStyle: 'italic' },
-  msgTime:         { fontSize: 10 },
-  msgTimeMe:       { color: '#E0D0FF', textAlign: 'right' },
-  msgTimeThem:     { color: '#999' },
-  privateReplyWrap:{ flexDirection: 'row', alignItems: 'center' },
-  mediaImage:      { width: 200, height: 150, borderRadius: 8 },
+  msgText:          { fontSize: 15, lineHeight: 20 },
+  msgTextMe:        { color: '#fff' },
+  msgTextThem:      { color: '#333' },
+  msgDeleted:       { color: '#aaa', fontStyle: 'italic' },
+  msgTime:          { fontSize: 10 },
+  msgTimeMe:        { color: '#E0D0FF', textAlign: 'right' },
+  msgTimeThem:      { color: '#999' },
+  privateReplyWrap: { flexDirection: 'row', alignItems: 'center' },
+  // Media
+  mediaImage:       { width: 200, height: 150, borderRadius: 8 },
+  mediaFileWrap:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  mediaFileName:    { fontSize: 13, flex: 1 },
   // Barre réponse
-  replyBar:        { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0E8FF', paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  replyBarContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  replyBarAuthor:  { fontSize: 12, fontWeight: '700', color: '#8A2BE2' },
-  replyBarText:    { fontSize: 12, color: '#666', marginTop: 1 },
+  replyBar:         { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0E8FF', paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  replyBarContent:  { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  replyBarAuthor:   { fontSize: 12, fontWeight: '700', color: '#8A2BE2' },
+  replyBarText:     { fontSize: 12, color: '#666', marginTop: 1 },
   // Saisie
-  inputWrap:       { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 10, paddingBottom: Platform.OS === 'ios' ? 20 : 10, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  mediaBtn:        { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
-  input:           { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, marginRight: 8 },
-  sendBtn:         { width: 44, height: 44, borderRadius: 22, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
-  sendBtnDisabled: { backgroundColor: '#ccc' },
+  inputWrap:        { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 10, paddingBottom: Platform.OS === 'ios' ? 20 : 10, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  mediaBtn:         { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
+  input:            { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, marginRight: 8 },
+  sendBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
+  sendBtnDisabled:  { backgroundColor: '#ccc' },
   // Action sheet
-  modalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  actionSheet:     { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Platform.OS === 'ios' ? 30 : 16, paddingTop: 8 },
-  actionItem:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 },
-  actionTxt:       { fontSize: 16, color: '#333', fontWeight: '500' },
-  actionSubTxt:    { fontSize: 12, color: '#999', marginTop: 1 },
-  actionDivider:   { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
+  modalOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  actionSheet:      { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Platform.OS === 'ios' ? 30 : 16, paddingTop: 8 },
+  actionItem:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 },
+  actionTxt:        { fontSize: 16, color: '#333', fontWeight: '500' },
+  actionSubTxt:     { fontSize: 12, color: '#999', marginTop: 1 },
+  actionDivider:    { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
 });
