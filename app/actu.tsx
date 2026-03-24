@@ -25,7 +25,6 @@ import PushPromptModal   from '../components/PushPromptModal';
 
 const { width, height } = Dimensions.get('window');
 
-// ── SEUL POINT D'ENTRÉE : backend Render ──────────────────────────────────────
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HOME_URL    = `${BACKEND_URL}/home`;
 const PROFILE_URL = `${BACKEND_URL}/profile`;
@@ -38,7 +37,6 @@ const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50  : 30;
 const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 const AUD_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 
-// ✅ artisanat ajouté
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
 type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
 type Visibility  = 'public' | 'friends' | 'private';
@@ -118,6 +116,7 @@ const formatTimeAgo = (dateString: string) => {
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
+// ─── URI → Blob ───────────────────────────────────────────────────────────────
 const uriToBlob = (uri: string): Promise<Blob> =>
   new Promise((resolve, reject) => {
     if (Platform.OS === 'web') {
@@ -132,12 +131,28 @@ const uriToBlob = (uri: string): Promise<Blob> =>
     }
   });
 
+// ─── Upload direct Supabase Storage ──────────────────────────────────────────
+// Content-Type lu depuis blob.type — aucun type codé en dur, tous formats acceptés.
+const uploadToStorage = async (signedUrl: string, uri: string): Promise<void> => {
+  const blob        = await uriToBlob(uri);
+  const contentType = blob.type || 'application/octet-stream';
+  const uploadRes   = await fetch(signedUrl, {
+    method:  'PUT',
+    headers: { 'Content-Type': contentType },
+    body:    blob,
+  });
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => '');
+    throw new Error(`Échec upload Supabase Storage (${uploadRes.status}) ${errText}`);
+  }
+};
+
 // ─── getValidToken ────────────────────────────────────────────────────────────
 async function getValidToken(): Promise<{ uid: string; token: string; refresh_token: string; expires_at: number } | null> {
   try {
     const raw = await AsyncStorage.getItem('harmonia_session');
     if (!raw) return null;
-    const session = JSON.parse(raw);
+    const session      = JSON.parse(raw);
     const uid          = session?.user?.id      || '';
     const accessToken  = session?.access_token  || '';
     const refreshToken = session?.refresh_token || '';
@@ -153,12 +168,64 @@ async function getValidToken(): Promise<{ uid: string; token: string; refresh_to
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
     if (!res.ok) return null;
-    const data = await res.json();
+    const data           = await res.json();
     const updatedSession = { ...session, access_token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at };
     await AsyncStorage.setItem('harmonia_session', JSON.stringify(updatedSession));
     return { uid, token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at };
   } catch { return null; }
 }
+
+// ─── MediaViewer — fullscreen image ou vidéo ─────────────────────────────────
+// Clic sur le contenu → ferme le viewer (toggle).
+interface MediaViewerProps {
+  visible: boolean;
+  url:     string | null;
+  type:    'image' | 'video';
+  onClose: () => void;
+}
+
+function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
+  if (!url) return null;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={mvStyles.overlay}>
+        {/* Bouton fermer */}
+        <TouchableOpacity style={mvStyles.closeBtn} onPress={onClose}>
+          <Ionicons name="close" size={30} color="#fff" />
+        </TouchableOpacity>
+
+        {type === 'image' ? (
+          // Clic sur l'image → ferme le viewer
+          <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.imageWrapper}>
+            <Image source={{ uri: url }} style={mvStyles.image} resizeMode="contain" />
+          </TouchableOpacity>
+        ) : Platform.OS === 'web' ? (
+          // @ts-ignore — élément HTML natif, web uniquement
+          <video
+            src={url}
+            controls
+            autoPlay
+            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
+          />
+        ) : (
+          <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.videoNative}>
+            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
+            <Text style={mvStyles.videoHint}>Appuyez pour fermer</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+const mvStyles = StyleSheet.create({
+  overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)', justifyContent: 'center', alignItems: 'center' },
+  closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
+  imageWrapper: { width: width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
+  image:        { width: width, height: height * 0.85 },
+  videoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
+  videoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
+});
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
 interface PostCardProps {
@@ -185,6 +252,11 @@ const PostCard = React.memo(({
   const [likesCount,  setLikesCount]  = useState(post.reactions.likes);
   const [sharesCount, setSharesCount] = useState(post.reactions.shares);
   const [isAnim,      setIsAnim]      = useState(false);
+
+  // Viewer fullscreen local au PostCard
+  const [viewerUrl,  setViewerUrl]  = useState<string | null>(null);
+  const [viewerType, setViewerType] = useState<'image' | 'video'>('image');
+
   const isOwn = post.author_id === userId;
 
   useEffect(() => {
@@ -216,83 +288,110 @@ const PostCard = React.memo(({
   };
 
   return (
-    <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
-      <View style={styles.postHeader}>
-        <TouchableOpacity
-          style={styles.postAuthor}
-          onPress={() => { if (!isOwn) onAuthorPress(post.author_id); }}
-          activeOpacity={isOwn ? 1 : 0.7}
-        >
-          {post.author.avatar_url
-            ? <Image source={{ uri: post.author.avatar_url }} style={styles.avatar} />
-            : <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
-              </View>}
-          <View>
-            <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
-            <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
-          </View>
-        </TouchableOpacity>
-        {isOwn && (
-          <TouchableOpacity onPress={() => onOpenEdit({ id: post.id, content: post.content })}>
-            <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+    <>
+      {/* Viewer fullscreen — clic sur le contenu ferme le modal */}
+      <MediaViewer
+        visible={!!viewerUrl}
+        url={viewerUrl}
+        type={viewerType}
+        onClose={() => setViewerUrl(null)}
+      />
+
+      <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
+        <View style={styles.postHeader}>
+          <TouchableOpacity
+            style={styles.postAuthor}
+            onPress={() => { if (!isOwn) onAuthorPress(post.author_id); }}
+            activeOpacity={isOwn ? 1 : 0.7}
+          >
+            {post.author.avatar_url
+              ? <Image source={{ uri: post.author.avatar_url }} style={styles.avatar} />
+              : <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
+                </View>}
+            <View>
+              <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
+              <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
+            </View>
+          </TouchableOpacity>
+          {isOwn && (
+            <TouchableOpacity onPress={() => onOpenEdit({ id: post.id, content: post.content })}>
+              <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <Text style={styles.postContent}>{post.content}</Text>
+
+        {/* Image — clic → fullscreen, reclic → ferme */}
+        {post.imagepots && (
+          <TouchableOpacity
+            activeOpacity={0.92}
+            onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }}
+          >
+            <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
+            <View style={styles.mediaExpandHint}>
+              <Ionicons name="expand-outline" size={16} color="rgba(255,255,255,0.85)" />
+            </View>
           </TouchableOpacity>
         )}
-      </View>
 
-      <Text style={styles.postContent}>{post.content}</Text>
+        {/* Vidéo post — clic → fullscreen player, reclic → ferme */}
+        {post.vidposts && (
+          <TouchableOpacity
+            style={styles.videoThumb}
+            activeOpacity={0.92}
+            onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}
+          >
+            <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
+            <Text style={styles.videoThumbLabel}>Appuyer pour lire</Text>
+          </TouchableOpacity>
+        )}
 
-      {post.imagepots && <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />}
-      {post.vidposts && (
-        <View style={styles.videoThumb}>
-          <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
-          <Text style={styles.videoThumbLabel}>Vidéo</Text>
-        </View>
-      )}
-
-      <View style={styles.statsBar}>
-        <TouchableOpacity onPress={() => { if (likesCount > 0) onOpenLikers(post.id); }}>
-          <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
-        </TouchableOpacity>
-        <View style={styles.statsRight}>
-          <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
-          <Text style={styles.statsSep}>•</Text>
-          <Text style={styles.statsText}>{sharesCount} partages</Text>
-        </View>
-      </View>
-
-      <View style={styles.actionsBar}>
-        <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
-          <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
-            <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionBtn} onPress={() => {
-          if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          onOpenComments(post.id);
-        }}>
-          <View style={styles.actionGrad}>
-            <Ionicons name="chatbubble-outline" size={20} color="#666" />
-            <Text style={styles.actionText}>Commenter</Text>
+        <View style={styles.statsBar}>
+          <TouchableOpacity onPress={() => { if (likesCount > 0) onOpenLikers(post.id); }}>
+            <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
+          </TouchableOpacity>
+          <View style={styles.statsRight}>
+            <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
+            <Text style={styles.statsSep}>•</Text>
+            <Text style={styles.statsText}>{sharesCount} partages</Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        {post.visibility === 'public' && (
-          <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
-            <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
-              <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
-              <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
+        <View style={styles.actionsBar}>
+          <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
+            <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
+              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
+              <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
             </LinearGradient>
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? '#FFD700' : '#666'} />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => {
+            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onOpenComments(post.id);
+          }}>
+            <View style={styles.actionGrad}>
+              <Ionicons name="chatbubble-outline" size={20} color="#666" />
+              <Text style={styles.actionText}>Commenter</Text>
+            </View>
+          </TouchableOpacity>
+
+          {post.visibility === 'public' && (
+            <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
+              <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
+                <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
+                <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? '#FFD700' : '#666'} />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </>
   );
 });
 
@@ -317,7 +416,6 @@ const SubmissionCard = React.memo(({
 
   useEffect(() => { setTotalVotes(sub.total_votes); setUserVoted(sub.user_voted); }, [sub]);
 
-  // ✅ artisanat = vidéo comme performance
   const isPerformance = sub.game_type === 'performance';
   const isArtisanat   = sub.game_type === 'artisanat';
   const isVideo       = isPerformance || isArtisanat;
@@ -338,7 +436,6 @@ const SubmissionCard = React.memo(({
     finally { setIsVoting(false); }
   };
 
-  // ✅ couleurs et badge pour chaque type
   const badgeBg    = isPerformance ? '#FFF3E0' : isArtisanat ? '#FFF8E1' : isMusic ? '#E8F5E9' : '#F0E6FF';
   const badgeColor = isPerformance ? '#E65100' : isArtisanat ? '#B45309' : isMusic ? '#2E7D32' : '#8E44AD';
   const badgeLabel = sub.badge ?? (isArtisanat ? '🪡 Artisanat' : '🎨 Arts');
@@ -382,7 +479,6 @@ const SubmissionCard = React.memo(({
                 <View style={styles.audioBadge}><Ionicons name="musical-notes" size={12} color="#FFF" /><Text style={styles.audioBadgeText}>Audio</Text></View>
               </TouchableOpacity>
             ) : isVideo ? (
-              // ✅ performance ET artisanat → même rendu vidéo TikTok
               <TouchableOpacity activeOpacity={0.9} style={styles.videoThumbSub}
                 onPress={() => { const si = allVideoItems.findIndex(v => v.mediaId === item.id); openVideoModal(allVideoItems, si >= 0 ? si : 0); }}>
                 <Video source={{ uri: item.url }} style={StyleSheet.absoluteFill} resizeMode={ResizeMode.COVER} isLooping isMuted shouldPlay={activeIndex === index} />
@@ -621,34 +717,51 @@ export default function ActuScreen() {
     if (mode !== 'posts') await loadSubmissions();
   };
 
-  // ─── Création de post ─────────────────────────────────────────────────────
+  // ─── Création de post — nouveau flux upload ───────────────────────────────
+  //
+  // 1. get-upload-url (context: 'image' | 'video') → signed_url + public_url
+  // 2. uploadToStorage → PUT direct, Content-Type = blob.type (MIME réel)
+  // 3. public_url stockée dans le state → intégrée à create-post ensuite
+  //
+  // Aucun type de fichier codé en dur. Tous formats acceptés.
+
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') { Alert.alert('Permission refusée', 'Accès aux médias requis.'); return; }
     }
+
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: mediaType === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, quality: 0.8,
+      mediaTypes:    mediaType === 'video'
+        ? ImagePicker.MediaTypeOptions.Videos
+        : ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: mediaType === 'image',
+      quality:       0.8,
     });
     if (result.canceled || !result.assets[0]) return;
+
     setUploadingMedia(true);
     try {
       const session = await getValidToken();
       if (!session) return;
+
+      const context = mediaType === 'image' ? 'image' : 'video';
+
+      // 1. Signed Upload URL + public_url depuis le serveur
       const urlRes  = await fetch(PROFILE_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get-media-url', access_token: session.token, media_type: mediaType }),
+        body: JSON.stringify({ action: 'get-upload-url', access_token: session.token, context }),
       });
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
-      const { signed_url, public_url } = urlData;
-      const blob        = await uriToBlob(result.assets[0].uri);
-      const contentType = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
-      const uploadRes   = await fetch(signed_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob });
-      if (!uploadRes.ok) throw new Error('Échec upload');
-      if (mediaType === 'image') setPostImageUrl(public_url);
-      else setPostVideoUrl(public_url);
+
+      // 2. Upload direct — MIME lu depuis le Blob, aucun type imposé
+      await uploadToStorage(urlData.signed_url, result.assets[0].uri);
+
+      // 3. Stocker la public_url → envoyée dans create-post
+      if (mediaType === 'image') setPostImageUrl(urlData.public_url);
+      else                       setPostVideoUrl(urlData.public_url);
+
       showToast('success', `${mediaType === 'image' ? 'Image' : 'Vidéo'} ajoutée !`);
     } catch (err: any) {
       showToast('error', err.message || "Impossible d'ajouter le média");
@@ -687,13 +800,11 @@ export default function ActuScreen() {
   const displayedItems: FeedItem[] = (() => {
     if (filterMode === 'posts')  return posts;
     if (filterMode === 'images') return submissions.filter(s => s.game_type === 'arts');
-    // ✅ filtre Vidéos = performance + artisanat
     if (filterMode === 'videos') return submissions.filter(s => s.game_type === 'performance' || s.game_type === 'artisanat');
     if (filterMode === 'music')  return submissions.filter(s => s.game_type === 'music');
     return [...posts, ...submissions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   })();
 
-  // ✅ allVideoItems = performance + artisanat
   const allVideoItems: VideoFeedItem[] = displayedItems
     .filter((item): item is Submission => item.item_type === 'submission' && (item.game_type === 'performance' || item.game_type === 'artisanat'))
     .flatMap(sub => (sub.media ?? []).map(m => ({
@@ -1002,7 +1113,7 @@ export default function ActuScreen() {
                 <View style={styles.cpMediaContainer}>
                   <View style={[styles.cpMediaPreview, styles.cpVideoPreviewBg]}>
                     <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.9)" />
-                    <Text style={styles.cpVideoPreviewLabel}>Vidéo ajoutée</Text>
+                    <Text style={styles.cpVideoPreviewLabel}>Vidéo prête</Text>
                   </View>
                   <TouchableOpacity style={styles.cpMediaRemove} onPress={() => setPostVideoUrl(null)}>
                     <Ionicons name="close-circle" size={24} color="#EF4444" />
@@ -1097,9 +1208,7 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
     if (!visible || items.length === 0) return;
     setCurrentIndex(startIndex);
     if (Platform.OS === 'web') {
-      setTimeout(() => {
-        webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false });
-      }, 50);
+      setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50);
     } else {
       flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
     }
@@ -1168,11 +1277,8 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
 
   useEffect(() => {
     if (!videoRef.current) return;
-    if (isActive) {
-      videoRef.current.playAsync().catch(() => {});
-    } else {
-      videoRef.current.pauseAsync().catch(() => {});
-    }
+    if (isActive) { videoRef.current.playAsync().catch(() => {}); }
+    else          { videoRef.current.pauseAsync().catch(() => {}); }
   }, [isActive]);
 
   const handleVoteLocal = async () => {
@@ -1220,9 +1326,7 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
     if (!visible || items.length === 0) return;
     setCurrentIndex(startIndex);
     if (Platform.OS === 'web') {
-      setTimeout(() => {
-        webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false });
-      }, 50);
+      setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50);
     } else {
       flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
     }
@@ -1434,7 +1538,6 @@ const styles = StyleSheet.create({
   emptyText:       { fontSize: 16, color: '#999', marginTop: 12 },
   emptySub:        { fontSize: 12, color: '#CCC', marginTop: 5 },
 
-  // Toast
   toast:         { position: 'absolute', top: Platform.OS === 'ios' ? 55 : 15, left: 20, right: 20, zIndex: 2000, flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, gap: 10 },
   toast_success: { backgroundColor: '#10B981' },
   toast_error:   { backgroundColor: '#EF4444' },
@@ -1452,8 +1555,9 @@ const styles = StyleSheet.create({
   postTime:          { fontSize: 12, color: '#999', marginTop: 1 },
   postContent:       { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
   postImage:         { width: '100%', height: 240, marginBottom: 10 },
+  mediaExpandHint:   { position: 'absolute', bottom: 18, right: 10, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4 },
   videoThumb:        { width: '100%', height: 180, backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', marginBottom: 10, gap: 6 },
-  videoThumbLabel:   { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  videoThumbLabel:   { color: 'rgba(255,255,255,0.75)', fontSize: 13 },
   statsBar:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
   statsText:         { fontSize: 12, color: '#666' },
   statsRight:        { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -1496,7 +1600,6 @@ const styles = StyleSheet.create({
   dot:              { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DDD' },
   dotActive:        { backgroundColor: '#8A2BE2', width: 18, borderRadius: 3 },
 
-  // Modals génériques
   filterOverlay:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start', alignItems: 'flex-start', paddingTop: FILTER_OVERLAY_TOP, paddingLeft: 14 },
   filterMenu:             { backgroundColor: '#FFF', borderRadius: 16, padding: 8, minWidth: 200, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
   filterMenuTitle:        { color: '#999', fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingVertical: 8, textTransform: 'uppercase' },
@@ -1513,32 +1616,31 @@ const styles = StyleSheet.create({
   modalBtn:      { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   modalBtnText:  { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 
-  // Modal Créer Post
-  cpOverlay:            { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  cpCard:               { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
-  cpHeader:             { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  cpTitle:              { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
-  cpAuthorRow:          { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
-  cpAvatar:             { width: 44, height: 44, borderRadius: 22 },
-  cpAuthorName:         { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
-  cpProBadge:           { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
-  cpProBadgeText:       { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
-  cpVisibilityRow:      { flexDirection: 'row', gap: 6 },
-  cpVisibilityBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
-  cpVisibilityBtnActive:{ backgroundColor: '#8A2BE2', borderColor: '#8A2BE2' },
-  cpVisibilityText:     { fontSize: 11, color: '#666', fontWeight: '600' },
+  cpOverlay:             { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  cpCard:                { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
+  cpHeader:              { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  cpTitle:               { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
+  cpAuthorRow:           { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
+  cpAvatar:              { width: 44, height: 44, borderRadius: 22 },
+  cpAuthorName:          { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
+  cpProBadge:            { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
+  cpProBadgeText:        { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
+  cpVisibilityRow:       { flexDirection: 'row', gap: 6 },
+  cpVisibilityBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
+  cpVisibilityBtnActive: { backgroundColor: '#8A2BE2', borderColor: '#8A2BE2' },
+  cpVisibilityText:      { fontSize: 11, color: '#666', fontWeight: '600' },
   cpVisibilityTextActive:{ color: '#fff' },
-  cpInput:              { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
-  cpCharCount:          { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
-  cpMediaButtons:       { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  cpMediaBtn:           { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
-  cpMediaBtnText:       { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
-  cpMediaContainer:     { position: 'relative', marginBottom: 12 },
-  cpMediaPreview:       { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  cpVideoPreviewBg:     { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  cpVideoPreviewLabel:  { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
-  cpMediaRemove:        { position: 'absolute', top: 8, right: 8 },
-  cpPublishBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
-  cpPublishBtnDisabled: { backgroundColor: '#C4B5FD' },
-  cpPublishBtnText:     { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  cpInput:               { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
+  cpCharCount:           { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
+  cpMediaButtons:        { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  cpMediaBtn:            { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
+  cpMediaBtnText:        { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  cpMediaContainer:      { position: 'relative', marginBottom: 12 },
+  cpMediaPreview:        { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  cpVideoPreviewBg:      { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  cpVideoPreviewLabel:   { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  cpMediaRemove:         { position: 'absolute', top: 8, right: 8 },
+  cpPublishBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
+  cpPublishBtnDisabled:  { backgroundColor: '#C4B5FD' },
+  cpPublishBtnText:      { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });
