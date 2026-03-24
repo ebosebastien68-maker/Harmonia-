@@ -1,18 +1,22 @@
 // =====================================================
 // PROFILE SCREEN
 //
-// Upload flow (avatar & médias post) :
-//   1. get-upload-url  → Signed URL + public_url depuis le serveur
-//   2. PUT direct vers Supabase Storage (aucun transit serveur)
-//   3. confirm-upload  → serveur enregistre l'URL en DB (avatar uniquement)
-//      Pour les médias post, public_url est déjà connue → intégrée à create-post
+// Corrections :
+//   1. Avatar cache busting — loadProfile recharge l'URL fraîche depuis la DB
+//      après confirm-upload (le ?t=timestamp est géré côté serveur)
+//   2. Vidéo upload — MIME type lu depuis le Blob après uriToBlob.
+//      Le Blob porte toujours le type réel du fichier (webm, quicktime,
+//      mp4, etc.) indépendamment du navigateur ou de l'OS.
+//      Aucun type codé en dur, tous les formats acceptés.
+//   3. Viewer fullscreen — clic sur image ou vidéo d'un post ouvre un
+//      modal plein écran (Image native + <video> HTML sur web)
 // =====================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, Image, TextInput,
   TouchableOpacity, ActivityIndicator, Platform, Alert,
-  KeyboardAvoidingView, Modal,
+  KeyboardAvoidingView, Modal, Dimensions,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,6 +35,7 @@ const PROFILE_URL    = `${WS_BASE}/profile`;
 const REFRESH_URL    = `${WS_BASE}/refresh-token`;
 const API_BASE_POSTS = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
 const NATIVE         = Platform.OS !== 'web';
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 interface MyProfile {
   id:             string;
@@ -74,6 +79,51 @@ const formatTimeAgo = (dateString: string) => {
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
+// ─── MEDIA VIEWER (fullscreen image ou vidéo) ─────────────────────────────────
+
+interface MediaViewerProps {
+  visible: boolean;
+  url:     string | null;
+  type:    'image' | 'video';
+  onClose: () => void;
+}
+
+function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
+  if (!url) return null;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.mediaViewerOverlay}>
+        <TouchableOpacity style={styles.mediaViewerClose} onPress={onClose}>
+          <Ionicons name="close" size={30} color="#fff" />
+        </TouchableOpacity>
+
+        {type === 'image' ? (
+          <Image
+            source={{ uri: url }}
+            style={styles.mediaViewerImage}
+            resizeMode="contain"
+          />
+        ) : Platform.OS === 'web' ? (
+          // @ts-ignore
+          <video
+            src={url}
+            controls
+            autoPlay
+            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
+          />
+        ) : (
+          <View style={styles.mediaViewerVideoNative}>
+            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
+            <Text style={styles.mediaViewerVideoHint}>
+              Appuyez longuement pour ouvrir dans le lecteur
+            </Text>
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
 // ─── POSTCARD ─────────────────────────────────────────────────────────────────
 interface PostCardProps {
   post:           Post;
@@ -98,6 +148,10 @@ const PostCard = React.memo(({
   const [likesCount,  setLikesCount]  = useState(post.reactions.likes);
   const [sharesCount, setSharesCount] = useState(post.reactions.shares);
   const [isAnim,      setIsAnim]      = useState(false);
+
+  const [viewerUrl,  setViewerUrl]  = useState<string | null>(null);
+  const [viewerType, setViewerType] = useState<'image' | 'video'>('image');
+
   const isOwn = post.author_id === userId;
 
   useEffect(() => {
@@ -134,82 +188,96 @@ const PostCard = React.memo(({
   };
 
   return (
-    <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
-      <View style={styles.postHeader}>
-        <View style={styles.postAuthor}>
-          {post.author.avatar_url
-            ? <Image source={{ uri: post.author.avatar_url }} style={styles.postAvatar} />
-            : <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
-              </View>}
-          <View>
-            <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
-            <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
+    <>
+      <MediaViewer
+        visible={!!viewerUrl}
+        url={viewerUrl}
+        type={viewerType}
+        onClose={() => setViewerUrl(null)}
+      />
+
+      <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
+        <View style={styles.postHeader}>
+          <View style={styles.postAuthor}>
+            {post.author.avatar_url
+              ? <Image source={{ uri: post.author.avatar_url }} style={styles.postAvatar} />
+              : <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
+                </View>}
+            <View>
+              <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
+              <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
+            </View>
           </View>
+          {isOwn && (
+            <TouchableOpacity onPress={() => onOpenEdit({ id: post.id, content: post.content })}>
+              <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
         </View>
-        {isOwn && (
-          <TouchableOpacity onPress={() => onOpenEdit({ id: post.id, content: post.content })}>
-            <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+
+        <Text style={styles.postContent}>{post.content}</Text>
+
+        {post.imagepots && (
+          <TouchableOpacity onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }} activeOpacity={0.92}>
+            <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
+            <View style={styles.mediaExpandHint}>
+              <Ionicons name="expand-outline" size={16} color="rgba(255,255,255,0.85)" />
+            </View>
           </TouchableOpacity>
         )}
-      </View>
 
-      <Text style={styles.postContent}>{post.content}</Text>
+        {post.vidposts && (
+          <TouchableOpacity style={styles.videoThumb} onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }} activeOpacity={0.92}>
+            <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.9)" />
+            <Text style={styles.videoLabel}>Appuyer pour lire</Text>
+          </TouchableOpacity>
+        )}
 
-      {post.imagepots && (
-        <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
-      )}
-
-      {post.vidposts && (
-        <View style={styles.videoThumb}>
-          <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.9)" />
-          <Text style={styles.videoLabel}>Vidéo</Text>
-        </View>
-      )}
-
-      <View style={styles.statsBar}>
-        <TouchableOpacity onPress={() => { if (likesCount > 0) onOpenLikers(post.id); }}>
-          <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
-        </TouchableOpacity>
-        <View style={styles.statsRight}>
-          <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
-          <Text style={styles.statsSep}>•</Text>
-          <Text style={styles.statsText}>{sharesCount} partages</Text>
-        </View>
-      </View>
-
-      <View style={styles.actionsBar}>
-        <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
-          <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
-            <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionBtn} onPress={() => {
-          if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          onOpenComments(post.id);
-        }}>
-          <View style={styles.actionGrad}>
-            <Ionicons name="chatbubble-outline" size={20} color="#666" />
-            <Text style={styles.actionText}>Commenter</Text>
+        <View style={styles.statsBar}>
+          <TouchableOpacity onPress={() => { if (likesCount > 0) onOpenLikers(post.id); }}>
+            <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
+          </TouchableOpacity>
+          <View style={styles.statsRight}>
+            <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
+            <Text style={styles.statsSep}>•</Text>
+            <Text style={styles.statsText}>{sharesCount} partages</Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        {post.visibility === 'public' && (
-          <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
-            <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
-              <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
-              <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
+        <View style={styles.actionsBar}>
+          <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
+            <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
+              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
+              <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
             </LinearGradient>
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? '#FFD700' : '#666'} />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => {
+            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onOpenComments(post.id);
+          }}>
+            <View style={styles.actionGrad}>
+              <Ionicons name="chatbubble-outline" size={20} color="#666" />
+              <Text style={styles.actionText}>Commenter</Text>
+            </View>
+          </TouchableOpacity>
+
+          {post.visibility === 'public' && (
+            <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
+              <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
+                <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
+                <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? '#FFD700' : '#666'} />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </>
   );
 });
 
@@ -409,18 +477,37 @@ export default function ProfileScreen() {
     });
 
   // ── HELPER : Upload direct vers Supabase Storage ──────────────────────────
-  // Étape commune : PUT sur la signed URL sans passer par le serveur
-  const uploadToStorage = async (signedUrl: string, uri: string, contentType: string): Promise<void> => {
-    const blob      = await uriToBlob(uri);
+  //
+  // Le Blob est d'abord converti depuis l'URI — son attribut `type` contient
+  // le MIME réel du fichier tel que lu par le navigateur ou le système (ex:
+  // video/webm, video/quicktime, image/png, image/heic, etc.).
+  // On utilise ce type pour le Content-Type du PUT : aucune valeur codée en
+  // dur, tous formats acceptés sans condition.
+  //
+  // Retourne le Blob pour éviter une double conversion dans les appelants.
+
+  const uploadToStorage = async (
+    signedUrl: string,
+    uri: string,
+  ): Promise<Blob> => {
+    const blob        = await uriToBlob(uri);
+    const contentType = blob.type || 'application/octet-stream';
+
     const uploadRes = await fetch(signedUrl, {
       method:  'PUT',
       headers: { 'Content-Type': contentType },
       body:    blob,
     });
-    if (!uploadRes.ok) throw new Error('Échec upload vers Supabase Storage');
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text().catch(() => '');
+      throw new Error(`Échec upload Supabase Storage (${uploadRes.status}) ${errText}`);
+    }
+
+    return blob;
   };
 
-  // ── AVATAR : pick → get-upload-url → PUT direct → confirm-upload ─────────
+  // ── AVATAR ────────────────────────────────────────────────────────────────
   const pickAndUploadAvatar = async () => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -440,7 +527,7 @@ export default function ProfileScreen() {
       const token = await getValidToken();
       if (!token) return;
 
-      // 1. Obtenir la Signed Upload URL
+      // 1. Signed Upload URL
       const urlRes  = await fetch(PROFILE_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -449,20 +536,19 @@ export default function ProfileScreen() {
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
 
-      const { signed_url, path } = urlData;
+      // 2. Upload direct — type lu depuis le Blob
+      await uploadToStorage(urlData.signed_url, result.assets[0].uri);
 
-      // 2. Upload DIRECT vers Supabase Storage (aucun transit serveur)
-      await uploadToStorage(signed_url, result.assets[0].uri, 'image/jpeg');
-
-      // 3. Confirmer → le serveur enregistre l'URL en DB
+      // 3. Confirm → serveur enregistre l'URL avec ?t=timestamp en DB
       const confirmRes  = await fetch(PROFILE_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'confirm-upload', access_token: token, context: 'avatar', path }),
+        body:    JSON.stringify({ action: 'confirm-upload', access_token: token, context: 'avatar', path: urlData.path }),
       });
       const confirmData = await confirmRes.json();
       if (!confirmRes.ok) throw new Error(confirmData.error);
 
+      // 4. Recharge depuis la DB → URL fraîche avec ?t=timestamp (pas de cache)
       await loadProfile();
       showToast('success', 'Photo de profil mise à jour !');
     } catch (err: any) {
@@ -470,9 +556,16 @@ export default function ProfileScreen() {
     } finally { setUploadingAvatar(false); }
   };
 
-  // ── MÉDIAS POST (pro) : get-upload-url → PUT direct → stocker public_url ──
-  // Pas de confirm-upload : la public_url est connue dès l'étape 1
-  // et sera intégrée à create-post
+  // ── MÉDIAS POST (pro) ─────────────────────────────────────────────────────
+  //
+  // Étapes :
+  //   1. get-upload-url → signed_url + public_url depuis le serveur
+  //   2. uploadToStorage → PUT direct, Content-Type = blob.type (MIME réel)
+  //   3. public_url stockée dans le state → intégrée à create-post ensuite
+  //
+  // Aucun type de fichier codé en dur. Le Blob porte son propre MIME type
+  // quel que soit le navigateur, l'OS ou le format choisi par l'utilisateur.
+
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -483,7 +576,7 @@ export default function ProfileScreen() {
       mediaTypes:    mediaType === 'video'
         ? ImagePicker.MediaTypeOptions.Videos
         : ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
+      allowsEditing: mediaType === 'image',
       quality:       0.8,
     });
     if (result.canceled || !result.assets[0]) return;
@@ -493,8 +586,9 @@ export default function ProfileScreen() {
       const token = await getValidToken();
       if (!token) return;
 
-      // 1. Obtenir la Signed Upload URL + public_url
       const context = mediaType === 'image' ? 'image' : 'video';
+
+      // 1. Signed Upload URL + public_url
       const urlRes  = await fetch(PROFILE_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -503,15 +597,12 @@ export default function ProfileScreen() {
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
 
-      const { signed_url, public_url } = urlData;
-      const contentType = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
+      // 2. Upload direct — Content-Type = blob.type, aucun type imposé
+      await uploadToStorage(urlData.signed_url, result.assets[0].uri);
 
-      // 2. Upload DIRECT vers Supabase Storage (aucun transit serveur)
-      await uploadToStorage(signed_url, result.assets[0].uri, contentType);
-
-      // 3. Stocker la public_url dans le state — intégrée à create-post ensuite
-      if (mediaType === 'image') setPostImageUrl(public_url);
-      else                       setPostVideoUrl(public_url);
+      // 3. public_url dans le state → sera envoyée dans create-post
+      if (mediaType === 'image') setPostImageUrl(urlData.public_url);
+      else                       setPostVideoUrl(urlData.public_url);
 
       showToast('success', `${mediaType === 'image' ? 'Image' : 'Vidéo'} ajoutée !`);
     } catch (err: any) {
@@ -531,12 +622,12 @@ export default function ProfileScreen() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          action:     'create-post',
+          action:       'create-post',
           access_token: token,
-          content:    postContent.trim(),
-          visibility: postVisibility,
-          imagepots:  postImageUrl || undefined,
-          vidposts:   postVideoUrl || undefined,
+          content:      postContent.trim(),
+          visibility:   postVisibility,
+          imagepots:    postImageUrl || undefined,
+          vidposts:     postVideoUrl || undefined,
         }),
       });
       const data = await res.json();
@@ -619,11 +710,11 @@ export default function ProfileScreen() {
 
       {/* ── VIEWER AVATAR ─────────────────────────────────────────────── */}
       <Modal visible={showAvatarViewer} transparent animationType="fade" onRequestClose={() => setShowAvatarViewer(false)} statusBarTranslucent>
-        <View style={styles.viewerOverlay}>
-          <TouchableOpacity style={styles.viewerClose} onPress={() => setShowAvatarViewer(false)}>
+        <View style={styles.mediaViewerOverlay}>
+          <TouchableOpacity style={styles.mediaViewerClose} onPress={() => setShowAvatarViewer(false)}>
             <Ionicons name="close" size={30} color="#fff" />
           </TouchableOpacity>
-          {profile.avatar_url && <Image source={{ uri: profile.avatar_url }} style={styles.viewerImage} resizeMode="contain" />}
+          {profile.avatar_url && <Image source={{ uri: profile.avatar_url }} style={styles.mediaViewerImage} resizeMode="contain" />}
         </View>
       </Modal>
 
@@ -685,7 +776,7 @@ export default function ProfileScreen() {
               <View style={styles.mediaPreviewContainer}>
                 <View style={[styles.mediaPreview, styles.videoPreviewBg]}>
                   <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.9)" />
-                  <Text style={styles.videoPreviewLabel}>Vidéo ajoutée</Text>
+                  <Text style={styles.videoPreviewLabel}>Vidéo prête</Text>
                 </View>
                 <TouchableOpacity style={styles.mediaRemoveBtn} onPress={() => setPostVideoUrl(null)}>
                   <Ionicons name="close-circle" size={24} color="#EF4444" />
@@ -741,7 +832,6 @@ export default function ProfileScreen() {
 
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-        {/* ── TOAST ──────────────────────────────────────────────────── */}
         {toast && (
           <View style={[styles.toast, styles[`toast_${toast.type}` as keyof typeof styles]]}>
             <Ionicons name={toast.type === 'success' ? 'checkmark-circle' : toast.type === 'error' ? 'close-circle' : 'information-circle'} size={20} color="#fff" />
@@ -749,7 +839,6 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* ── HEADER ─────────────────────────────────────────────────── */}
         <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.header}>
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={24} color="rgba(255,255,255,0.8)" />
@@ -767,7 +856,6 @@ export default function ProfileScreen() {
           <Text style={styles.headerSub}>Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</Text>
         </LinearGradient>
 
-        {/* ── STATS ──────────────────────────────────────────────────── */}
         <View style={styles.statsRow}>
           <LinearGradient colors={['#10B981', '#34D399']} style={styles.statCard}>
             <Ionicons name="wallet-outline" size={26} color="#fff" />
@@ -781,7 +869,6 @@ export default function ProfileScreen() {
           </LinearGradient>
         </View>
 
-        {/* ── INFORMATIONS PERSONNELLES ───────────────────────────────── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Informations personnelles</Text>
@@ -841,7 +928,6 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* ── PUBLICATIONS ────────────────────────────────────────────── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Publications ({posts.length})</Text>
@@ -878,7 +964,6 @@ export default function ProfileScreen() {
 
       </ScrollView>
 
-      {/* ── MODALS ─────────────────────────────────────────────────────── */}
       <CommentsModal
         visible={showCommentsModal}
         postId={selectedPostForComments}
@@ -904,8 +989,6 @@ export default function ProfileScreen() {
   );
 }
 
-// ─── SOUS-COMPOSANTS ──────────────────────────────────────────────────────────
-
 function InfoRow({ icon, label, value }: { icon: any; label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
@@ -920,7 +1003,6 @@ function InfoRow({ icon, label, value }: { icon: any; label: string; value: stri
 
 function Separator() { return <View style={styles.separator} />; }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:     { flex: 1, backgroundColor: '#F5F5F5' },
   scrollContent: { paddingBottom: 100 },
@@ -991,24 +1073,28 @@ const styles = StyleSheet.create({
   authorName:        { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
   postTime:          { fontSize: 12, color: '#999', marginTop: 1 },
   postContent:       { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
-  postImage:         { width: '100%', height: 240, marginBottom: 10 },
-  videoThumb:        { width: '100%', height: 180, backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', marginBottom: 10, gap: 6 },
-  videoLabel:        { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
-  statsBar:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  statsText:         { fontSize: 12, color: '#666' },
-  statsRight:        { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  statsSep:          { color: '#CCC' },
-  actionsBar:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
-  actionBtn:         { flex: 1, borderRadius: 8, overflow: 'hidden' },
-  actionBtnActive:   {},
-  actionGrad:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
-  actionText:        { fontSize: 12, fontWeight: '600', color: '#666' },
-  actionTextActive:  { color: '#FFF' },
-  saveBtn:           { padding: 8 },
+  postImage:         { width: '100%', height: 260, marginBottom: 10 },
+  videoThumb:        { width: '100%', height: 180, backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', marginBottom: 10, gap: 8 },
+  videoLabel:        { color: 'rgba(255,255,255,0.75)', fontSize: 13 },
+  mediaExpandHint:   { position: 'absolute', bottom: 18, right: 10, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4 },
 
-  viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
-  viewerClose:   { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
-  viewerImage:   { width: '100%', height: '80%' },
+  statsBar:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  statsText:   { fontSize: 12, color: '#666' },
+  statsRight:  { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  statsSep:    { color: '#CCC' },
+  actionsBar:  { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
+  actionBtn:   { flex: 1, borderRadius: 8, overflow: 'hidden' },
+  actionBtnActive: {},
+  actionGrad:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
+  actionText:  { fontSize: 12, fontWeight: '600', color: '#666' },
+  actionTextActive: { color: '#FFF' },
+  saveBtn:     { padding: 8 },
+
+  mediaViewerOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)', justifyContent: 'center', alignItems: 'center' },
+  mediaViewerClose:      { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
+  mediaViewerImage:      { width: SCREEN_W, height: SCREEN_H * 0.85 },
+  mediaViewerVideoNative:{ justifyContent: 'center', alignItems: 'center', gap: 16 },
+  mediaViewerVideoHint:  { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
 
   createPostOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   createPostCard:       { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
