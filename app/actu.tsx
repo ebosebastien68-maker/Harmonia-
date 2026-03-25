@@ -37,6 +37,12 @@ const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50  : 30;
 const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 const AUD_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 
+// ── Pagination : premier lot = 5, lots suivants = 10 ──────────────────────────
+const FEED_FIRST_LIMIT = 5
+const FEED_NEXT_LIMIT  = 10
+// Déclenche le chargement suivant quand il reste ~3 éléments avant la fin
+const LOAD_MORE_THRESHOLD = 0.85
+
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
 type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
 type Visibility  = 'public' | 'friends' | 'private';
@@ -132,18 +138,15 @@ const uriToBlob = (uri: string): Promise<Blob> =>
   });
 
 // ─── Upload direct Supabase Storage ──────────────────────────────────────────
-// Content-Type lu depuis blob.type — aucun type codé en dur, tous formats acceptés.
 const uploadToStorage = async (signedUrl: string, uri: string): Promise<void> => {
   const blob        = await uriToBlob(uri);
   const contentType = blob.type || 'application/octet-stream';
   const uploadRes   = await fetch(signedUrl, {
-    method:  'PUT',
-    headers: { 'Content-Type': contentType },
-    body:    blob,
+    method: 'PUT', headers: { 'Content-Type': contentType }, body: blob,
   });
   if (!uploadRes.ok) {
     const errText = await uploadRes.text().catch(() => '');
-    throw new Error(`Échec upload Supabase Storage (${uploadRes.status}) ${errText}`);
+    throw new Error(`Échec upload (${uploadRes.status}) ${errText}`);
   }
 };
 
@@ -176,12 +179,8 @@ async function getValidToken(): Promise<{ uid: string; token: string; refresh_to
 }
 
 // ─── MediaViewer — fullscreen image ou vidéo ─────────────────────────────────
-// Clic sur le contenu → ferme le viewer (toggle).
 interface MediaViewerProps {
-  visible: boolean;
-  url:     string | null;
-  type:    'image' | 'video';
-  onClose: () => void;
+  visible: boolean; url: string | null; type: 'image' | 'video'; onClose: () => void;
 }
 
 function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
@@ -189,24 +188,16 @@ function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={mvStyles.overlay}>
-        {/* Bouton fermer */}
         <TouchableOpacity style={mvStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={30} color="#fff" />
         </TouchableOpacity>
-
         {type === 'image' ? (
-          // Clic sur l'image → ferme le viewer
           <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.imageWrapper}>
             <Image source={{ uri: url }} style={mvStyles.image} resizeMode="contain" />
           </TouchableOpacity>
         ) : Platform.OS === 'web' ? (
-          // @ts-ignore — élément HTML natif, web uniquement
-          <video
-            src={url}
-            controls
-            autoPlay
-            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
-          />
+          // @ts-ignore
+          <video src={url} controls autoPlay style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }} />
         ) : (
           <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.videoNative}>
             <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
@@ -221,29 +212,27 @@ function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
 const mvStyles = StyleSheet.create({
   overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)', justifyContent: 'center', alignItems: 'center' },
   closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
-  imageWrapper: { width: width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
-  image:        { width: width, height: height * 0.85 },
+  imageWrapper: { width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
+  image:        { width, height: height * 0.85 },
   videoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
   videoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
 });
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
 interface PostCardProps {
-  post:           Post;
-  userId:         string;
-  onLike:         (postId: string, liked: boolean)  => Promise<void>;
-  onShare:        (postId: string, shared: boolean) => Promise<void>;
-  onSave:         (postId: string, saved: boolean)  => Promise<void>;
+  post: Post; userId: string;
+  onLike: (postId: string, liked: boolean) => Promise<void>;
+  onShare: (postId: string, shared: boolean) => Promise<void>;
+  onSave: (postId: string, saved: boolean) => Promise<void>;
   onOpenComments: (postId: string) => void;
-  onOpenLikers:   (postId: string) => void;
-  onOpenEdit:     (post: { id: string; content: string }) => void;
-  onLongPress:    (post: Post) => void;
-  onAuthorPress:  (authorId: string) => void;
+  onOpenLikers: (postId: string) => void;
+  onOpenEdit: (post: { id: string; content: string }) => void;
+  onLongPress: (post: Post) => void;
+  onAuthorPress: (authorId: string) => void;
 }
 
 const PostCard = React.memo(({
-  post, userId,
-  onLike, onShare, onSave,
+  post, userId, onLike, onShare, onSave,
   onOpenComments, onOpenLikers, onOpenEdit, onLongPress, onAuthorPress,
 }: PostCardProps) => {
   const [liked,       setLiked]       = useState(post.user_liked  || false);
@@ -252,11 +241,8 @@ const PostCard = React.memo(({
   const [likesCount,  setLikesCount]  = useState(post.reactions.likes);
   const [sharesCount, setSharesCount] = useState(post.reactions.shares);
   const [isAnim,      setIsAnim]      = useState(false);
-
-  // Viewer fullscreen local au PostCard
-  const [viewerUrl,  setViewerUrl]  = useState<string | null>(null);
-  const [viewerType, setViewerType] = useState<'image' | 'video'>('image');
-
+  const [viewerUrl,   setViewerUrl]   = useState<string | null>(null);
+  const [viewerType,  setViewerType]  = useState<'image' | 'video'>('image');
   const isOwn = post.author_id === userId;
 
   useEffect(() => {
@@ -289,26 +275,13 @@ const PostCard = React.memo(({
 
   return (
     <>
-      {/* Viewer fullscreen — clic sur le contenu ferme le modal */}
-      <MediaViewer
-        visible={!!viewerUrl}
-        url={viewerUrl}
-        type={viewerType}
-        onClose={() => setViewerUrl(null)}
-      />
-
+      <MediaViewer visible={!!viewerUrl} url={viewerUrl} type={viewerType} onClose={() => setViewerUrl(null)} />
       <TouchableOpacity style={styles.postCard} activeOpacity={0.98} onLongPress={() => onLongPress(post)}>
         <View style={styles.postHeader}>
-          <TouchableOpacity
-            style={styles.postAuthor}
-            onPress={() => { if (!isOwn) onAuthorPress(post.author_id); }}
-            activeOpacity={isOwn ? 1 : 0.7}
-          >
+          <TouchableOpacity style={styles.postAuthor} onPress={() => { if (!isOwn) onAuthorPress(post.author_id); }} activeOpacity={isOwn ? 1 : 0.7}>
             {post.author.avatar_url
               ? <Image source={{ uri: post.author.avatar_url }} style={styles.avatar} />
-              : <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
-                </View>}
+              : <View style={styles.avatarPlaceholder}><Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text></View>}
             <View>
               <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
               <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
@@ -323,26 +296,15 @@ const PostCard = React.memo(({
 
         <Text style={styles.postContent}>{post.content}</Text>
 
-        {/* Image — clic → fullscreen, reclic → ferme */}
         {post.imagepots && (
-          <TouchableOpacity
-            activeOpacity={0.92}
-            onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }}
-          >
+          <TouchableOpacity activeOpacity={0.92} onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }}>
             <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
-            <View style={styles.mediaExpandHint}>
-              <Ionicons name="expand-outline" size={16} color="rgba(255,255,255,0.85)" />
-            </View>
+            <View style={styles.mediaExpandHint}><Ionicons name="expand-outline" size={16} color="rgba(255,255,255,0.85)" /></View>
           </TouchableOpacity>
         )}
 
-        {/* Vidéo post — clic → fullscreen player, reclic → ferme */}
         {post.vidposts && (
-          <TouchableOpacity
-            style={styles.videoThumb}
-            activeOpacity={0.92}
-            onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}
-          >
+          <TouchableOpacity style={styles.videoThumb} activeOpacity={0.92} onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}>
             <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
             <Text style={styles.videoThumbLabel}>Appuyer pour lire</Text>
           </TouchableOpacity>
@@ -367,10 +329,7 @@ const PostCard = React.memo(({
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionBtn} onPress={() => {
-            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onOpenComments(post.id);
-          }}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onOpenComments(post.id); }}>
             <View style={styles.actionGrad}>
               <Ionicons name="chatbubble-outline" size={20} color="#666" />
               <Text style={styles.actionText}>Commenter</Text>
@@ -397,13 +356,11 @@ const PostCard = React.memo(({
 
 // ─── SubmissionCard ───────────────────────────────────────────────────────────
 interface SubmissionCardProps {
-  sub:            Submission;
-  allVideoItems:  VideoFeedItem[];
-  allAudioItems:  AudioFeedItem[];
-  onVote:         (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
+  sub: Submission; allVideoItems: VideoFeedItem[]; allAudioItems: AudioFeedItem[];
+  onVote: (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => Promise<void>;
   openVideoModal: (items: VideoFeedItem[], startIndex: number) => void;
   openAudioModal: (items: AudioFeedItem[], startIndex: number) => void;
-  onAuthorPress:  (authorId: string) => void;
+  onAuthorPress: (authorId: string) => void;
 }
 
 const SubmissionCard = React.memo(({
@@ -516,25 +473,34 @@ const SubmissionCard = React.memo(({
 export default function ActuScreen() {
   const router = useRouter();
 
-  // Auth
   const [userId,      setUserId]      = useState('');
   const [accessToken, setAccessToken] = useState('');
-  const userIdRef  = useRef('');
-  const tokenRef   = useRef('');
-  const filterRef  = useRef<FilterMode>('all');
+  const userIdRef = useRef('');
+  const tokenRef  = useRef('');
+  const filterRef = useRef<FilterMode>('all');
 
-  // Feed
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [posts,        setPosts]       = useState<Post[]>([]);
-  const [submissions,  setSubmissions] = useState<Submission[]>([]);
-  const [filterMode,   setFilterMode]  = useState<FilterMode>('all');
-  const [showFilter,   setShowFilter]  = useState(false);
-  const [refreshing,   setRefreshing]  = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [myProfile,   setMyProfile]   = useState<MyProfile | null>(null);
 
-  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
+  // ── État posts avec pagination ──────────────────────────────────────────────
+  const [posts,           setPosts]           = useState<Post[]>([]);
+  const [postsOffset,     setPostsOffset]     = useState(0);
+  const [postsHasMore,    setPostsHasMore]    = useState(true);
+  const [loadingPosts,    setLoadingPosts]    = useState(false);
+  const postsLoadingRef   = useRef(false);   // verrou pour éviter appels parallèles
 
-  // Toast
+  // ── État submissions avec pagination ───────────────────────────────────────
+  const [submissions,      setSubmissions]      = useState<Submission[]>([]);
+  const [subsOffset,       setSubsOffset]       = useState(0);
+  const [subsHasMore,      setSubsHasMore]      = useState(true);
+  const [loadingSubs,      setLoadingSubs]      = useState(false);
+  const subsLoadingRef     = useRef(false);
+
+  const [filterMode,    setFilterMode]    = useState<FilterMode>('all');
+  const [showFilter,    setShowFilter]    = useState(false);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [isRefreshing,  setIsRefreshing]  = useState(false);
+
   const [toast, setToast] = useState<{ type: ToastType; text: string } | null>(null);
   const showToast = (type: ToastType, text: string) => {
     setToast({ type, text });
@@ -566,12 +532,10 @@ export default function ActuScreen() {
   const [showSavedPostsModal,     setShowSavedPostsModal]     = useState(false);
   const [showSearchModal,         setShowSearchModal]         = useState(false);
   const [showLogoutModal,         setShowLogoutModal]         = useState(false);
+  const [selectedAuthorId,        setSelectedAuthorId]        = useState<string | null>(null);
+  const [showUserProfileModal,    setShowUserProfileModal]    = useState(false);
 
-  // UserProfileView
-  const [selectedAuthorId,     setSelectedAuthorId]     = useState<string | null>(null);
-  const [showUserProfileModal, setShowUserProfileModal] = useState(false);
-
-  // Modal TikTok / Audio
+  // Modals TikTok / Audio
   const [videoModal,      setVideoModal]      = useState(false);
   const [videoItems,      setVideoItems]      = useState<VideoFeedItem[]>([]);
   const [videoStartIndex, setVideoStartIndex] = useState(0);
@@ -579,8 +543,8 @@ export default function ActuScreen() {
   const [audioItems,      setAudioItems]      = useState<AudioFeedItem[]>([]);
   const [audioStartIndex, setAudioStartIndex] = useState(0);
 
-  const openVideoModal = useCallback((items: VideoFeedItem[], startIndex: number) => { setVideoItems(items); setVideoStartIndex(startIndex); setVideoModal(true); }, []);
-  const openAudioModal = useCallback((items: AudioFeedItem[], startIndex: number) => { setAudioItems(items); setAudioStartIndex(startIndex); setAudioModal(true); }, []);
+  const openVideoModal = useCallback((items: VideoFeedItem[], si: number) => { setVideoItems(items); setVideoStartIndex(si); setVideoModal(true); }, []);
+  const openAudioModal = useCallback((items: AudioFeedItem[], si: number) => { setAudioItems(items); setAudioStartIndex(si); setAudioModal(true); }, []);
 
   const [headerVisible, setHeaderVisible] = useState(true);
   const [lastTap,       setLastTap]       = useState<number | null>(null);
@@ -599,19 +563,15 @@ export default function ActuScreen() {
 
   useEffect(() => {
     if (!userId || !accessToken) return;
-    loadPosts();
-    loadSubmissions();
+    loadPosts(true);       // premier appel → reset + limit 5
+    loadSubmissions(true); // premier appel → reset + limit 5
     loadMyProfile();
   }, [userId, accessToken]);
 
   // Push
   useEffect(() => {
     if (!userId) return;
-    const getAuth = async () => {
-      const t = await getValidToken();
-      if (!t) return null;
-      return { user_id: t.uid, access_token: t.token };
-    };
+    const getAuth = async () => { const t = await getValidToken(); if (!t) return null; return { user_id: t.uid, access_token: t.token }; };
     checkPushSilent(getAuth).then(already => {
       if (already) setPushDone(true);
       else setTimeout(() => setShowPushPrompt(true), 1500);
@@ -637,13 +597,12 @@ export default function ActuScreen() {
     } catch { return false; }
   };
 
-  const handleEnablePush = async () => {
+  const handleEnablePush  = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setShowPushPrompt(false); setShowPushBtn(false);
     const getAuthFn = async () => { const t = await getValidToken(); if (!t) return null; return { user_id: t.uid, access_token: t.token }; };
     try { await initPush(getAuthFn); setPushDone(true); } catch { setPushDone(true); }
   };
-
   const handleDismissPrompt = () => { setShowPushPrompt(false); setShowPushBtn(true); };
 
   // ─── Charge mon profil ────────────────────────────────────────────────────
@@ -651,53 +610,132 @@ export default function ActuScreen() {
     try {
       const session = await getValidToken();
       if (!session) return;
-      const res  = await fetch(PROFILE_URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get-profile', access_token: session.token }),
-      });
+      const res  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-profile', access_token: session.token }) });
       const data = await res.json();
       if (data.profile) setMyProfile(data.profile);
     } catch (err) { console.error('[loadMyProfile]', err); }
   }, []);
 
   // ─── Charge posts ─────────────────────────────────────────────────────────
-  const loadPosts = useCallback(async () => {
+  // reset=true  → premier appel, réinitialise offset et liste
+  // reset=false → appel suivant, accumule sur la liste existante
+  const loadPosts = useCallback(async (reset = false) => {
+    if (postsLoadingRef.current) return;           // verrou anti-doublon
+    postsLoadingRef.current = true;
+    setLoadingPosts(true);
+
     try {
       const session = await getValidToken();
       if (!session) return;
       tokenRef.current  = session.token;
       userIdRef.current = session.uid;
+
+      const currentOffset = reset ? 0 : postsOffset;
+      const limit         = currentOffset === 0 ? FEED_FIRST_LIMIT : FEED_NEXT_LIMIT;
+
       const res = await fetch(HOME_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get-feed', user_id: session.uid, access_token: session.token }),
+        body: JSON.stringify({
+          action:       'get-feed',
+          user_id:      session.uid,
+          access_token: session.token,
+          limit,
+          offset:       currentOffset,
+        }),
       });
+
       if (res.status === 401) { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); return; }
+
       const data = await res.json();
-      if (data.posts)   setPosts(data.posts.map((p: any) => ({ ...p, item_type: 'post' })));
-      if (data.profile) setUserProfile(data.profile);
+      if (!data.success) return;
+
+      const newPosts = (data.posts || []).map((p: any) => ({ ...p, item_type: 'post' }));
+
+      if (reset) {
+        setPosts(newPosts);
+        setPostsOffset(data.next_offset ?? newPosts.length);
+      } else {
+        // Déduplication par id avant ajout
+        setPosts(prev => {
+          const existingIds = new Set(prev.map((p: Post) => p.id));
+          const fresh       = newPosts.filter((p: Post) => !existingIds.has(p.id));
+          return [...prev, ...fresh];
+        });
+        setPostsOffset(data.next_offset ?? currentOffset + newPosts.length);
+      }
+
+      setPostsHasMore(data.has_more ?? false);
+
+      // Profil uniquement au premier appel
+      if (reset && data.profile) setUserProfile(data.profile);
+
     } catch (err) { console.error('[loadPosts]', err); }
-  }, []);
+    finally { setLoadingPosts(false); postsLoadingRef.current = false; }
+  }, [postsOffset]);
 
   // ─── Charge soumissions ───────────────────────────────────────────────────
-  const loadSubmissions = useCallback(async () => {
+  const loadSubmissions = useCallback(async (reset = false) => {
+    if (subsLoadingRef.current) return;
+    subsLoadingRef.current = true;
+    setLoadingSubs(true);
+
     try {
       const session = await getValidToken();
       if (!session) return;
+
+      const currentOffset = reset ? 0 : subsOffset;
+      const limit         = currentOffset === 0 ? FEED_FIRST_LIMIT : FEED_NEXT_LIMIT;
+
       const res = await fetch(`${BACKEND_URL}/feed`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ function: 'getSubmissions', user_id: session.uid, access_token: session.token }),
+        body: JSON.stringify({
+          function:      'getSubmissions',
+          user_id:       session.uid,
+          access_token:  session.token,
+          refresh_token: session.refresh_token,
+          expires_at:    session.expires_at,
+          limit,
+          offset:        currentOffset,
+        }),
       });
-      if (res.status === 401) { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); return; }
-      const data = await res.json();
-      if (data.submissions) setSubmissions(data.submissions.map((s: any) => ({ ...s, item_type: 'submission' })));
-    } catch (err) { console.error('[loadSubmissions]', err); }
-  }, []);
 
+      if (res.status === 401) { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); return; }
+
+      const data = await res.json();
+      if (!data.success) return;
+
+      const newSubs = (data.submissions || []).map((s: any) => ({ ...s, item_type: 'submission' }));
+
+      if (reset) {
+        setSubmissions(newSubs);
+        setSubsOffset(data.next_offset ?? newSubs.length);
+      } else {
+        setSubmissions(prev => {
+          const existingIds = new Set(prev.map((s: Submission) => s.id));
+          const fresh       = newSubs.filter((s: Submission) => !existingIds.has(s.id));
+          return [...prev, ...fresh];
+        });
+        setSubsOffset(data.next_offset ?? currentOffset + newSubs.length);
+      }
+
+      setSubsHasMore(data.has_more ?? false);
+
+      if (data.new_token) {
+        const raw = await AsyncStorage.getItem('harmonia_session');
+        if (raw) await AsyncStorage.setItem('harmonia_session', JSON.stringify({ ...JSON.parse(raw), ...data.new_token }));
+      }
+
+    } catch (err) { console.error('[loadSubmissions]', err); }
+    finally { setLoadingSubs(false); subsLoadingRef.current = false; }
+  }, [subsOffset]);
+
+  // ─── Pull-to-refresh : repart de zéro ────────────────────────────────────
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'music') await loadPosts();
-    if (filterRef.current !== 'posts') await loadSubmissions();
+    const mode = filterRef.current;
+    if (mode !== 'images' && mode !== 'videos' && mode !== 'music') await loadPosts(true);
+    if (mode !== 'posts')                                            await loadSubmissions(true);
     setRefreshing(false);
   };
 
@@ -705,36 +743,62 @@ export default function ActuScreen() {
     if (isRefreshing) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsRefreshing(true);
-    if (filterRef.current !== 'images' && filterRef.current !== 'videos' && filterRef.current !== 'music') await loadPosts();
-    if (filterRef.current !== 'posts') await loadSubmissions();
+    const mode = filterRef.current;
+    if (mode !== 'images' && mode !== 'videos' && mode !== 'music') await loadPosts(true);
+    if (mode !== 'posts')                                            await loadSubmissions(true);
     setIsRefreshing(false);
+  };
+
+  // ─── Infinite scroll — déclenchement au scroll ───────────────────────────
+  // Déclenche le chargement suivant quand l'utilisateur atteint 85% de la liste
+  const handleScroll = useCallback((e: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const scrolled   = contentOffset.y + layoutMeasurement.height;
+    const total      = contentSize.height;
+    const ratio      = scrolled / total;
+
+    if (ratio < LOAD_MORE_THRESHOLD) return;
+
+    const mode = filterRef.current;
+
+    // Charger le lot suivant de posts si applicable et disponible
+    if (mode !== 'images' && mode !== 'videos' && mode !== 'music') {
+      if (postsHasMore && !postsLoadingRef.current) loadPosts(false);
+    }
+    // Charger le lot suivant de submissions si applicable et disponible
+    if (mode !== 'posts') {
+      if (subsHasMore && !subsLoadingRef.current) loadSubmissions(false);
+    }
+  }, [postsHasMore, subsHasMore, loadPosts, loadSubmissions]);
+
+  // Double-tap pour le header
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    if (lastTap && now - lastTap < 300) toggleHeader();
+    else setLastTap(now);
+  };
+
+  const toggleHeader = () => {
+    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.spring(headerAnim, { toValue: headerVisible ? -HEADER_HEIGHT : 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
+    setHeaderVisible(!headerVisible);
   };
 
   const applyFilter = async (mode: FilterMode) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     filterRef.current = mode; setFilterMode(mode); setShowFilter(false);
-    if (mode === 'posts' || mode === 'all') await loadPosts();
-    if (mode !== 'posts') await loadSubmissions();
+    if (mode === 'posts' || mode === 'all') await loadPosts(true);
+    if (mode !== 'posts')                   await loadSubmissions(true);
   };
 
   // ─── Création de post — nouveau flux upload ───────────────────────────────
-  //
-  // 1. get-upload-url (context: 'image' | 'video') → signed_url + public_url
-  // 2. uploadToStorage → PUT direct, Content-Type = blob.type (MIME réel)
-  // 3. public_url stockée dans le state → intégrée à create-post ensuite
-  //
-  // Aucun type de fichier codé en dur. Tous formats acceptés.
-
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') { Alert.alert('Permission refusée', 'Accès aux médias requis.'); return; }
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes:    mediaType === 'video'
-        ? ImagePicker.MediaTypeOptions.Videos
-        : ImagePicker.MediaTypeOptions.Images,
+      mediaTypes:    mediaType === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
       allowsEditing: mediaType === 'image',
       quality:       0.8,
     });
@@ -744,21 +808,14 @@ export default function ActuScreen() {
     try {
       const session = await getValidToken();
       if (!session) return;
-
       const context = mediaType === 'image' ? 'image' : 'video';
 
-      // 1. Signed Upload URL + public_url depuis le serveur
-      const urlRes  = await fetch(PROFILE_URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get-upload-url', access_token: session.token, context }),
-      });
+      const urlRes  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-upload-url', access_token: session.token, context }) });
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
 
-      // 2. Upload direct — MIME lu depuis le Blob, aucun type imposé
       await uploadToStorage(urlData.signed_url, result.assets[0].uri);
 
-      // 3. Stocker la public_url → envoyée dans create-post
       if (mediaType === 'image') setPostImageUrl(urlData.public_url);
       else                       setPostVideoUrl(urlData.public_url);
 
@@ -777,26 +834,19 @@ export default function ActuScreen() {
       if (!session) return;
       const res = await fetch(PROFILE_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:       'create-post',
-          access_token: session.token,
-          content:      postContent.trim(),
-          visibility:   postVisibility,
-          imagepots:    postImageUrl  || undefined,
-          vidposts:     postVideoUrl  || undefined,
-        }),
+        body: JSON.stringify({ action: 'create-post', access_token: session.token, content: postContent.trim(), visibility: postVisibility, imagepots: postImageUrl || undefined, vidposts: postVideoUrl || undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setPostContent(''); setPostVisibility('friends'); setPostImageUrl(null); setPostVideoUrl(null);
       setShowCreatePost(false);
-      await loadPosts();
+      await loadPosts(true);  // Rechargement complet après création
       showToast('success', 'Post publié !');
     } catch (err: any) { showToast('error', err.message || 'Impossible de publier'); }
     finally { setCreatingPost(false); }
   };
 
-  // ─── Feed ─────────────────────────────────────────────────────────────────
+  // ─── Feed affiché selon le filtre ─────────────────────────────────────────
   const displayedItems: FeedItem[] = (() => {
     if (filterMode === 'posts')  return posts;
     if (filterMode === 'images') return submissions.filter(s => s.game_type === 'arts');
@@ -825,24 +875,21 @@ export default function ActuScreen() {
 
   // ─── Post actions ─────────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
-    const session = await getValidToken();
-    if (!session) return;
+    const session = await getValidToken(); if (!session) return;
     const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: session.uid, post_id: postId }) });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p));
   }, []);
 
   const handleShare = useCallback(async (postId: string, shared: boolean) => {
-    const session = await getValidToken();
-    if (!session) return;
+    const session = await getValidToken(); if (!session) return;
     const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: session.uid, post_id: postId }) });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p));
   }, []);
 
   const handleSave = useCallback(async (postId: string, saved: boolean) => {
-    const session = await getValidToken();
-    if (!session) return;
+    const session = await getValidToken(); if (!session) return;
     const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: session.uid, post_id: postId }) });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, user_saved: saved } : p));
@@ -850,8 +897,7 @@ export default function ActuScreen() {
 
   const handleVote = useCallback(async (gameType: GameType, runId: string, voteForUserId: string, sessionId: string, currentlyVoted: boolean) => {
     try {
-      const session = await getValidToken();
-      if (!session) return;
+      const session = await getValidToken(); if (!session) return;
       const res = await fetch(`${BACKEND_URL}/feed`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -871,44 +917,22 @@ export default function ActuScreen() {
     } catch (err) { console.error('[handleVote]', err); }
   }, []);
 
-  const handleOpenComments = useCallback((postId: string) => {
-    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedPostForComments(postId); setShowCommentsModal(true);
-  }, []);
-
-  const handleOpenLikers = useCallback((postId: string) => {
-    setSelectedPostForLikers(postId); setShowLikersModal(true);
-  }, []);
-
-  const handleOpenEdit = useCallback((post: { id: string; content: string }) => {
-    setSelectedPostForEdit(post); setShowEditModal(true);
-  }, []);
-
-  const handleLongPress = useCallback((post: Post) => { setSelectedPost(post); }, []);
-
-  const handleAuthorPress = useCallback((authorId: string) => {
+  const handleOpenComments  = useCallback((postId: string) => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedPostForComments(postId); setShowCommentsModal(true); }, []);
+  const handleOpenLikers    = useCallback((postId: string) => { setSelectedPostForLikers(postId); setShowLikersModal(true); }, []);
+  const handleOpenEdit      = useCallback((post: { id: string; content: string }) => { setSelectedPostForEdit(post); setShowEditModal(true); }, []);
+  const handleLongPress     = useCallback((post: Post) => { setSelectedPost(post); }, []);
+  const handleAuthorPress   = useCallback((authorId: string) => {
     if (!authorId || authorId === userId) return;
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedAuthorId(authorId);
-    setShowUserProfileModal(true);
+    setSelectedAuthorId(authorId); setShowUserProfileModal(true);
   }, [userId]);
 
-  const handleDoubleTap = () => {
-    const now = Date.now();
-    if (lastTap && now - lastTap < 300) toggleHeader();
-    else setLastTap(now);
-  };
+  // ─── Indicateur de chargement en bas de liste ─────────────────────────────
+  const isLoadingMore = loadingPosts || loadingSubs;
+  const hasMoreAny    = (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'music' && postsHasMore)
+                     || (filterMode !== 'posts' && subsHasMore);
 
-  const toggleHeader = () => {
-    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Animated.spring(headerAnim, { toValue: headerVisible ? -HEADER_HEIGHT : 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
-    setHeaderVisible(!headerVisible);
-  };
-
-  const filterLabel: Record<FilterMode, string> = {
-    all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', music: 'Musique',
-  };
-
+  const filterLabel: Record<FilterMode, string> = { all: 'Tout', posts: 'Publications', images: 'Images', videos: 'Vidéos', music: 'Musique' };
   const isPro = myProfile?.role === 'userpro';
 
   return (
@@ -933,13 +957,11 @@ export default function ActuScreen() {
                 <Text style={styles.balanceText}>{userProfile?.solde_cfa?.toLocaleString() || '0'} CFA</Text>
               </View>
             </View>
-
             <View style={styles.headerActions}>
               <TouchableOpacity style={styles.filterBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowFilter(true); }}>
                 <Ionicons name="filter" size={16} color="#FFD700" />
                 <Text style={styles.filterBtnText}>{filterLabel[filterMode]}</Text>
               </TouchableOpacity>
-
               <View style={styles.actionsBtns}>
                 <TouchableOpacity onPress={handleManualRefresh} disabled={isRefreshing}>
                   <Ionicons name="refresh-outline" size={22} color={isRefreshing ? 'rgba(255,255,255,0.4)' : '#fff'} />
@@ -947,13 +969,11 @@ export default function ActuScreen() {
                 <TouchableOpacity onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowSearchModal(true); }}>
                   <Ionicons name="search-outline" size={22} color="#fff" />
                 </TouchableOpacity>
-
                 <TouchableOpacity onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePost(true); }}>
                   <LinearGradient colors={['#FFD700','#FF0080']} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.createBtnGrad}>
                     <Ionicons name="add" size={18} color="#fff" />
                   </LinearGradient>
                 </TouchableOpacity>
-
                 {Platform.OS === 'web' && showPushBtn && !pushDone && (
                   <TouchableOpacity onPress={handleEnablePush} style={styles.pushEnableBtn}>
                     <Ionicons name="notifications-circle" size={24} color="#FFD700" />
@@ -987,9 +1007,11 @@ export default function ActuScreen() {
           contentContainerStyle={styles.scrollContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={200}
           onTouchEnd={handleDoubleTap}
         >
-          {displayedItems.length === 0 ? (
+          {displayedItems.length === 0 && !isLoadingMore ? (
             <View style={styles.emptyBox}>
               <Ionicons name="newspaper-outline" size={60} color="#CCC" />
               <Text style={styles.emptyText}>Connexion en cours...</Text>
@@ -999,19 +1021,25 @@ export default function ActuScreen() {
             <View style={styles.feedList}>
               {displayedItems.map(item =>
                 item.item_type === 'post'
-                  ? <PostCard
-                      key={item.id} post={item} userId={userId}
-                      onLike={handleLike} onShare={handleShare} onSave={handleSave}
-                      onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers}
-                      onOpenEdit={handleOpenEdit} onLongPress={handleLongPress}
-                      onAuthorPress={handleAuthorPress}
-                    />
-                  : <SubmissionCard
-                      key={item.id} sub={item} onVote={handleVote}
-                      allVideoItems={allVideoItems} allAudioItems={allAudioItems}
-                      openVideoModal={openVideoModal} openAudioModal={openAudioModal}
-                      onAuthorPress={handleAuthorPress}
-                    />
+                  ? <PostCard key={item.id} post={item} userId={userId} onLike={handleLike} onShare={handleShare} onSave={handleSave} onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers} onOpenEdit={handleOpenEdit} onLongPress={handleLongPress} onAuthorPress={handleAuthorPress} />
+                  : <SubmissionCard key={item.id} sub={item} onVote={handleVote} allVideoItems={allVideoItems} allAudioItems={allAudioItems} openVideoModal={openVideoModal} openAudioModal={openAudioModal} onAuthorPress={handleAuthorPress} />
+              )}
+
+              {/* ── Indicateur chargement en bas ──────────────────────── */}
+              {isLoadingMore && (
+                <View style={styles.loadMoreIndicator}>
+                  <ActivityIndicator size="small" color="#8A2BE2" />
+                  <Text style={styles.loadMoreText}>Chargement...</Text>
+                </View>
+              )}
+
+              {/* ── Fin de liste ──────────────────────────────────────── */}
+              {!isLoadingMore && !hasMoreAny && displayedItems.length > 0 && (
+                <View style={styles.endOfFeed}>
+                  <View style={styles.endOfFeedLine} />
+                  <Text style={styles.endOfFeedText}>Vous êtes à jour ✓</Text>
+                  <View style={styles.endOfFeedLine} />
+                </View>
               )}
             </View>
           )}
@@ -1049,36 +1077,19 @@ export default function ActuScreen() {
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-
               <View style={styles.cpAuthorRow}>
                 {myProfile?.avatar_url
                   ? <Image source={{ uri: myProfile.avatar_url }} style={styles.cpAvatar} />
                   : <View style={[styles.cpAvatar, styles.avatarPlaceholder]}>
-                      <Text style={styles.avatarText}>
-                        {myProfile ? getInitials(myProfile.nom, myProfile.prenom) : '?'}
-                      </Text>
+                      <Text style={styles.avatarText}>{myProfile ? getInitials(myProfile.nom, myProfile.prenom) : '?'}</Text>
                     </View>}
                 <View>
-                  <Text style={styles.cpAuthorName}>
-                    {myProfile ? `${myProfile.prenom} ${myProfile.nom}` : '…'}
-                  </Text>
-                  {isPro && (
-                    <View style={styles.cpProBadge}>
-                      <Text style={styles.cpProBadgeText}>⭐ PRO</Text>
-                    </View>
-                  )}
+                  <Text style={styles.cpAuthorName}>{myProfile ? `${myProfile.prenom} ${myProfile.nom}` : '…'}</Text>
+                  {isPro && <View style={styles.cpProBadge}><Text style={styles.cpProBadgeText}>⭐ PRO</Text></View>}
                   <View style={styles.cpVisibilityRow}>
                     {(['public', 'friends', 'private'] as Visibility[]).map(v => (
-                      <TouchableOpacity
-                        key={v}
-                        style={[styles.cpVisibilityBtn, postVisibility === v && styles.cpVisibilityBtnActive]}
-                        onPress={() => setPostVisibility(v)}
-                      >
-                        <Ionicons
-                          name={v === 'public' ? 'globe-outline' : v === 'friends' ? 'people-outline' : 'lock-closed-outline'}
-                          size={12}
-                          color={postVisibility === v ? '#fff' : '#666'}
-                        />
+                      <TouchableOpacity key={v} style={[styles.cpVisibilityBtn, postVisibility === v && styles.cpVisibilityBtnActive]} onPress={() => setPostVisibility(v)}>
+                        <Ionicons name={v === 'public' ? 'globe-outline' : v === 'friends' ? 'people-outline' : 'lock-closed-outline'} size={12} color={postVisibility === v ? '#fff' : '#666'} />
                         <Text style={[styles.cpVisibilityText, postVisibility === v && styles.cpVisibilityTextActive]}>
                           {v === 'public' ? 'Public' : v === 'friends' ? 'Amis' : 'Privé'}
                         </Text>
@@ -1088,16 +1099,7 @@ export default function ActuScreen() {
                 </View>
               </View>
 
-              <TextInput
-                style={styles.cpInput}
-                placeholder="Quoi de neuf ?"
-                placeholderTextColor="#bbb"
-                value={postContent}
-                onChangeText={setPostContent}
-                multiline
-                maxLength={1000}
-                autoFocus
-              />
+              <TextInput style={styles.cpInput} placeholder="Quoi de neuf ?" placeholderTextColor="#bbb" value={postContent} onChangeText={setPostContent} multiline maxLength={1000} autoFocus />
               <Text style={styles.cpCharCount}>{postContent.length}/1000</Text>
 
               {postImageUrl && (
@@ -1108,7 +1110,6 @@ export default function ActuScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-
               {postVideoUrl && (
                 <View style={styles.cpMediaContainer}>
                   <View style={[styles.cpMediaPreview, styles.cpVideoPreviewBg]}>
@@ -1120,31 +1121,19 @@ export default function ActuScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-
               {isPro && !postImageUrl && !postVideoUrl && (
                 <View style={styles.cpMediaButtons}>
                   <TouchableOpacity style={styles.cpMediaBtn} onPress={() => handlePickMedia('image')} disabled={uploadingMedia}>
-                    {uploadingMedia
-                      ? <ActivityIndicator size="small" color="#8A2BE2" />
-                      : <><Ionicons name="image-outline" size={20} color="#8A2BE2" /><Text style={styles.cpMediaBtnText}>Photo</Text></>}
+                    {uploadingMedia ? <ActivityIndicator size="small" color="#8A2BE2" /> : <><Ionicons name="image-outline" size={20} color="#8A2BE2" /><Text style={styles.cpMediaBtnText}>Photo</Text></>}
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.cpMediaBtn} onPress={() => handlePickMedia('video')} disabled={uploadingMedia}>
-                    {uploadingMedia
-                      ? <ActivityIndicator size="small" color="#8A2BE2" />
-                      : <><Ionicons name="videocam-outline" size={20} color="#8A2BE2" /><Text style={styles.cpMediaBtnText}>Vidéo</Text></>}
+                    {uploadingMedia ? <ActivityIndicator size="small" color="#8A2BE2" /> : <><Ionicons name="videocam-outline" size={20} color="#8A2BE2" /><Text style={styles.cpMediaBtnText}>Vidéo</Text></>}
                   </TouchableOpacity>
                 </View>
               )}
 
-              <TouchableOpacity
-                style={[styles.cpPublishBtn, !postContent.trim() && styles.cpPublishBtnDisabled]}
-                onPress={handleCreatePost}
-                disabled={creatingPost || !postContent.trim()}
-                activeOpacity={0.8}
-              >
-                {creatingPost
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <><Ionicons name="send" size={18} color="#fff" /><Text style={styles.cpPublishBtnText}>Publier</Text></>}
+              <TouchableOpacity style={[styles.cpPublishBtn, !postContent.trim() && styles.cpPublishBtnDisabled]} onPress={handleCreatePost} disabled={creatingPost || !postContent.trim()} activeOpacity={0.8}>
+                {creatingPost ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="send" size={18} color="#fff" /><Text style={styles.cpPublishBtnText}>Publier</Text></>}
               </TouchableOpacity>
             </View>
           </View>
@@ -1167,25 +1156,18 @@ export default function ActuScreen() {
 
         {/* ── UserProfileView ───────────────────────────────────────────── */}
         {showUserProfileModal && selectedAuthorId && (
-          <UserProfileView
-            userId={selectedAuthorId}
-            viewerId={userId}
-            accessToken={accessToken}
-            asModal
-            onClose={() => { setShowUserProfileModal(false); setSelectedAuthorId(null); }}
-          />
+          <UserProfileView userId={selectedAuthorId} viewerId={userId} accessToken={accessToken} asModal onClose={() => { setShowUserProfileModal(false); setSelectedAuthorId(null); }} />
         )}
 
-        <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => { loadPosts(); }} />
+        <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={userId} onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }} onCommentAdded={() => { loadPosts(true); }} />
         <LikersModal visible={showLikersModal} postId={selectedPostForLikers} onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
-        <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(); }} />
+        <EditPostModal visible={showEditModal} postId={selectedPostForEdit?.id || null} userId={userId} initialContent={selectedPostForEdit?.content || ''} onClose={() => { setShowEditModal(false); setSelectedPostForEdit(null); }} onPostUpdated={async () => { await loadPosts(true); }} />
         <SavedPostsModal visible={showSavedPostsModal} userId={userId} onClose={() => setShowSavedPostsModal(false)} onCommentPress={(postId) => { setShowSavedPostsModal(false); setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
         <SearchModal visible={showSearchModal} userId={userId} onClose={() => setShowSearchModal(false)} onPostPress={(postId) => { setSelectedPostForComments(postId); setShowCommentsModal(true); }} />
         <LogoutModal visible={showLogoutModal} userId={userId} onClose={() => setShowLogoutModal(false)} onLogoutSuccess={async () => { await AsyncStorage.removeItem('harmonia_session'); router.replace('/login'); }} />
 
         <TikTokVideoModal visible={videoModal} items={videoItems} startIndex={videoStartIndex} onClose={() => setVideoModal(false)} onVote={handleVote} />
         <AudioFeedModal visible={audioModal} items={audioItems} startIndex={audioStartIndex} onClose={() => setAudioModal(false)} onVote={handleVote} />
-
         <PushPromptModal visible={showPushPrompt} onAccept={handleEnablePush} onDismiss={handleDismissPrompt} />
       </View>
     </KeyboardAvoidingView>
@@ -1207,11 +1189,8 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
   useEffect(() => {
     if (!visible || items.length === 0) return;
     setCurrentIndex(startIndex);
-    if (Platform.OS === 'web') {
-      setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50);
-    } else {
-      flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
-    }
+    if (Platform.OS === 'web') { setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50); }
+    else { flatRef.current?.scrollToIndex({ index: startIndex, animated: false }); }
   }, [visible, startIndex]);
 
   if (!visible || items.length === 0) return null;
@@ -1223,19 +1202,9 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
         <TouchableOpacity style={tikStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={28} color="#FFF" />
         </TouchableOpacity>
-
         {Platform.OS === 'web' ? (
-          <ScrollView
-            ref={webScrollRef}
-            style={{ flex: 1 }}
-            pagingEnabled
-            showsVerticalScrollIndicator={false}
-            scrollEventThrottle={1}
-            onScroll={e => {
-              const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              if (idx !== currentIndex) setCurrentIndex(idx);
-            }}
-          >
+          <ScrollView ref={webScrollRef} style={{ flex: 1 }} pagingEnabled showsVerticalScrollIndicator={false} scrollEventThrottle={1}
+            onScroll={e => { const idx = Math.round(e.nativeEvent.contentOffset.y / height); if (idx !== currentIndex) setCurrentIndex(idx); }}>
             {items.map((item, index) => (
               <View key={item.mediaId} style={{ width, height }}>
                 <TikTokVideoItem item={item} isActive={index === currentIndex} onVote={onVote} />
@@ -1243,23 +1212,12 @@ function TikTokVideoModal({ visible, items, startIndex, onClose, onVote }: TikTo
             ))}
           </ScrollView>
         ) : (
-          <FlatList
-            ref={flatRef}
-            data={items}
-            keyExtractor={item => item.mediaId}
-            pagingEnabled
-            showsVerticalScrollIndicator={false}
-            snapToInterval={height}
-            decelerationRate="fast"
+          <FlatList ref={flatRef} data={items} keyExtractor={item => item.mediaId} pagingEnabled showsVerticalScrollIndicator={false}
+            snapToInterval={height} decelerationRate="fast"
             getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
             initialScrollIndex={startIndex}
-            onMomentumScrollEnd={e => {
-              const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              setCurrentIndex(idx);
-            }}
-            renderItem={({ item, index }) => (
-              <TikTokVideoItem item={item} isActive={index === currentIndex} onVote={onVote} />
-            )}
+            onMomentumScrollEnd={e => { const idx = Math.round(e.nativeEvent.contentOffset.y / height); setCurrentIndex(idx); }}
+            renderItem={({ item, index }) => <TikTokVideoItem item={item} isActive={index === currentIndex} onVote={onVote} />}
           />
         )}
       </View>
@@ -1274,7 +1232,6 @@ function TikTokVideoItem({ item, isActive, onVote }: { item: VideoFeedItem; isAc
   const videoRef = useRef<Video>(null);
 
   useEffect(() => { setTotalVotes(item.total_votes); setUserVoted(item.user_voted); }, [item]);
-
   useEffect(() => {
     if (!videoRef.current) return;
     if (isActive) { videoRef.current.playAsync().catch(() => {}); }
@@ -1325,11 +1282,8 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
   useEffect(() => {
     if (!visible || items.length === 0) return;
     setCurrentIndex(startIndex);
-    if (Platform.OS === 'web') {
-      setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50);
-    } else {
-      flatRef.current?.scrollToIndex({ index: startIndex, animated: false });
-    }
+    if (Platform.OS === 'web') { setTimeout(() => { webScrollRef.current?.scrollTo({ y: startIndex * height, animated: false }); }, 50); }
+    else { flatRef.current?.scrollToIndex({ index: startIndex, animated: false }); }
   }, [visible, startIndex]);
 
   if (!visible || items.length === 0) return null;
@@ -1341,19 +1295,9 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
         <TouchableOpacity style={audStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={28} color="#FFF" />
         </TouchableOpacity>
-
         {Platform.OS === 'web' ? (
-          <ScrollView
-            ref={webScrollRef}
-            style={{ flex: 1 }}
-            pagingEnabled
-            showsVerticalScrollIndicator={false}
-            scrollEventThrottle={1}
-            onScroll={e => {
-              const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              if (idx !== currentIndex) setCurrentIndex(idx);
-            }}
-          >
+          <ScrollView ref={webScrollRef} style={{ flex: 1 }} pagingEnabled showsVerticalScrollIndicator={false} scrollEventThrottle={1}
+            onScroll={e => { const idx = Math.round(e.nativeEvent.contentOffset.y / height); if (idx !== currentIndex) setCurrentIndex(idx); }}>
             {items.map((item, index) => (
               <View key={item.mediaId} style={{ width, height }}>
                 <AudioFeedItem item={item} isActive={index === currentIndex} onVote={onVote} />
@@ -1361,23 +1305,12 @@ function AudioFeedModal({ visible, items, startIndex, onClose, onVote }: AudioFe
             ))}
           </ScrollView>
         ) : (
-          <FlatList
-            ref={flatRef}
-            data={items}
-            keyExtractor={item => item.mediaId}
-            pagingEnabled
-            showsVerticalScrollIndicator={false}
-            snapToInterval={height}
-            decelerationRate="fast"
+          <FlatList ref={flatRef} data={items} keyExtractor={item => item.mediaId} pagingEnabled showsVerticalScrollIndicator={false}
+            snapToInterval={height} decelerationRate="fast"
             getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
             initialScrollIndex={startIndex}
-            onMomentumScrollEnd={e => {
-              const idx = Math.round(e.nativeEvent.contentOffset.y / height);
-              setCurrentIndex(idx);
-            }}
-            renderItem={({ item, index }) => (
-              <AudioFeedItem item={item} isActive={index === currentIndex} onVote={onVote} />
-            )}
+            onMomentumScrollEnd={e => { const idx = Math.round(e.nativeEvent.contentOffset.y / height); setCurrentIndex(idx); }}
+            renderItem={({ item, index }) => <AudioFeedItem item={item} isActive={index === currentIndex} onVote={onVote} />}
           />
         )}
       </View>
@@ -1429,7 +1362,7 @@ function AudioFeedItem({ item, isActive, onVote }: { item: AudioFeedItem; isActi
   };
 
   const progress = durationMs > 0 ? positionMs / durationMs : 0;
-  const fmtMs = (ms: number) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  const fmtMs    = (ms: number) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
   return (
     <View style={audStyles.item}>
@@ -1538,13 +1471,19 @@ const styles = StyleSheet.create({
   emptyText:       { fontSize: 16, color: '#999', marginTop: 12 },
   emptySub:        { fontSize: 12, color: '#CCC', marginTop: 5 },
 
+  // Indicateurs de chargement en bas de liste
+  loadMoreIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 10 },
+  loadMoreText:      { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  endOfFeed:         { flexDirection: 'row', alignItems: 'center', paddingVertical: 24, paddingHorizontal: 20, gap: 12 },
+  endOfFeedLine:     { flex: 1, height: 1, backgroundColor: '#E0D0FF' },
+  endOfFeedText:     { fontSize: 12, color: '#B39DDB', fontWeight: '600' },
+
   toast:         { position: 'absolute', top: Platform.OS === 'ios' ? 55 : 15, left: 20, right: 20, zIndex: 2000, flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, gap: 10 },
   toast_success: { backgroundColor: '#10B981' },
   toast_error:   { backgroundColor: '#EF4444' },
   toast_info:    { backgroundColor: '#3B82F6' },
   toastText:     { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
 
-  // PostCard
   postCard:          { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
   postHeader:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
   postAuthor:        { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
@@ -1570,7 +1509,6 @@ const styles = StyleSheet.create({
   actionTextActive:  { color: '#FFF' },
   saveBtn:           { padding: 8 },
 
-  // SubmissionCard
   subCard:          { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, overflow: 'hidden' },
   subHeader:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
   artsBadge:        { backgroundColor: '#F0E6FF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
