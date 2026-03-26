@@ -37,11 +37,9 @@ const HEADER_PADDING_TOP = Platform.OS === 'ios' ? 50  : 30;
 const TIK_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 const AUD_CLOSE_TOP      = Platform.OS === 'ios' ? 54  : 30;
 
-// ── Pagination : premier lot = 5, lots suivants = 10 ──────────────────────────
-const FEED_FIRST_LIMIT = 5
-const FEED_NEXT_LIMIT  = 10
-// Déclenche le chargement suivant quand il reste ~3 éléments avant la fin
-const LOAD_MORE_THRESHOLD = 0.85
+const FEED_FIRST_LIMIT    = 5;
+const FEED_NEXT_LIMIT     = 10;
+const LOAD_MORE_THRESHOLD = 0.85;
 
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
 type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
@@ -178,7 +176,7 @@ async function getValidToken(): Promise<{ uid: string; token: string; refresh_to
   } catch { return null; }
 }
 
-// ─── MediaViewer — fullscreen image ou vidéo ─────────────────────────────────
+// ─── MediaViewer ──────────────────────────────────────────────────────────────
 interface MediaViewerProps {
   visible: boolean; url: string | null; type: 'image' | 'video'; onClose: () => void;
 }
@@ -482,14 +480,12 @@ export default function ActuScreen() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [myProfile,   setMyProfile]   = useState<MyProfile | null>(null);
 
-  // ── État posts avec pagination ──────────────────────────────────────────────
   const [posts,           setPosts]           = useState<Post[]>([]);
   const [postsOffset,     setPostsOffset]     = useState(0);
   const [postsHasMore,    setPostsHasMore]    = useState(true);
   const [loadingPosts,    setLoadingPosts]    = useState(false);
-  const postsLoadingRef   = useRef(false);   // verrou pour éviter appels parallèles
+  const postsLoadingRef   = useRef(false);
 
-  // ── État submissions avec pagination ───────────────────────────────────────
   const [submissions,      setSubmissions]      = useState<Submission[]>([]);
   const [subsOffset,       setSubsOffset]       = useState(0);
   const [subsHasMore,      setSubsHasMore]      = useState(true);
@@ -507,7 +503,6 @@ export default function ActuScreen() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Création de post
   const [showCreatePost,  setShowCreatePost]  = useState(false);
   const [postContent,     setPostContent]     = useState('');
   const [postVisibility,  setPostVisibility]  = useState<Visibility>('friends');
@@ -516,12 +511,10 @@ export default function ActuScreen() {
   const [creatingPost,    setCreatingPost]    = useState(false);
   const [uploadingMedia,  setUploadingMedia]  = useState(false);
 
-  // Push
   const [pushDone,       setPushDone]       = useState(false);
   const [showPushBtn,    setShowPushBtn]     = useState(false);
   const [showPushPrompt, setShowPushPrompt]  = useState(false);
 
-  // Modals
   const [selectedPost,            setSelectedPost]            = useState<Post | null>(null);
   const [showCommentsModal,       setShowCommentsModal]       = useState(false);
   const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
@@ -535,7 +528,6 @@ export default function ActuScreen() {
   const [selectedAuthorId,        setSelectedAuthorId]        = useState<string | null>(null);
   const [showUserProfileModal,    setShowUserProfileModal]    = useState(false);
 
-  // Modals TikTok / Audio
   const [videoModal,      setVideoModal]      = useState(false);
   const [videoItems,      setVideoItems]      = useState<VideoFeedItem[]>([]);
   const [videoStartIndex, setVideoStartIndex] = useState(0);
@@ -563,12 +555,11 @@ export default function ActuScreen() {
 
   useEffect(() => {
     if (!userId || !accessToken) return;
-    loadPosts(true);       // premier appel → reset + limit 5
-    loadSubmissions(true); // premier appel → reset + limit 5
+    loadPosts(true);
+    loadSubmissions(true);
     loadMyProfile();
   }, [userId, accessToken]);
 
-  // Push
   useEffect(() => {
     if (!userId) return;
     const getAuth = async () => { const t = await getValidToken(); if (!t) return null; return { user_id: t.uid, access_token: t.token }; };
@@ -597,7 +588,7 @@ export default function ActuScreen() {
     } catch { return false; }
   };
 
-  const handleEnablePush  = async () => {
+  const handleEnablePush = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setShowPushPrompt(false); setShowPushBtn(false);
     const getAuthFn = async () => { const t = await getValidToken(); if (!t) return null; return { user_id: t.uid, access_token: t.token }; };
@@ -617,10 +608,8 @@ export default function ActuScreen() {
   }, []);
 
   // ─── Charge posts ─────────────────────────────────────────────────────────
-  // reset=true  → premier appel, réinitialise offset et liste
-  // reset=false → appel suivant, accumule sur la liste existante
   const loadPosts = useCallback(async (reset = false) => {
-    if (postsLoadingRef.current) return;           // verrou anti-doublon
+    if (postsLoadingRef.current) return;
     postsLoadingRef.current = true;
     setLoadingPosts(true);
 
@@ -655,7 +644,6 @@ export default function ActuScreen() {
         setPosts(newPosts);
         setPostsOffset(data.next_offset ?? newPosts.length);
       } else {
-        // Déduplication par id avant ajout
         setPosts(prev => {
           const existingIds = new Set(prev.map((p: Post) => p.id));
           const fresh       = newPosts.filter((p: Post) => !existingIds.has(p.id));
@@ -665,8 +653,6 @@ export default function ActuScreen() {
       }
 
       setPostsHasMore(data.has_more ?? false);
-
-      // Profil uniquement au premier appel
       if (reset && data.profile) setUserProfile(data.profile);
 
     } catch (err) { console.error('[loadPosts]', err); }
@@ -729,7 +715,7 @@ export default function ActuScreen() {
     finally { setLoadingSubs(false); subsLoadingRef.current = false; }
   }, [subsOffset]);
 
-  // ─── Pull-to-refresh : repart de zéro ────────────────────────────────────
+  // ─── Refresh ──────────────────────────────────────────────────────────────
   const onRefresh = async () => {
     setRefreshing(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -749,29 +735,20 @@ export default function ActuScreen() {
     setIsRefreshing(false);
   };
 
-  // ─── Infinite scroll — déclenchement au scroll ───────────────────────────
-  // Déclenche le chargement suivant quand l'utilisateur atteint 85% de la liste
+  // ─── Infinite scroll ──────────────────────────────────────────────────────
   const handleScroll = useCallback((e: any) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    const scrolled   = contentOffset.y + layoutMeasurement.height;
-    const total      = contentSize.height;
-    const ratio      = scrolled / total;
-
+    const ratio = (contentOffset.y + layoutMeasurement.height) / contentSize.height;
     if (ratio < LOAD_MORE_THRESHOLD) return;
-
     const mode = filterRef.current;
-
-    // Charger le lot suivant de posts si applicable et disponible
     if (mode !== 'images' && mode !== 'videos' && mode !== 'music') {
       if (postsHasMore && !postsLoadingRef.current) loadPosts(false);
     }
-    // Charger le lot suivant de submissions si applicable et disponible
     if (mode !== 'posts') {
       if (subsHasMore && !subsLoadingRef.current) loadSubmissions(false);
     }
   }, [postsHasMore, subsHasMore, loadPosts, loadSubmissions]);
 
-  // Double-tap pour le header
   const handleDoubleTap = () => {
     const now = Date.now();
     if (lastTap && now - lastTap < 300) toggleHeader();
@@ -791,7 +768,7 @@ export default function ActuScreen() {
     if (mode !== 'posts')                   await loadSubmissions(true);
   };
 
-  // ─── Création de post — nouveau flux upload ───────────────────────────────
+  // ─── Création de post ─────────────────────────────────────────────────────
   const handlePickMedia = async (mediaType: 'image' | 'video') => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -809,16 +786,12 @@ export default function ActuScreen() {
       const session = await getValidToken();
       if (!session) return;
       const context = mediaType === 'image' ? 'image' : 'video';
-
       const urlRes  = await fetch(PROFILE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-upload-url', access_token: session.token, context }) });
       const urlData = await urlRes.json();
       if (!urlRes.ok) throw new Error(urlData.error);
-
       await uploadToStorage(urlData.signed_url, result.assets[0].uri);
-
       if (mediaType === 'image') setPostImageUrl(urlData.public_url);
       else                       setPostVideoUrl(urlData.public_url);
-
       showToast('success', `${mediaType === 'image' ? 'Image' : 'Vidéo'} ajoutée !`);
     } catch (err: any) {
       showToast('error', err.message || "Impossible d'ajouter le média");
@@ -840,7 +813,7 @@ export default function ActuScreen() {
       if (!res.ok) throw new Error(data.error);
       setPostContent(''); setPostVisibility('friends'); setPostImageUrl(null); setPostVideoUrl(null);
       setShowCreatePost(false);
-      await loadPosts(true);  // Rechargement complet après création
+      await loadPosts(true);
       showToast('success', 'Post publié !');
     } catch (err: any) { showToast('error', err.message || 'Impossible de publier'); }
     finally { setCreatingPost(false); }
@@ -873,24 +846,48 @@ export default function ActuScreen() {
       game_type: sub.game_type, run_id: sub.run_id, user_id: sub.user_id,
     })));
 
-  // ─── Post actions ─────────────────────────────────────────────────────────
+  // ─── Post actions — CORRECTION : access_token inclus dans les 3 handlers ──
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
     const session = await getValidToken(); if (!session) return;
-    const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: session.uid, post_id: postId }) });
+    const res  = await fetch(HOME_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:       liked ? 'like-post' : 'unlike-post',
+        user_id:      session.uid,
+        access_token: session.token,
+        post_id:      postId,
+      }),
+    });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p));
   }, []);
 
   const handleShare = useCallback(async (postId: string, shared: boolean) => {
     const session = await getValidToken(); if (!session) return;
-    const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: session.uid, post_id: postId }) });
+    const res  = await fetch(HOME_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:       shared ? 'share-post' : 'unshare-post',
+        user_id:      session.uid,
+        access_token: session.token,
+        post_id:      postId,
+      }),
+    });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p));
   }, []);
 
   const handleSave = useCallback(async (postId: string, saved: boolean) => {
     const session = await getValidToken(); if (!session) return;
-    const res  = await fetch(HOME_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: saved ? 'save-post' : 'unsave-post', user_id: session.uid, post_id: postId }) });
+    const res  = await fetch(HOME_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:       saved ? 'save-post' : 'unsave-post',
+        user_id:      session.uid,
+        access_token: session.token,
+        post_id:      postId,
+      }),
+    });
     const data = await res.json();
     if (data.success) setPosts(prev => prev.map(p => p.id === postId ? { ...p, user_saved: saved } : p));
   }, []);
@@ -927,7 +924,6 @@ export default function ActuScreen() {
     setSelectedAuthorId(authorId); setShowUserProfileModal(true);
   }, [userId]);
 
-  // ─── Indicateur de chargement en bas de liste ─────────────────────────────
   const isLoadingMore = loadingPosts || loadingSubs;
   const hasMoreAny    = (filterMode !== 'images' && filterMode !== 'videos' && filterMode !== 'music' && postsHasMore)
                      || (filterMode !== 'posts' && subsHasMore);
@@ -1024,16 +1020,12 @@ export default function ActuScreen() {
                   ? <PostCard key={item.id} post={item} userId={userId} onLike={handleLike} onShare={handleShare} onSave={handleSave} onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers} onOpenEdit={handleOpenEdit} onLongPress={handleLongPress} onAuthorPress={handleAuthorPress} />
                   : <SubmissionCard key={item.id} sub={item} onVote={handleVote} allVideoItems={allVideoItems} allAudioItems={allAudioItems} openVideoModal={openVideoModal} openAudioModal={openAudioModal} onAuthorPress={handleAuthorPress} />
               )}
-
-              {/* ── Indicateur chargement en bas ──────────────────────── */}
               {isLoadingMore && (
                 <View style={styles.loadMoreIndicator}>
                   <ActivityIndicator size="small" color="#8A2BE2" />
                   <Text style={styles.loadMoreText}>Chargement...</Text>
                 </View>
               )}
-
-              {/* ── Fin de liste ──────────────────────────────────────── */}
               {!isLoadingMore && !hasMoreAny && displayedItems.length > 0 && (
                 <View style={styles.endOfFeed}>
                   <View style={styles.endOfFeedLine} />
@@ -1098,10 +1090,8 @@ export default function ActuScreen() {
                   </View>
                 </View>
               </View>
-
               <TextInput style={styles.cpInput} placeholder="Quoi de neuf ?" placeholderTextColor="#bbb" value={postContent} onChangeText={setPostContent} multiline maxLength={1000} autoFocus />
               <Text style={styles.cpCharCount}>{postContent.length}/1000</Text>
-
               {postImageUrl && (
                 <View style={styles.cpMediaContainer}>
                   <Image source={{ uri: postImageUrl }} style={styles.cpMediaPreview} resizeMode="cover" />
@@ -1131,7 +1121,6 @@ export default function ActuScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-
               <TouchableOpacity style={[styles.cpPublishBtn, !postContent.trim() && styles.cpPublishBtnDisabled]} onPress={handleCreatePost} disabled={creatingPost || !postContent.trim()} activeOpacity={0.8}>
                 {creatingPost ? <ActivityIndicator size="small" color="#fff" /> : <><Ionicons name="send" size={18} color="#fff" /><Text style={styles.cpPublishBtnText}>Publier</Text></>}
               </TouchableOpacity>
@@ -1471,7 +1460,6 @@ const styles = StyleSheet.create({
   emptyText:       { fontSize: 16, color: '#999', marginTop: 12 },
   emptySub:        { fontSize: 12, color: '#CCC', marginTop: 5 },
 
-  // Indicateurs de chargement en bas de liste
   loadMoreIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 10 },
   loadMoreText:      { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
   endOfFeed:         { flexDirection: 'row', alignItems: 'center', paddingVertical: 24, paddingHorizontal: 20, gap: 12 },
@@ -1545,6 +1533,7 @@ const styles = StyleSheet.create({
   filterOptionActive:     { backgroundColor: '#F0E6FF' },
   filterOptionText:       { flex: 1, fontSize: 14, color: '#333', fontWeight: '600' },
   filterOptionTextActive: { color: '#8A2BE2' },
+
   modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
   modalContent:  { backgroundColor: '#fff', borderRadius: 20, padding: 25, width: width * 0.85, maxWidth: 400 },
   modalTitle:    { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
@@ -1554,31 +1543,31 @@ const styles = StyleSheet.create({
   modalBtn:      { backgroundColor: '#8A2BE2', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   modalBtnText:  { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 
-  cpOverlay:             { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  cpCard:                { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
-  cpHeader:              { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  cpTitle:               { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
-  cpAuthorRow:           { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
-  cpAvatar:              { width: 44, height: 44, borderRadius: 22 },
-  cpAuthorName:          { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
-  cpProBadge:            { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
-  cpProBadgeText:        { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
-  cpVisibilityRow:       { flexDirection: 'row', gap: 6 },
-  cpVisibilityBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
-  cpVisibilityBtnActive: { backgroundColor: '#8A2BE2', borderColor: '#8A2BE2' },
-  cpVisibilityText:      { fontSize: 11, color: '#666', fontWeight: '600' },
-  cpVisibilityTextActive:{ color: '#fff' },
-  cpInput:               { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
-  cpCharCount:           { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
-  cpMediaButtons:        { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  cpMediaBtn:            { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
-  cpMediaBtnText:        { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
-  cpMediaContainer:      { position: 'relative', marginBottom: 12 },
-  cpMediaPreview:        { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  cpVideoPreviewBg:      { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  cpVideoPreviewLabel:   { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
-  cpMediaRemove:         { position: 'absolute', top: 8, right: 8 },
-  cpPublishBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
-  cpPublishBtnDisabled:  { backgroundColor: '#C4B5FD' },
-  cpPublishBtnText:      { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  cpOverlay:              { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  cpCard:                 { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
+  cpHeader:               { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  cpTitle:                { fontSize: 18, fontWeight: 'bold', color: '#2D0072' },
+  cpAuthorRow:            { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
+  cpAvatar:               { width: 44, height: 44, borderRadius: 22 },
+  cpAuthorName:           { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 4 },
+  cpProBadge:             { backgroundColor: '#FFF8E1', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6, alignSelf: 'flex-start' },
+  cpProBadgeText:         { color: '#F59E0B', fontSize: 11, fontWeight: '700' },
+  cpVisibilityRow:        { flexDirection: 'row', gap: 6 },
+  cpVisibilityBtn:        { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#E0E0E0' },
+  cpVisibilityBtnActive:  { backgroundColor: '#8A2BE2', borderColor: '#8A2BE2' },
+  cpVisibilityText:       { fontSize: 11, color: '#666', fontWeight: '600' },
+  cpVisibilityTextActive: { color: '#fff' },
+  cpInput:                { fontSize: 16, color: '#333', minHeight: 100, textAlignVertical: 'top', paddingVertical: 12, marginBottom: 8 },
+  cpCharCount:            { fontSize: 12, color: '#bbb', textAlign: 'right', marginBottom: 12 },
+  cpMediaButtons:         { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  cpMediaBtn:             { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0E6FF', borderRadius: 12 },
+  cpMediaBtnText:         { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
+  cpMediaContainer:       { position: 'relative', marginBottom: 12 },
+  cpMediaPreview:         { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#F0F0F0' },
+  cpVideoPreviewBg:       { backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  cpVideoPreviewLabel:    { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  cpMediaRemove:          { position: 'absolute', top: 8, right: 8 },
+  cpPublishBtn:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#8A2BE2', borderRadius: 14, paddingVertical: 16 },
+  cpPublishBtnDisabled:   { backgroundColor: '#C4B5FD' },
+  cpPublishBtnText:       { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });
