@@ -10,6 +10,9 @@
 // Auth : token récupéré depuis AsyncStorage via getValidToken,
 //        identique à actu.tsx — refresh automatique si expiré.
 //
+// MediaViewer : tap image → fullscreen, tap à nouveau → ferme (toggle)
+//               même comportement que actu.tsx et ProfileScreen.tsx
+//
 // Routes :
 //   Posts    → POST /home  { action: 'search-posts', user_id, access_token, query }
 //   Subs     → POST /feed  { function: 'searchSubmissions', user_id, access_token, query }
@@ -28,6 +31,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Video, Audio, ResizeMode } from 'expo-av';
 import * as Haptics   from 'expo-haptics';
 import AsyncStorage   from '@react-native-async-storage/async-storage';
+
+const { width, height } = Dimensions.get('window');
 
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HOME_URL    = `${BACKEND_URL}/home`;
@@ -165,6 +170,51 @@ function Hl({ text, q }: { text: string; q: string }) {
   );
 }
 
+// ─── MediaViewer — fullscreen image ou vidéo ─────────────────────────────────
+// Tap sur le contenu → ferme le viewer (toggle)
+// Identique à actu.tsx et ProfileScreen.tsx
+interface MediaViewerProps {
+  visible: boolean;
+  url:     string | null;
+  type:    'image' | 'video';
+  onClose: () => void;
+}
+
+function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
+  if (!url) return null;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={S.mvOverlay}>
+        {/* Bouton fermer */}
+        <TouchableOpacity style={S.mvCloseBtn} onPress={onClose}>
+          <Ionicons name="close" size={30} color="#fff" />
+        </TouchableOpacity>
+
+        {type === 'image' ? (
+          // Tap sur l'image → ferme le viewer
+          <TouchableOpacity activeOpacity={1} onPress={onClose} style={S.mvImageWrapper}>
+            <Image source={{ uri: url }} style={S.mvImage} resizeMode="contain" />
+          </TouchableOpacity>
+        ) : Platform.OS === 'web' ? (
+          // @ts-ignore — élément HTML natif, web uniquement
+          <video
+            src={url}
+            controls
+            autoPlay
+            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
+          />
+        ) : (
+          // Mobile — tap pour fermer
+          <TouchableOpacity activeOpacity={1} onPress={onClose} style={S.mvVideoNative}>
+            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
+            <Text style={S.mvVideoHint}>Appuyez pour fermer</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
 // ─── AudioMini ────────────────────────────────────────────────────────────────
 function AudioMini({ url, description }: { url: string; description?: string | null }) {
   const [isPlaying,  setIsPlaying]  = useState(false);
@@ -270,42 +320,90 @@ function AudioMini({ url, description }: { url: string; description?: string | n
 }
 
 // ─── VideoMini ────────────────────────────────────────────────────────────────
-function VideoMini({ url, description }: { url: string; description?: string | null }) {
-  const [muted,   setMuted]   = useState(true);
-  const [playing, setPlaying] = useState(false);
+// Tap → ouvre MediaViewer fullscreen (vidéo en plein écran)
+// Tap dans le viewer → ferme
+interface VideoMiniProps { url: string; description?: string | null }
+
+function VideoMini({ url, description }: VideoMiniProps) {
+  const [muted,      setMuted]      = useState(true);
+  const [playing,    setPlaying]    = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   return (
-    <View style={S.videoBox}>
-      <Video
-        source={{ uri: url }}
-        style={S.videoPlayer}
-        resizeMode={ResizeMode.COVER}
-        isLooping isMuted={muted} shouldPlay={playing} useNativeControls={false}
+    <>
+      <MediaViewer
+        visible={viewerOpen}
+        url={url}
+        type="video"
+        onClose={() => setViewerOpen(false)}
+      />
+      <View style={S.videoBox}>
+        <Video
+          source={{ uri: url }}
+          style={S.videoPlayer}
+          resizeMode={ResizeMode.COVER}
+          isLooping isMuted={muted} shouldPlay={playing} useNativeControls={false}
+        />
+        <TouchableOpacity
+          style={S.videoOverlay} activeOpacity={0.85}
+          onPress={() => {
+            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            // Tap → fullscreen viewer
+            setViewerOpen(true);
+          }}
+        >
+          {/* Icône expand toujours visible */}
+          <View style={S.videoPlayIcon}>
+            <Ionicons name={playing ? 'expand' : 'play'} size={28} color="#FFF" />
+          </View>
+          {playing && (
+            <View style={S.videoMuteIcon}>
+              <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={16} color="#FFF" />
+            </View>
+          )}
+        </TouchableOpacity>
+        {description && <Text style={S.videoDesc} numberOfLines={1}>{description}</Text>}
+      </View>
+    </>
+  );
+}
+
+// ─── ImageMedia ───────────────────────────────────────────────────────────────
+// Tap → fullscreen via MediaViewer, tap dans le viewer → ferme (toggle)
+interface ImageMediaProps { url: string }
+
+function ImageMedia({ url }: ImageMediaProps) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  return (
+    <>
+      <MediaViewer
+        visible={viewerOpen}
+        url={url}
+        type="image"
+        onClose={() => setViewerOpen(false)}
       />
       <TouchableOpacity
-        style={S.videoOverlay} activeOpacity={0.85}
+        activeOpacity={0.92}
         onPress={() => {
           if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          if (!playing) { setPlaying(true); setMuted(false); }
-          else setMuted(m => !m);
+          setViewerOpen(true);
         }}
+        style={{ position: 'relative' }}
       >
-        {!playing && (
-          <View style={S.videoPlayIcon}><Ionicons name="play" size={28} color="#FFF" /></View>
-        )}
-        {playing && (
-          <View style={S.videoMuteIcon}>
-            <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={16} color="#FFF" />
-          </View>
-        )}
+        <Image source={{ uri: url }} style={S.imgMedia} resizeMode="cover" />
+        {/* Icône expand pour indiquer que l'image est cliquable */}
+        <View style={S.imgExpandHint}>
+          <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" />
+        </View>
       </TouchableOpacity>
-      {description && <Text style={S.videoDesc} numberOfLines={1}>{description}</Text>}
-    </View>
+    </>
   );
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
-// Like/unlike → POST /home via getValidToken (token frais depuis AsyncStorage)
+// Like/unlike → POST /home via getValidToken
+// Images et vidéos du post → MediaViewer fullscreen (tap pour ouvrir, tap pour fermer)
 interface PostCardProps {
   post: Post; q: string; onComment: () => void;
 }
@@ -313,6 +411,10 @@ interface PostCardProps {
 function PostCard({ post, q, onComment }: PostCardProps) {
   const [liked, setLiked] = useState(post.user_liked);
   const [likes, setLikes] = useState(post.reactions.likes);
+
+  // Viewer pour les médias du post
+  const [viewerUrl,  setViewerUrl]  = useState<string | null>(null);
+  const [viewerType, setViewerType] = useState<'image' | 'video'>('image');
 
   const doLike = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -323,9 +425,9 @@ function PostCard({ post, q, onComment }: PostCardProps) {
       const res = await fetch(HOME_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action:   nl ? 'like-post' : 'unlike-post',
-          user_id:  session.uid,
-          post_id:  post.id,
+          action:  nl ? 'like-post' : 'unlike-post',
+          user_id: session.uid,
+          post_id: post.id,
         }),
       });
       const data = await res.json();
@@ -334,49 +436,92 @@ function PostCard({ post, q, onComment }: PostCardProps) {
   };
 
   return (
-    <View style={S.card}>
-      <View style={S.cardHead}>
-        {post.author.avatar_url
-          ? <Image source={{ uri: post.author.avatar_url }} style={S.av} />
-          : <View style={S.avFb}><Text style={S.avTxt}>{ini(post.author.nom, post.author.prenom)}</Text></View>}
-        <View style={{ flex: 1 }}>
-          <Text style={S.name}>{post.author.prenom} {post.author.nom}</Text>
-          <Text style={S.time}>{fmtAgo(post.created_at)}</Text>
+    <>
+      {/* Viewer fullscreen — tap sur le contenu ferme */}
+      <MediaViewer
+        visible={!!viewerUrl}
+        url={viewerUrl}
+        type={viewerType}
+        onClose={() => setViewerUrl(null)}
+      />
+
+      <View style={S.card}>
+        <View style={S.cardHead}>
+          {post.author.avatar_url
+            ? <Image source={{ uri: post.author.avatar_url }} style={S.av} />
+            : <View style={S.avFb}><Text style={S.avTxt}>{ini(post.author.nom, post.author.prenom)}</Text></View>}
+          <View style={{ flex: 1 }}>
+            <Text style={S.name}>{post.author.prenom} {post.author.nom}</Text>
+            <Text style={S.time}>{fmtAgo(post.created_at)}</Text>
+          </View>
+          <View style={S.postBadge}><Text style={S.postBadgeTxt}>📝</Text></View>
         </View>
-        <View style={S.postBadge}><Text style={S.postBadgeTxt}>📝</Text></View>
+
+        <Text style={S.body}><Hl text={post.content} q={q} /></Text>
+
+        {/* Image du post — tap → fullscreen, tap dans viewer → ferme */}
+        {post.imagepots && (
+          <TouchableOpacity
+            activeOpacity={0.92}
+            onPress={() => {
+              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setViewerType('image');
+              setViewerUrl(post.imagepots!);
+            }}
+            style={{ position: 'relative' }}
+          >
+            <Image source={{ uri: post.imagepots }} style={S.imgMedia} resizeMode="cover" />
+            <View style={S.imgExpandHint}>
+              <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Vidéo du post — tap → fullscreen player, tap dans viewer → ferme */}
+        {post.vidposts && (
+          <TouchableOpacity
+            style={S.videoBox} activeOpacity={0.92}
+            onPress={() => {
+              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setViewerType('video');
+              setViewerUrl(post.vidposts!);
+            }}
+          >
+            <View style={S.videoOverlay}>
+              <View style={S.videoPlayIcon}>
+                <Ionicons name="play" size={28} color="#FFF" />
+              </View>
+            </View>
+            <View style={S.videoExpandBadge}>
+              <Ionicons name="expand-outline" size={13} color="#FFF" />
+              <Text style={S.videoExpandText}>Appuyer pour lire</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        <View style={S.actions}>
+          <TouchableOpacity style={S.actBtn} onPress={doLike}>
+            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={18} color={liked ? '#FF0080' : '#888'} />
+            <Text style={[S.actTxt, liked && { color: '#FF0080' }]}>{likes}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.actBtn} onPress={onComment}>
+            <Ionicons name="chatbubble-outline" size={18} color="#888" />
+            <Text style={S.actTxt}>{post.reactions.comments}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.actBtn}>
+            <Ionicons name="repeat-outline" size={18} color="#888" />
+            <Text style={S.actTxt}>{post.reactions.shares}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
-      <Text style={S.body}><Hl text={post.content} q={q} /></Text>
-
-      {/* Image du post si présente */}
-      {post.imagepots && (
-        <Image source={{ uri: post.imagepots }} style={S.imgMedia} resizeMode="cover" />
-      )}
-      {/* Vidéo du post si présente */}
-      {post.vidposts && (
-        <VideoMini url={post.vidposts} />
-      )}
-
-      <View style={S.actions}>
-        <TouchableOpacity style={S.actBtn} onPress={doLike}>
-          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={18} color={liked ? '#FF0080' : '#888'} />
-          <Text style={[S.actTxt, liked && { color: '#FF0080' }]}>{likes}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={S.actBtn} onPress={onComment}>
-          <Ionicons name="chatbubble-outline" size={18} color="#888" />
-          <Text style={S.actTxt}>{post.reactions.comments}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={S.actBtn}>
-          <Ionicons name="repeat-outline" size={18} color="#888" />
-          <Text style={S.actTxt}>{post.reactions.shares}</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    </>
   );
 }
 
 // ─── SubCard ──────────────────────────────────────────────────────────────────
-// Vote → POST /feed via getValidToken (token frais depuis AsyncStorage)
+// Vote → POST /feed via getValidToken
+// Images soumissions → ImageMedia (tap → fullscreen, tap → ferme)
+// Vidéos soumissions → VideoMini (tap → fullscreen viewer)
 interface SubCardProps { sub: Submission; q: string; }
 
 function SubCard({ sub, q }: SubCardProps) {
@@ -429,9 +574,9 @@ function SubCard({ sub, q }: SubCardProps) {
     finally { setVoting(false); }
   };
 
-  const matchedDesc  = sub.media.find(m => m.description?.toLowerCase().includes(q.toLowerCase()))?.description;
-  const mediaLabel   = isImage ? 'image' : isMusic ? 'piste' : 'vidéo';
-  const mediaIcon    = isImage ? 'images-outline' : isMusic ? 'musical-notes-outline' : 'videocam-outline';
+  const matchedDesc = sub.media.find(m => m.description?.toLowerCase().includes(q.toLowerCase()))?.description;
+  const mediaLabel  = isImage ? 'image' : isMusic ? 'piste' : 'vidéo';
+  const mediaIcon   = isImage ? 'images-outline' : isMusic ? 'musical-notes-outline' : 'videocam-outline';
 
   return (
     <View style={S.card}>
@@ -465,7 +610,9 @@ function SubCard({ sub, q }: SubCardProps) {
           }}>
             <Ionicons name={mediaIcon as any} size={15} color="#8A2BE2" />
             <Text style={S.mediaToggleTxt}>
-              {expanded ? 'Masquer' : `Voir ${sub.media.length} ${mediaLabel}${sub.media.length > 1 ? 's' : ''}`}
+              {expanded
+                ? 'Masquer'
+                : `Voir ${sub.media.length} ${mediaLabel}${sub.media.length > 1 ? 's' : ''}`}
             </Text>
             <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8A2BE2" />
           </TouchableOpacity>
@@ -473,9 +620,9 @@ function SubCard({ sub, q }: SubCardProps) {
           {expanded && (
             <View style={S.mediaList}>
               {sub.media.map(m =>
-                isImage  ? <Image key={m.id} source={{ uri: m.url }} style={S.imgMedia} resizeMode="cover" />
-                : isMusic ? <AudioMini key={m.id} url={m.url} description={m.description} />
-                          : <VideoMini key={m.id} url={m.url} description={m.description} />
+                isImage  ? <ImageMedia key={m.id} url={m.url} />
+                : isMusic ? <AudioMini  key={m.id} url={m.url} description={m.description} />
+                          : <VideoMini  key={m.id} url={m.url} description={m.description} />
               )}
             </View>
           )}
@@ -703,14 +850,15 @@ const S = StyleSheet.create({
   chipTxtOn:   { color: '#8A2BE2' },
   searchBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 10, borderRadius: 10, gap: 6, marginTop: 4, marginBottom: 6 },
   searchBtnTxt: { color: '#FFF', fontSize: 15, fontWeight: '600' },
-  center:      { paddingVertical: 70, alignItems: 'center', paddingHorizontal: 40 },
-  stTitle:     { fontSize: 17, fontWeight: '700', color: '#999', marginTop: 18, textAlign: 'center' },
-  stTxt:       { fontSize: 13, color: '#BBB', marginTop: 8, textAlign: 'center', lineHeight: 20 },
-  countBar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-  countTxt:    { fontSize: 13, fontWeight: '700', color: '#8A2BE2' },
-  pill:        { backgroundColor: '#F0E6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  pillTxt:     { fontSize: 11, fontWeight: '700', color: '#8A2BE2' },
-  card:        {
+  center:       { paddingVertical: 70, alignItems: 'center', paddingHorizontal: 40 },
+  stTitle:      { fontSize: 17, fontWeight: '700', color: '#999', marginTop: 18, textAlign: 'center' },
+  stTxt:        { fontSize: 13, color: '#BBB', marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  countBar:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  countTxt:     { fontSize: 13, fontWeight: '700', color: '#8A2BE2' },
+  pill:         { backgroundColor: '#F0E6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  pillTxt:      { fontSize: 11, fontWeight: '700', color: '#8A2BE2' },
+
+  card: {
     backgroundColor: '#FFF', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, padding: 14,
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
@@ -732,39 +880,61 @@ const S = StyleSheet.create({
   actions:      { flexDirection: 'row', gap: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
   actBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
   actTxt:       { fontSize: 13, color: '#666', fontWeight: '600' },
-  descRow:      { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 10, backgroundColor: '#FAFAFA', borderRadius: 8, padding: 8 },
-  descTxt:      { flex: 1, fontSize: 13, color: '#555', lineHeight: 18 },
+
+  descRow:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 10, backgroundColor: '#FAFAFA', borderRadius: 8, padding: 8 },
+  descTxt:        { flex: 1, fontSize: 13, color: '#555', lineHeight: 18 },
   mediaToggle:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 4 },
   mediaToggleTxt: { flex: 1, fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
   mediaList:      { gap: 10, marginBottom: 10 },
-  imgMedia:       { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#EEE' },
-  videoBox:       { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000', height: 200 },
-  videoPlayer:    { width: '100%', height: '100%' },
-  videoOverlay:   { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  videoPlayIcon:  { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center' },
-  videoMuteIcon:  { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 14, width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
-  videoDesc:      { position: 'absolute', bottom: 8, left: 10, right: 10, color: '#FFF', fontSize: 12, fontWeight: '500' },
-  audioBox:       { backgroundColor: '#F8F5FF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
-  audioTop:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  audioDesc:      { flex: 1, fontSize: 12, color: '#555', fontWeight: '500' },
-  seekBar:        { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
-  seekTrack:      { position: 'absolute', left: 2, right: 2, height: 4, backgroundColor: '#DDD6FE', borderRadius: 2 },
-  seekFill:       { position: 'absolute', left: 2, height: 4, backgroundColor: '#7C3AED', borderRadius: 2 },
-  seekThumb:      { position: 'absolute', top: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#7C3AED', marginLeft: -8, elevation: 3 },
-  seekTimes:      { flexDirection: 'row', justifyContent: 'space-between' },
-  seekTime:       { fontSize: 10, color: '#9CA3AF' },
-  audioCtrl:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18 },
-  skipBtn:        { alignItems: 'center', gap: 2 },
-  skipTxt:        { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
-  playBtn:        { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
-  playBtnActive:  { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
-  footer:         { flexDirection: 'row', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5', gap: 8 },
-  statusPill:     { borderRadius: 8, paddingHorizontO: 8, paddingVertical: 3, paddingHorizontal: 8 },
-  statusTxt:      { fontSize: 11, fontWeight: '700' },
-  voteBtn:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#8A2BE2', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 },
-  voteBtnVoted:   { backgroundColor: '#E74C3C' },
-  voteTxt:        { color: '#FFF', fontSize: 13, fontWeight: '700' },
-  voteCount:      { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600' },
-  voteStat:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  voteStatTxt:    { fontSize: 13, color: '#E74C3C', fontWeight: '700' },
+
+  // Image media — avec indicateur expand
+  imgMedia:      { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#EEE' },
+  imgExpandHint: {
+    position: 'absolute', bottom: 8, right: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 4,
+  },
+
+  // Vidéo mini
+  videoBox:         { borderRadius: 10, overflow: 'hidden', backgroundColor: '#1A1A2E', height: 200, justifyContent: 'center', alignItems: 'center' },
+  videoPlayer:      { width: '100%', height: '100%' },
+  videoOverlay:     { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
+  videoPlayIcon:    { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center' },
+  videoMuteIcon:    { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 14, width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
+  videoDesc:        { position: 'absolute', bottom: 8, left: 10, right: 10, color: '#FFF', fontSize: 12, fontWeight: '500' },
+  videoExpandBadge: { position: 'absolute', bottom: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  videoExpandText:  { color: '#FFF', fontSize: 11, fontWeight: '600' },
+
+  // Audio
+  audioBox:      { backgroundColor: '#F8F5FF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
+  audioTop:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  audioDesc:     { flex: 1, fontSize: 12, color: '#555', fontWeight: '500' },
+  seekBar:       { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
+  seekTrack:     { position: 'absolute', left: 2, right: 2, height: 4, backgroundColor: '#DDD6FE', borderRadius: 2 },
+  seekFill:      { position: 'absolute', left: 2, height: 4, backgroundColor: '#7C3AED', borderRadius: 2 },
+  seekThumb:     { position: 'absolute', top: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#7C3AED', marginLeft: -8, elevation: 3 },
+  seekTimes:     { flexDirection: 'row', justifyContent: 'space-between' },
+  seekTime:      { fontSize: 10, color: '#9CA3AF' },
+  audioCtrl:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18 },
+  skipBtn:       { alignItems: 'center', gap: 2 },
+  skipTxt:       { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
+  playBtn:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
+  playBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
+
+  footer:       { flexDirection: 'row', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5', gap: 8 },
+  statusPill:   { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  statusTxt:    { fontSize: 11, fontWeight: '700' },
+  voteBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#8A2BE2', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7 },
+  voteBtnVoted: { backgroundColor: '#E74C3C' },
+  voteTxt:      { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  voteCount:    { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600' },
+  voteStat:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  voteStatTxt:  { fontSize: 13, color: '#E74C3C', fontWeight: '700' },
+
+  // MediaViewer fullscreen
+  mvOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)', justifyContent: 'center', alignItems: 'center' },
+  mvCloseBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
+  mvImageWrapper: { width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
+  mvImage:        { width, height: height * 0.85 },
+  mvVideoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
+  mvVideoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
 });
