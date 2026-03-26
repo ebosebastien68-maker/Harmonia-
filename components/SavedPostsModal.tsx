@@ -26,7 +26,10 @@ const NATIVE = Platform.OS !== 'web';
 // ─── Helper : récupère le token depuis AsyncStorage ──────────────────────────
 const getAccessToken = async (): Promise<string | null> => {
   try {
-    return await AsyncStorage.getItem('access_token');
+    const raw = await AsyncStorage.getItem('harmonia_session');
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    return session.access_token ?? null;
   } catch {
     return null;
   }
