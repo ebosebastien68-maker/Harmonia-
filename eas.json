@@ -15,5 +15,11 @@
         "buildType": "app-bundle"
       }
     }
+  },
+  "submit": {
+    "production": {
+      "android": {},
+      "ios": {}
+    }
   }
 }
