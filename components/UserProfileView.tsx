@@ -24,6 +24,9 @@ import * as Haptics       from 'expo-haptics';
 import CommentsModal from './CommentsModal';
 import LikersModal   from './LikersModal';
 
+// ⚠️ Ajuste le chemin selon l'emplacement de ce fichier dans ton projet
+const DEFAULT_AVATAR = require('../../assets/default-avatar.png');
+
 const WS_BASE          = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const USER_PROFILE_URL = `${WS_BASE}/user-profile`;
 const HOME_URL         = `${WS_BASE}/home`;
@@ -126,9 +129,11 @@ const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenCo
     <View style={styles.postCard}>
       <View style={styles.postHeader}>
         <View style={styles.postAuthor}>
-          {post.author.avatar_url
-            ? <Image source={{ uri: post.author.avatar_url }} style={styles.postAvatar} />
-            : <View style={styles.avatarPlaceholder}><Text style={styles.avatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text></View>}
+          {/* Avatar auteur du post — default-avatar si pas de photo */}
+          <Image
+            source={post.author.avatar_url ? { uri: post.author.avatar_url } : DEFAULT_AVATAR}
+            style={styles.postAvatar}
+          />
           <View>
             <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
             <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
@@ -257,9 +262,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
       const data = await res.json();
       if (res.ok) {
         setFriendStatus(data.friendship_status);
-        // Si on vient d'accepter → charger les posts
         if (data.friendship_status === 'accepted') { setShowPosts(true); loadUserPosts(); }
-        // Si on vient de retirer → cacher les posts
         if (data.friendship_status === 'none') { setShowPosts(false); setPosts([]); }
       }
     } catch (err) { console.error('[UserProfileView] friendAction:', err); }
@@ -271,7 +274,6 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
     loadUserPosts();
   };
 
-  // Interactions posts
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
     const res  = await fetch(HOME_URL, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -349,11 +351,11 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
           {/* Header */}
           <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.header}>
             <TouchableOpacity onPress={() => profile.avatar_url && setShowAvatarViewer(true)} activeOpacity={profile.avatar_url ? 0.8 : 1}>
-              {profile.avatar_url
-                ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-                : <View style={[styles.avatar, styles.avatarFallback]}>
-                    <Text style={styles.avatarFallbackText}>{getInitials(profile.nom, profile.prenom)}</Text>
-                  </View>}
+              {/* Avatar profil — default-avatar.png si pas de photo */}
+              <Image
+                source={profile.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR}
+                style={styles.avatar}
+              />
             </TouchableOpacity>
             <Text style={styles.headerName}>{profile.prenom} {profile.nom}</Text>
             <Text style={styles.headerSub}>Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</Text>
@@ -380,7 +382,6 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
           {/* Section posts */}
           <View style={styles.postsSection}>
 
-            {/* "Voir plus" — uniquement si amis et pas encore affiché */}
             {friendStatus === 'accepted' && !showPosts && (
               <TouchableOpacity style={styles.voirPlusBtn} onPress={handleVoirPlus} activeOpacity={0.8}>
                 <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.voirPlusGrad}>
@@ -390,7 +391,6 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
               </TouchableOpacity>
             )}
 
-            {/* Posts */}
             {showPosts && (
               <>
                 <Text style={styles.sectionTitle}>Publications</Text>
@@ -413,7 +413,6 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
               </>
             )}
 
-            {/* Message si pas ami */}
             {friendStatus !== 'accepted' && friendStatus !== 'pending_received' && (
               <View style={styles.notFriendBox}>
                 <Ionicons name="lock-closed-outline" size={32} color="#CCC" />
