@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "expo": "~50.0.17",
+    "expo-dev-client": "~3.3.0",
     "expo-router": "~3.4.8",
     "expo-font": "~11.10.3",
     "react": "18.2.0",
