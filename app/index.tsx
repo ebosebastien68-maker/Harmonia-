@@ -18,24 +18,31 @@ import HarmoniaLogo from '../components/HarmoniaLogo';
 
 const { width } = Dimensions.get('window');
 
+// ── Type manquant dans les types DOM standard ─────────────────────────────
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 export default function LandingPage() {
   const router = useRouter();
   const lastTap = useRef<number>(0);
 
   // ── PWA Install Prompt (web uniquement) ───────────────────────────────────
-  const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [showInstallBtn, setShowInstallBtn] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState<boolean>(false);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
-    const handler = (e: any) => {
+    const handler = (e: BeforeInstallPromptEvent) => {
       e.preventDefault(); // Empêche le mini-infobar automatique du navigateur
       setInstallPrompt(e);
       setShowInstallBtn(true);
     };
 
-    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('beforeinstallprompt', handler as EventListener);
 
     // Si déjà installé → ne pas montrer le bouton
     window.addEventListener('appinstalled', () => {
@@ -43,10 +50,10 @@ export default function LandingPage() {
       setInstallPrompt(null);
     });
 
-    return () => window.removeEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler as EventListener);
   }, []);
 
-  const handleInstall = async () => {
+  const handleInstall = async (): Promise<void> => {
     if (!installPrompt) return;
     await installPrompt.prompt();
     const { outcome } = await installPrompt.userChoice;
