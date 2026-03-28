@@ -3,7 +3,7 @@
     "version": ">= 7.0.0"
   },
   "build": {
-    "preview": {
+    "Preview": {
       "distribution": "internal",
       "node": "20.0.0",
       "android": {
