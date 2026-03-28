@@ -14,7 +14,7 @@ import { StatusBar }      from 'expo-status-bar';
 import * as Haptics       from 'expo-haptics';
 
 import ActuScreen     from './actu';
-import GamesScreen    from './games';
+import GamesScreen    from './games-screen';
 import MessagesScreen from './messages';
 import FriendsScreen  from './friends';
 import ProfileScreen  from './profile';
