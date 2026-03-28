@@ -21,6 +21,9 @@ import ProfileScreen  from './profile';
 
 type TabName = 'actu' | 'games' | 'messages' | 'friends' | 'profile';
 
+// Tous les onglets — montés dès le départ, affichés/cachés selon l'onglet actif
+const ALL_TABS: TabName[] = ['actu', 'games', 'messages', 'friends', 'profile'];
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -33,15 +36,29 @@ export default function HomePage() {
   const refreshTokenRef = useRef<string>('');
   const expiresAtRef    = useRef<number>(0);
 
+  // Garde une trace des onglets déjà montés (pour ne monter que si visité au moins une fois)
+  // actu est monté immédiatement, les autres dès le premier affichage
+  const mountedTabs = useRef<Set<TabName>>(new Set<TabName>(['actu']));
+
   const tabBarTranslateY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     initSession();
   }, []);
 
+  // Pré-monter tous les onglets en arrière-plan après le chargement initial
+  useEffect(() => {
+    if (!loading) {
+      // Légère temporisation pour laisser actu s'afficher en premier
+      const timer = setTimeout(() => {
+        ALL_TABS.forEach(tab => mountedTabs.current.add(tab));
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
   // =====================================================
   // INIT SESSION — identique a profile.tsx
-  // Lit AsyncStorage → stocke en useRef → pret pour tous les ecrans
   // =====================================================
 
   const initSession = async () => {
@@ -60,7 +77,6 @@ export default function HomePage() {
         return;
       }
 
-      // Stocker en memoire via useRef — meme methode que profile.tsx
       accessTokenRef.current  = session.access_token  || '';
       refreshTokenRef.current = session.refresh_token || '';
       expiresAtRef.current    = session.expires_at    || 0;
@@ -81,6 +97,8 @@ export default function HomePage() {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+    // Marquer l'onglet comme monté dès qu'on le visite
+    mountedTabs.current.add(tab);
     setActiveTab(tab);
     if (isChatOpen) {
       setIsChatOpen(false);
@@ -105,17 +123,6 @@ export default function HomePage() {
     if (isInChatMode) { hideTabBar(); } else { showTabBar(); }
   };
 
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'actu':     return <ActuScreen />;
-      case 'games':    return <GamesScreen />;
-      case 'messages': return <MessagesScreen onChatModeChange={handleChatModeChange} />;
-      case 'friends':  return <FriendsScreen />;
-      case 'profile':  return <ProfileScreen />;
-      default:         return <ActuScreen />;
-    }
-  };
-
   // =====================================================
   // LOADING
   // =====================================================
@@ -130,6 +137,9 @@ export default function HomePage() {
 
   // =====================================================
   // RENDU PRINCIPAL
+  // Tous les écrans sont montés simultanément.
+  // Seul l'actif est visible (display: flex), les autres sont cachés (display: none).
+  // Cela préserve leur état et évite les rechargements lors des changements d'onglet.
   // =====================================================
 
   return (
@@ -137,7 +147,40 @@ export default function HomePage() {
       <StatusBar style="light" />
 
       <View style={styles.content}>
-        {renderContent()}
+
+        {/* actu — toujours monté, visible par défaut */}
+        <View style={[styles.screen, activeTab === 'actu' ? styles.screenVisible : styles.screenHidden]}>
+          <ActuScreen />
+        </View>
+
+        {/* games */}
+        {mountedTabs.current.has('games') && (
+          <View style={[styles.screen, activeTab === 'games' ? styles.screenVisible : styles.screenHidden]}>
+            <GamesScreen />
+          </View>
+        )}
+
+        {/* messages */}
+        {mountedTabs.current.has('messages') && (
+          <View style={[styles.screen, activeTab === 'messages' ? styles.screenVisible : styles.screenHidden]}>
+            <MessagesScreen onChatModeChange={handleChatModeChange} />
+          </View>
+        )}
+
+        {/* friends */}
+        {mountedTabs.current.has('friends') && (
+          <View style={[styles.screen, activeTab === 'friends' ? styles.screenVisible : styles.screenHidden]}>
+            <FriendsScreen />
+          </View>
+        )}
+
+        {/* profile */}
+        {mountedTabs.current.has('profile') && (
+          <View style={[styles.screen, activeTab === 'profile' ? styles.screenVisible : styles.screenHidden]}>
+            <ProfileScreen />
+          </View>
+        )}
+
       </View>
 
       <Animated.View
@@ -212,6 +255,12 @@ const styles = StyleSheet.create({
   container:        { flex: 1, backgroundColor: '#F5F5F5' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5F5' },
   content:          { flex: 1 },
+
+  // Chaque écran occupe tout l'espace — visible ou caché selon l'onglet actif
+  screen:        { ...StyleSheet.absoluteFillObject },
+  screenVisible: { display: 'flex' },
+  screenHidden:  { display: 'none' },
+
   bottomTabsContainer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     ...Platform.select({
