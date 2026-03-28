@@ -25,7 +25,7 @@ import CommentsModal from './CommentsModal';
 import LikersModal   from './LikersModal';
 
 // ⚠️ Ajuste le chemin selon l'emplacement de ce fichier dans ton projet
-const DEFAULT_AVATAR = require('../../assets/default-avatar.png');
+const DEFAULT_AVATAR = require('../app/assets/default-avatar.png');
 
 const WS_BASE          = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const USER_PROFILE_URL = `${WS_BASE}/user-profile`;
