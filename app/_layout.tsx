@@ -1,9 +1,25 @@
-import { Stack }           from 'expo-router';
-import { useEffect }       from 'react';
-import { Animated, Platform } from 'react-native';
-import * as Notifications  from 'expo-notifications';
+import { Stack }               from 'expo-router';
+import { useEffect }            from 'react';
+import { Animated, Platform }   from 'react-native';
+import * as Notifications       from 'expo-notifications';
 
-// ── Patch Animated sur web ─────────────────────────────────────────────────────
+// ── Patch fetch global — mobile uniquement ────────────────────────────────────
+// Ajoute automatiquement x-api-key sur toutes les requêtes fetch
+// quand l'app tourne sur iOS ou Android (pas sur web).
+// Aucune modification nécessaire dans les autres fichiers.
+if (Platform.OS !== 'web') {
+  const originalFetch = global.fetch;
+  global.fetch = (input: any, init: any = {}) => {
+    init.headers = {
+      ...init.headers,
+      'x-api-key': process.env.EXPO_PUBLIC_API_KEY || '',
+    };
+    return originalFetch(input, init);
+  };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Patch Animated sur web ────────────────────────────────────────────────────
 // Certaines libs tierces (LinearGradient, RefreshControl…) passent
 // useNativeDriver:true sur web → warning + blocage JS.
 // Ce bloc intercepte tous les appels Animated et force useNativeDriver:false
@@ -23,7 +39,7 @@ if (Platform.OS === 'web') {
   const _decay = Animated.decay;
   (Animated as any).decay  = (v: any, c: any) => _decay(v, patch(c));
 }
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function RootLayout() {
   useEffect(() => {
@@ -31,7 +47,7 @@ export default function RootLayout() {
       handleNotification: async () => ({
         shouldShowAlert: true,
         shouldPlaySound: true,
-        shouldSetBadge: false,
+        shouldSetBadge:  false,
       }),
     });
   }, []);
