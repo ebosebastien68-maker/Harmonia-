@@ -1055,8 +1055,8 @@ export default function ActuScreen() {
             <View style={styles.feedList}>
               {displayedItems.map(item =>
                 item.item_type === 'post'
-                  ? <PostCard key={item.id} post={item} userId={userId} onLike={handleLike} onShare={handleShare} onSave={handleSave} onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers} onOpenEdit={handleOpenEdit} onLongPress={handleLongPress} onAuthorPress={handleAuthorPress} />
-                  : <SubmissionCard key={item.id} sub={item} onVote={handleVote} allVideoItems={allVideoItems} allAudioItems={allAudioItems} openVideoModal={openVideoModal} openAudioModal={openAudioModal} onAuthorPress={handleAuthorPress} />
+                  ? <PostCard key={`post-${item.id}`} post={item} userId={userId} onLike={handleLike} onShare={handleShare} onSave={handleSave} onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers} onOpenEdit={handleOpenEdit} onLongPress={handleLongPress} onAuthorPress={handleAuthorPress} />
+                  : <SubmissionCard key={`sub-${item.id}`} sub={item} onVote={handleVote} allVideoItems={allVideoItems} allAudioItems={allAudioItems} openVideoModal={openVideoModal} openAudioModal={openAudioModal} onAuthorPress={handleAuthorPress} />
               )}
               {isLoadingMore && (
                 <View style={styles.loadMoreIndicator}>
