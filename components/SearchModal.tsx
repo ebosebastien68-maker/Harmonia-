@@ -1,23 +1,5 @@
 // =====================================================
-// SearchModal.tsx
-//
-// Recherche avec médias interactifs
-// Vidéos (autoplay muted, tap → son), Images, Audio (seekbar), Vote inline
-//
-// Toutes les requêtes passent par le backend Render.
-// Aucune Edge Function Supabase n'est utilisée.
-//
-// Auth : token récupéré depuis AsyncStorage via getValidToken,
-//        identique à actu.tsx — refresh automatique si expiré.
-//
-// MediaViewer : tap image → fullscreen, tap à nouveau → ferme (toggle)
-//               même comportement que actu.tsx et ProfileScreen.tsx
-//
-// Routes :
-//   Posts    → POST /home  { action: 'search-posts', user_id, access_token, query }
-//   Subs     → POST /feed  { function: 'searchSubmissions', user_id, access_token, query }
-//   Like     → POST /home  { action: 'like-post' | 'unlike-post', user_id, post_id }
-//   Vote     → POST /feed  { function: 'voteSubmission' | 'unvoteSubmission', ... }
+// SearchModal.tsx — like violet #7B1FA2 + vidéo mobile expo-av
 // =====================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -33,12 +15,11 @@ import * as Haptics   from 'expo-haptics';
 import AsyncStorage   from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
-
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HOME_URL    = `${BACKEND_URL}/home`;
 const NATIVE      = Platform.OS !== 'web';
+const LIKE_COLOR  = '#7B1FA2';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 type SearchCategory = 'all' | 'posts' | 'images' | 'videos' | 'music' | 'artisanat';
 
 interface Post {
@@ -82,13 +63,7 @@ interface SearchModalProps {
   onPostPress: (postId: string) => void;
 }
 
-// ─── getValidToken — identique à actu.tsx ────────────────────────────────────
-async function getValidToken(): Promise<{
-  uid:           string;
-  token:         string;
-  refresh_token: string;
-  expires_at:    number;
-} | null> {
+async function getValidToken(): Promise<{ uid: string; token: string; refresh_token: string; expires_at: number } | null> {
   try {
     const raw = await AsyncStorage.getItem('harmonia_session');
     if (!raw) return null;
@@ -98,35 +73,21 @@ async function getValidToken(): Promise<{
     const refreshToken = session?.refresh_token || '';
     const expiresAt    = session?.expires_at    || 0;
     if (!uid || !accessToken) return null;
-
     const now = Math.floor(Date.now() / 1000);
-    if (expiresAt - now > 60)
-      return { uid, token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
+    if (expiresAt - now > 60) return { uid, token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
     if (!refreshToken) return null;
-
     const res = await fetch(`${BACKEND_URL}/refresh-token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
     if (!res.ok) return null;
     const data           = await res.json();
-    const updatedSession = {
-      ...session,
-      access_token:  data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at:    data.expires_at,
-    };
+    const updatedSession = { ...session, access_token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at };
     await AsyncStorage.setItem('harmonia_session', JSON.stringify(updatedSession));
-    return {
-      uid,
-      token:         data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at:    data.expires_at,
-    };
+    return { uid, token: data.access_token, refresh_token: data.refresh_token, expires_at: data.expires_at };
   } catch { return null; }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmtAgo = (d: string) => {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
   if (s < 60)    return "À l'instant";
@@ -140,7 +101,6 @@ const fmtMs = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-// ─── Catégories ───────────────────────────────────────────────────────────────
 const CATS: { key: SearchCategory; label: string; icon: string }[] = [
   { key: 'all',       label: 'Tout',         icon: 'apps-outline'          },
   { key: 'posts',     label: 'Publications', icon: 'document-text-outline' },
@@ -154,7 +114,6 @@ const GT_FOR_CAT: Record<SearchCategory, string | null> = {
   all: null, posts: null, images: 'arts', videos: 'performance', music: 'music', artisanat: 'artisanat',
 };
 
-// ─── Highlighted ──────────────────────────────────────────────────────────────
 function Hl({ text, q }: { text: string; q: string }) {
   if (!q.trim()) return <Text>{text}</Text>;
   const safe  = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -170,45 +129,34 @@ function Hl({ text, q }: { text: string; q: string }) {
   );
 }
 
-// ─── MediaViewer — fullscreen image ou vidéo ─────────────────────────────────
-// Tap sur le contenu → ferme le viewer (toggle)
-// Identique à actu.tsx et ProfileScreen.tsx
-interface MediaViewerProps {
-  visible: boolean;
-  url:     string | null;
-  type:    'image' | 'video';
-  onClose: () => void;
-}
+// ─── MediaViewer ─────────────────────────────────────────────────────────────
+interface MediaViewerProps { visible: boolean; url: string | null; type: 'image' | 'video'; onClose: () => void; }
 
 function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
   if (!url) return null;
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={S.mvOverlay}>
-        {/* Bouton fermer */}
         <TouchableOpacity style={S.mvCloseBtn} onPress={onClose}>
           <Ionicons name="close" size={30} color="#fff" />
         </TouchableOpacity>
-
         {type === 'image' ? (
-          // Tap sur l'image → ferme le viewer
           <TouchableOpacity activeOpacity={1} onPress={onClose} style={S.mvImageWrapper}>
             <Image source={{ uri: url }} style={S.mvImage} resizeMode="contain" />
           </TouchableOpacity>
         ) : Platform.OS === 'web' ? (
-          // @ts-ignore — élément HTML natif, web uniquement
-          <video
-            src={url}
-            controls
-            autoPlay
-            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
-          />
+          // @ts-ignore
+          <video src={url} controls autoPlay style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }} />
         ) : (
-          // Mobile — tap pour fermer
-          <TouchableOpacity activeOpacity={1} onPress={onClose} style={S.mvVideoNative}>
-            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
-            <Text style={S.mvVideoHint}>Appuyez pour fermer</Text>
-          </TouchableOpacity>
+          // Mobile — expo-av Video avec contrôles natifs
+          <Video
+            source={{ uri: url }}
+            style={S.mvNativeVideo}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls
+            shouldPlay
+            isLooping={false}
+          />
         )}
       </View>
     </Modal>
@@ -288,7 +236,7 @@ function AudioMini({ url, description }: { url: string; description?: string | n
   return (
     <View style={S.audioBox}>
       <View style={S.audioTop}>
-        <Ionicons name="musical-notes" size={16} color="#7C3AED" />
+        <Ionicons name="musical-notes" size={16} color="#7B1FA2" />
         <Text style={S.audioDesc} numberOfLines={1}>{description || 'Piste audio'}</Text>
       </View>
       <View style={S.seekBar} onLayout={e => { barWidthRef.current = e.nativeEvent.layout.width; }} {...pan.panHandlers}>
@@ -302,16 +250,16 @@ function AudioMini({ url, description }: { url: string; description?: string | n
       </View>
       <View style={S.audioCtrl}>
         <TouchableOpacity style={S.skipBtn} onPress={() => skip(-10000)} disabled={!soundRef.current}>
-          <Ionicons name="play-back" size={16} color={soundRef.current ? '#7C3AED' : '#CCC'} />
+          <Ionicons name="play-back" size={16} color={soundRef.current ? '#7B1FA2' : '#CCC'} />
           <Text style={[S.skipTxt, !soundRef.current && { color: '#CCC' }]}>10</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[S.playBtn, isPlaying && S.playBtnActive]} onPress={togglePlay} disabled={isLoading}>
           {isLoading
-            ? <ActivityIndicator size="small" color="#7C3AED" />
-            : <Ionicons name={isPlaying ? 'pause' : 'play'} size={20} color={isPlaying ? '#FFF' : '#7C3AED'} />}
+            ? <ActivityIndicator size="small" color="#7B1FA2" />
+            : <Ionicons name={isPlaying ? 'pause' : 'play'} size={20} color={isPlaying ? '#FFF' : '#7B1FA2'} />}
         </TouchableOpacity>
         <TouchableOpacity style={S.skipBtn} onPress={() => skip(10000)} disabled={!soundRef.current}>
-          <Ionicons name="play-forward" size={16} color={soundRef.current ? '#7C3AED' : '#CCC'} />
+          <Ionicons name="play-forward" size={16} color={soundRef.current ? '#7B1FA2' : '#CCC'} />
           <Text style={[S.skipTxt, !soundRef.current && { color: '#CCC' }]}>10</Text>
         </TouchableOpacity>
       </View>
@@ -320,47 +268,18 @@ function AudioMini({ url, description }: { url: string; description?: string | n
 }
 
 // ─── VideoMini ────────────────────────────────────────────────────────────────
-// Tap → ouvre MediaViewer fullscreen (vidéo en plein écran)
-// Tap dans le viewer → ferme
-interface VideoMiniProps { url: string; description?: string | null }
-
-function VideoMini({ url, description }: VideoMiniProps) {
-  const [muted,      setMuted]      = useState(true);
-  const [playing,    setPlaying]    = useState(false);
+function VideoMini({ url, description }: { url: string; description?: string | null }) {
   const [viewerOpen, setViewerOpen] = useState(false);
-
   return (
     <>
-      <MediaViewer
-        visible={viewerOpen}
-        url={url}
-        type="video"
-        onClose={() => setViewerOpen(false)}
-      />
+      <MediaViewer visible={viewerOpen} url={url} type="video" onClose={() => setViewerOpen(false)} />
       <View style={S.videoBox}>
-        <Video
-          source={{ uri: url }}
-          style={S.videoPlayer}
-          resizeMode={ResizeMode.COVER}
-          isLooping isMuted={muted} shouldPlay={playing} useNativeControls={false}
-        />
-        <TouchableOpacity
-          style={S.videoOverlay} activeOpacity={0.85}
-          onPress={() => {
-            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            // Tap → fullscreen viewer
-            setViewerOpen(true);
-          }}
-        >
-          {/* Icône expand toujours visible */}
-          <View style={S.videoPlayIcon}>
-            <Ionicons name={playing ? 'expand' : 'play'} size={28} color="#FFF" />
-          </View>
-          {playing && (
-            <View style={S.videoMuteIcon}>
-              <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={16} color="#FFF" />
-            </View>
-          )}
+        <Video source={{ uri: url }} style={S.videoPlayer} resizeMode={ResizeMode.COVER} isLooping isMuted shouldPlay={false} useNativeControls={false} />
+        <TouchableOpacity style={S.videoOverlay} activeOpacity={0.85} onPress={() => {
+          if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setViewerOpen(true);
+        }}>
+          <View style={S.videoPlayIcon}><Ionicons name="play" size={28} color="#FFF" /></View>
         </TouchableOpacity>
         {description && <Text style={S.videoDesc} numberOfLines={1}>{description}</Text>}
       </View>
@@ -369,50 +288,26 @@ function VideoMini({ url, description }: VideoMiniProps) {
 }
 
 // ─── ImageMedia ───────────────────────────────────────────────────────────────
-// Tap → fullscreen via MediaViewer, tap dans le viewer → ferme (toggle)
-interface ImageMediaProps { url: string }
-
-function ImageMedia({ url }: ImageMediaProps) {
+function ImageMedia({ url }: { url: string }) {
   const [viewerOpen, setViewerOpen] = useState(false);
-
   return (
     <>
-      <MediaViewer
-        visible={viewerOpen}
-        url={url}
-        type="image"
-        onClose={() => setViewerOpen(false)}
-      />
-      <TouchableOpacity
-        activeOpacity={0.92}
-        onPress={() => {
-          if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          setViewerOpen(true);
-        }}
-        style={{ position: 'relative' }}
-      >
+      <MediaViewer visible={viewerOpen} url={url} type="image" onClose={() => setViewerOpen(false)} />
+      <TouchableOpacity activeOpacity={0.92} onPress={() => {
+        if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setViewerOpen(true);
+      }} style={{ position: 'relative' }}>
         <Image source={{ uri: url }} style={S.imgMedia} resizeMode="cover" />
-        {/* Icône expand pour indiquer que l'image est cliquable */}
-        <View style={S.imgExpandHint}>
-          <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" />
-        </View>
+        <View style={S.imgExpandHint}><Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" /></View>
       </TouchableOpacity>
     </>
   );
 }
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
-// Like/unlike → POST /home via getValidToken
-// Images et vidéos du post → MediaViewer fullscreen (tap pour ouvrir, tap pour fermer)
-interface PostCardProps {
-  post: Post; q: string; onComment: () => void;
-}
-
-function PostCard({ post, q, onComment }: PostCardProps) {
+function PostCard({ post, q, onComment }: { post: Post; q: string; onComment: () => void }) {
   const [liked, setLiked] = useState(post.user_liked);
   const [likes, setLikes] = useState(post.reactions.likes);
-
-  // Viewer pour les médias du post
   const [viewerUrl,  setViewerUrl]  = useState<string | null>(null);
   const [viewerType, setViewerType] = useState<'image' | 'video'>('image');
 
@@ -424,11 +319,7 @@ function PostCard({ post, q, onComment }: PostCardProps) {
       if (!session) throw new Error('session invalide');
       const res = await fetch(HOME_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:  nl ? 'like-post' : 'unlike-post',
-          user_id: session.uid,
-          post_id: post.id,
-        }),
+        body: JSON.stringify({ action: nl ? 'like-post' : 'unlike-post', user_id: session.uid, post_id: post.id }),
       });
       const data = await res.json();
       if (data.success) setLikes(data.likes ?? likes);
@@ -437,14 +328,7 @@ function PostCard({ post, q, onComment }: PostCardProps) {
 
   return (
     <>
-      {/* Viewer fullscreen — tap sur le contenu ferme */}
-      <MediaViewer
-        visible={!!viewerUrl}
-        url={viewerUrl}
-        type={viewerType}
-        onClose={() => setViewerUrl(null)}
-      />
-
+      <MediaViewer visible={!!viewerUrl} url={viewerUrl} type={viewerType} onClose={() => setViewerUrl(null)} />
       <View style={S.card}>
         <View style={S.cardHead}>
           {post.author.avatar_url
@@ -459,38 +343,17 @@ function PostCard({ post, q, onComment }: PostCardProps) {
 
         <Text style={S.body}><Hl text={post.content} q={q} /></Text>
 
-        {/* Image du post — tap → fullscreen, tap dans viewer → ferme */}
         {post.imagepots && (
-          <TouchableOpacity
-            activeOpacity={0.92}
-            onPress={() => {
-              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setViewerType('image');
-              setViewerUrl(post.imagepots!);
-            }}
-            style={{ position: 'relative' }}
-          >
+          <TouchableOpacity activeOpacity={0.92} onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }} style={{ position: 'relative' }}>
             <Image source={{ uri: post.imagepots }} style={S.imgMedia} resizeMode="cover" />
-            <View style={S.imgExpandHint}>
-              <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" />
-            </View>
+            <View style={S.imgExpandHint}><Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.9)" /></View>
           </TouchableOpacity>
         )}
 
-        {/* Vidéo du post — tap → fullscreen player, tap dans viewer → ferme */}
         {post.vidposts && (
-          <TouchableOpacity
-            style={S.videoBox} activeOpacity={0.92}
-            onPress={() => {
-              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setViewerType('video');
-              setViewerUrl(post.vidposts!);
-            }}
-          >
+          <TouchableOpacity style={S.videoBox} activeOpacity={0.92} onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}>
             <View style={S.videoOverlay}>
-              <View style={S.videoPlayIcon}>
-                <Ionicons name="play" size={28} color="#FFF" />
-              </View>
+              <View style={S.videoPlayIcon}><Ionicons name="play" size={28} color="#FFF" /></View>
             </View>
             <View style={S.videoExpandBadge}>
               <Ionicons name="expand-outline" size={13} color="#FFF" />
@@ -500,9 +363,10 @@ function PostCard({ post, q, onComment }: PostCardProps) {
         )}
 
         <View style={S.actions}>
+          {/* ── Like style Facebook violet ── */}
           <TouchableOpacity style={S.actBtn} onPress={doLike}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={18} color={liked ? '#FF0080' : '#888'} />
-            <Text style={[S.actTxt, liked && { color: '#FF0080' }]}>{likes}</Text>
+            <Ionicons name={liked ? 'thumbs-up' : 'thumbs-up-outline'} size={18} color={liked ? LIKE_COLOR : '#888'} />
+            <Text style={[S.actTxt, liked && { color: LIKE_COLOR }]}>{likes}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={S.actBtn} onPress={onComment}>
             <Ionicons name="chatbubble-outline" size={18} color="#888" />
@@ -519,12 +383,7 @@ function PostCard({ post, q, onComment }: PostCardProps) {
 }
 
 // ─── SubCard ──────────────────────────────────────────────────────────────────
-// Vote → POST /feed via getValidToken
-// Images soumissions → ImageMedia (tap → fullscreen, tap → ferme)
-// Vidéos soumissions → VideoMini (tap → fullscreen viewer)
-interface SubCardProps { sub: Submission; q: string; }
-
-function SubCard({ sub, q }: SubCardProps) {
+function SubCard({ sub, q }: { sub: Submission; q: string }) {
   const [votes,    setVotes]    = useState(sub.total_votes);
   const [voted,    setVoted]    = useState(sub.user_voted);
   const [voting,   setVoting]   = useState(false);
@@ -533,7 +392,7 @@ function SubCard({ sub, q }: SubCardProps) {
   const isMusic = sub.game_type === 'music';
   const isImage = sub.game_type === 'arts';
   const badgeBg  = isImage ? '#F0E6FF' : isMusic ? '#EDE9FE' : '#FFF3E0';
-  const badgeClr = isImage ? '#8E44AD' : isMusic ? '#7C3AED' : '#E65100';
+  const badgeClr = isImage ? '#8E44AD' : isMusic ? '#7B1FA2' : '#E65100';
 
   const stMap: Record<string, { label: string; color: string }> = {
     submissions_open: { label: 'Soumissions', color: '#0EA5E9' },
@@ -610,13 +469,10 @@ function SubCard({ sub, q }: SubCardProps) {
           }}>
             <Ionicons name={mediaIcon as any} size={15} color="#8A2BE2" />
             <Text style={S.mediaToggleTxt}>
-              {expanded
-                ? 'Masquer'
-                : `Voir ${sub.media.length} ${mediaLabel}${sub.media.length > 1 ? 's' : ''}`}
+              {expanded ? 'Masquer' : `Voir ${sub.media.length} ${mediaLabel}${sub.media.length > 1 ? 's' : ''}`}
             </Text>
             <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color="#8A2BE2" />
           </TouchableOpacity>
-
           {expanded && (
             <View style={S.mediaList}>
               {sub.media.map(m =>
@@ -665,40 +521,26 @@ export default function SearchModal({ visible, onClose, onPostPress }: SearchMod
     if (!visible) { setQuery(''); setResults([]); setSearched(false); setCat('all'); }
   }, [visible]);
 
-  // ── Recherche posts → POST /home ─────────────────────────────────────────
   const fetchPosts = async (): Promise<Post[]> => {
-    const session = await getValidToken();
-    if (!session) return [];
+    const session = await getValidToken(); if (!session) return [];
     const res = await fetch(HOME_URL, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action:       'search-posts',
-        user_id:      session.uid,
-        access_token: session.token,
-        query:        query.trim(),
-      }),
+      body: JSON.stringify({ action: 'search-posts', user_id: session.uid, access_token: session.token, query: query.trim() }),
     });
     const d = await res.json();
     return d.success && d.posts ? d.posts : [];
   };
 
-  // ── Recherche submissions → POST /feed ───────────────────────────────────
   const fetchSubs = async (): Promise<Submission[]> => {
-    const session  = await getValidToken();
-    if (!session) return [];
+    const session  = await getValidToken(); if (!session) return [];
     const gameType = GT_FOR_CAT[cat];
     const body: any = {
-      function:      'searchSubmissions',
-      user_id:       session.uid,
-      access_token:  session.token,
-      refresh_token: session.refresh_token,
-      expires_at:    session.expires_at,
-      query:         query.trim(),
+      function: 'searchSubmissions', user_id: session.uid, access_token: session.token,
+      refresh_token: session.refresh_token, expires_at: session.expires_at, query: query.trim(),
     };
     if (gameType) body.game_type = gameType;
     const res = await fetch(`${BACKEND_URL}/feed`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const d = await res.json();
     if (d.new_token) {
@@ -735,8 +577,6 @@ export default function SearchModal({ visible, onClose, onPostPress }: SearchMod
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={S.root}>
-
-        {/* ── HEADER ──────────────────────────────────────────────────── */}
         <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
           <View style={S.headerTop}>
             <TouchableOpacity onPress={onClose} style={S.backBtn}>
@@ -745,53 +585,36 @@ export default function SearchModal({ visible, onClose, onPostPress }: SearchMod
             <Text style={S.headerTitle}>Rechercher</Text>
             <View style={{ width: 34 }} />
           </View>
-
           <View style={S.bar}>
             <Ionicons name="search" size={20} color="#999" style={{ marginRight: 8 }} />
-            <TextInput
-              style={S.input}
-              placeholder="Mots-clés, descriptions, titres…"
-              placeholderTextColor="#999"
-              value={query}
-              onChangeText={setQuery}
-              onSubmitEditing={doSearch}
-              returnKeyType="search"
-              autoFocus
-            />
+            <TextInput style={S.input} placeholder="Mots-clés, descriptions, titres…" placeholderTextColor="#999" value={query} onChangeText={setQuery} onSubmitEditing={doSearch} returnKeyType="search" autoFocus />
             {query.length > 0 && (
               <TouchableOpacity onPress={() => { setQuery(''); setResults([]); setSearched(false); }}>
                 <Ionicons name="close-circle" size={20} color="#999" />
               </TouchableOpacity>
             )}
           </View>
-
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={S.chips} style={{ marginBottom: 10 }}>
             {CATS.map(c => {
               const active = cat === c.key;
               return (
-                <TouchableOpacity key={c.key} style={[S.chip, active && S.chipOn]}
-                  onPress={() => {
-                    if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setCat(c.key); setResults([]); setSearched(false);
-                  }}>
+                <TouchableOpacity key={c.key} style={[S.chip, active && S.chipOn]} onPress={() => {
+                  if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setCat(c.key); setResults([]); setSearched(false);
+                }}>
                   <Ionicons name={c.icon as any} size={13} color={active ? '#8A2BE2' : 'rgba(255,255,255,0.8)'} />
                   <Text style={[S.chipTxt, active && S.chipTxtOn]}>{c.label}</Text>
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
-
-          <TouchableOpacity
-            style={[S.searchBtn, (!query.trim() || loading) && { opacity: 0.4 }]}
-            onPress={doSearch} disabled={!query.trim() || loading}
-          >
+          <TouchableOpacity style={[S.searchBtn, (!query.trim() || loading) && { opacity: 0.4 }]} onPress={doSearch} disabled={!query.trim() || loading}>
             {loading
               ? <ActivityIndicator size="small" color="#FFF" />
               : <><Ionicons name="search" size={18} color="#FFF" /><Text style={S.searchBtnTxt}>Rechercher</Text></>}
           </TouchableOpacity>
         </LinearGradient>
 
-        {/* ── RÉSULTATS ───────────────────────────────────────────────── */}
         <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           {loading ? (
             <View style={S.center}>
@@ -815,8 +638,7 @@ export default function SearchModal({ visible, onClose, onPostPress }: SearchMod
               </View>
               {results.map(item =>
                 item.kind === 'post'
-                  ? <PostCard key={`p-${item.id}`} post={item} q={query}
-                      onComment={() => { onClose(); onPostPress(item.id); }} />
+                  ? <PostCard key={`p-${item.id}`} post={item} q={query} onComment={() => { onClose(); onPostPress(item.id); }} />
                   : <SubCard  key={`s-${item.id}`} sub={item}  q={query} />
               )}
               <View style={{ height: 50 }} />
@@ -834,7 +656,6 @@ export default function SearchModal({ visible, onClose, onPostPress }: SearchMod
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   root:        { flex: 1, backgroundColor: '#F5F5F5' },
   header:      { paddingTop: Platform.OS === 'ios' ? 55 : 40, paddingBottom: 6, paddingHorizontal: 16 },
@@ -857,7 +678,6 @@ const S = StyleSheet.create({
   countTxt:     { fontSize: 13, fontWeight: '700', color: '#8A2BE2' },
   pill:         { backgroundColor: '#F0E6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   pillTxt:      { fontSize: 11, fontWeight: '700', color: '#8A2BE2' },
-
   card: {
     backgroundColor: '#FFF', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, padding: 14,
     ...Platform.select({
@@ -880,21 +700,13 @@ const S = StyleSheet.create({
   actions:      { flexDirection: 'row', gap: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
   actBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
   actTxt:       { fontSize: 13, color: '#666', fontWeight: '600' },
-
   descRow:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 10, backgroundColor: '#FAFAFA', borderRadius: 8, padding: 8 },
   descTxt:        { flex: 1, fontSize: 13, color: '#555', lineHeight: 18 },
   mediaToggle:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 4 },
   mediaToggleTxt: { flex: 1, fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
   mediaList:      { gap: 10, marginBottom: 10 },
-
-  // Image media — avec indicateur expand
   imgMedia:      { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#EEE' },
-  imgExpandHint: {
-    position: 'absolute', bottom: 8, right: 8,
-    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 4,
-  },
-
-  // Vidéo mini
+  imgExpandHint: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 4 },
   videoBox:         { borderRadius: 10, overflow: 'hidden', backgroundColor: '#1A1A2E', height: 200, justifyContent: 'center', alignItems: 'center' },
   videoPlayer:      { width: '100%', height: '100%' },
   videoOverlay:     { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
@@ -903,23 +715,20 @@ const S = StyleSheet.create({
   videoDesc:        { position: 'absolute', bottom: 8, left: 10, right: 10, color: '#FFF', fontSize: 12, fontWeight: '500' },
   videoExpandBadge: { position: 'absolute', bottom: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   videoExpandText:  { color: '#FFF', fontSize: 11, fontWeight: '600' },
-
-  // Audio
   audioBox:      { backgroundColor: '#F8F5FF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E9D5FF', gap: 8 },
   audioTop:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
   audioDesc:     { flex: 1, fontSize: 12, color: '#555', fontWeight: '500' },
   seekBar:       { height: 28, justifyContent: 'center', paddingHorizontal: 2 },
   seekTrack:     { position: 'absolute', left: 2, right: 2, height: 4, backgroundColor: '#DDD6FE', borderRadius: 2 },
-  seekFill:      { position: 'absolute', left: 2, height: 4, backgroundColor: '#7C3AED', borderRadius: 2 },
-  seekThumb:     { position: 'absolute', top: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#7C3AED', marginLeft: -8, elevation: 3 },
+  seekFill:      { position: 'absolute', left: 2, height: 4, backgroundColor: '#7B1FA2', borderRadius: 2 },
+  seekThumb:     { position: 'absolute', top: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#7B1FA2', marginLeft: -8, elevation: 3 },
   seekTimes:     { flexDirection: 'row', justifyContent: 'space-between' },
   seekTime:      { fontSize: 10, color: '#9CA3AF' },
   audioCtrl:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18 },
   skipBtn:       { alignItems: 'center', gap: 2 },
-  skipTxt:       { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
-  playBtn:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#7C3AED', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
-  playBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
-
+  skipTxt:       { fontSize: 10, color: '#7B1FA2', fontWeight: '700' },
+  playBtn:       { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#7B1FA2', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF' },
+  playBtnActive: { backgroundColor: '#7B1FA2', borderColor: '#7B1FA2' },
   footer:       { flexDirection: 'row', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F5F5F5', gap: 8 },
   statusPill:   { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   statusTxt:    { fontSize: 11, fontWeight: '700' },
@@ -929,12 +738,9 @@ const S = StyleSheet.create({
   voteCount:    { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600' },
   voteStat:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
   voteStatTxt:  { fontSize: 13, color: '#E74C3C', fontWeight: '700' },
-
-  // MediaViewer fullscreen
   mvOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)', justifyContent: 'center', alignItems: 'center' },
   mvCloseBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   mvImageWrapper: { width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
   mvImage:        { width, height: height * 0.85 },
-  mvVideoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
-  mvVideoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
+  mvNativeVideo:  { width, height: height * 0.75 },
 });
