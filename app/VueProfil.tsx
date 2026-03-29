@@ -1,3 +1,12 @@
+// =====================================================
+// VueProfil.tsx
+// Modal de visualisation du profil d'un utilisateur
+// =====================================================
+// Auth : token récupéré depuis AsyncStorage (harmonia_session)
+//        envoyé dans req.body.access_token → requireAuth Render
+// API  : Render backend /friends
+// =====================================================
+
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -13,7 +22,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends';
+// ── 🔧 Remplacez par l'URL de votre service Render ──────────────────────────
+const API_BASE = 'https://VOTRE_APP.onrender.com/friends';
+// ────────────────────────────────────────────────────────────────────────────
+
 const DEFAULT_AVATAR = require('./assets/default-avatar.png');
 
 interface VueProfilProps {
@@ -36,13 +48,49 @@ interface FriendshipStatus {
   requestId?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Récupère { access_token, user_id } depuis la session stockée
+// ─────────────────────────────────────────────────────────────────────────────
+async function getSession(): Promise<{ access_token: string; user_id: string } | null> {
+  try {
+    const raw = await AsyncStorage.getItem('harmonia_session');
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    const access_token = session?.access_token;
+    const user_id = session?.user?.id;
+    if (!access_token || !user_id) return null;
+    return { access_token, user_id };
+  } catch (error) {
+    console.error('[VueProfil] getSession error:', error);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper fetch vers Render — injecte access_token dans le body
+// ─────────────────────────────────────────────────────────────────────────────
+async function apiFriends(
+  access_token: string,
+  payload: Record<string, unknown>
+): Promise<any> {
+  const response = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, access_token }),
+  });
+  return response.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Composant
+// ─────────────────────────────────────────────────────────────────────────────
 export default function VueProfil({ visible, userId, onClose }: VueProfilProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [friendshipStatus, setFriendshipStatus] = useState<FriendshipStatus>({ status: 'none' });
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string>('');
-  const [avatarZoomed, setAvatarZoomed] = useState(false); // ← NOUVEAU
+  const [session, setSession] = useState<{ access_token: string; user_id: string } | null>(null);
+  const [avatarZoomed, setAvatarZoomed] = useState(false);
 
   useEffect(() => {
     if (visible && userId) {
@@ -50,101 +98,105 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
     }
   }, [visible, userId]);
 
-  const getCurrentUserId = async (): Promise<string | null> => {
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (session) {
-        const parsed = JSON.parse(session);
-        return parsed.user?.id || null;
-      }
-    } catch (error) {
-      console.error('Error getting user ID:', error);
-    }
-    return null;
-  };
-
+  // ── Chargement du profil + statut d'amitié ──────────────────────────────
   const loadProfile = async () => {
     setLoading(true);
-    const myUserId = await getCurrentUserId();
-    if (!myUserId) { setLoading(false); return; }
-    setCurrentUserId(myUserId);
+
+    const sess = await getSession();
+    if (!sess) {
+      console.warn('[VueProfil] Session introuvable');
+      setLoading(false);
+      return;
+    }
+    setSession(sess);
 
     try {
-      const profileResponse = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'get-user-profile', user_id: myUserId, target_user_id: userId }),
+      // Profil public de l'utilisateur cible
+      const profileData = await apiFriends(sess.access_token, {
+        action: 'get-user-profile',
+        user_id: sess.user_id,
+        target_user_id: userId,
       });
-      const profileData = await profileResponse.json();
-      if (profileData.success && profileData.profile) setProfile(profileData.profile);
 
-      const statusResponse = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'get-friendship-status', user_id: myUserId, target_user_id: userId }),
+      if (profileData.success && profileData.profile) {
+        setProfile(profileData.profile);
+      }
+
+      // Statut de la relation
+      const statusData = await apiFriends(sess.access_token, {
+        action: 'get-friendship-status',
+        user_id: sess.user_id,
+        target_user_id: userId,
       });
-      const statusData = await statusResponse.json();
-      if (statusData.success) setFriendshipStatus({ status: statusData.status, requestId: statusData.request_id });
+
+      if (statusData.success) {
+        setFriendshipStatus({
+          status: statusData.status,
+          requestId: statusData.request_id ?? undefined,
+        });
+      }
     } catch (error) {
-      console.error('Error loading profile:', error);
+      console.error('[VueProfil] loadProfile error:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Envoyer une demande ──────────────────────────────────────────────────
   const sendRequest = async () => {
+    if (!session) return;
     setActionLoading(true);
     try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'send-request', user_id: currentUserId, target_user_id: userId }),
+      const data = await apiFriends(session.access_token, {
+        action: 'send-request',
+        user_id: session.user_id,
+        target_user_id: userId,
       });
-      const data = await response.json();
       if (data.success) await loadProfile();
     } catch (error) {
-      console.error('Error sending request:', error);
+      console.error('[VueProfil] sendRequest error:', error);
     } finally {
       setActionLoading(false);
     }
   };
 
+  // ── Annuler / Refuser / Retirer ami ─────────────────────────────────────
   const cancelOrRemove = async () => {
-    if (!friendshipStatus.requestId) return;
+    if (!session || !friendshipStatus.requestId) return;
     setActionLoading(true);
     try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'cancel-request', user_id: currentUserId, request_id: friendshipStatus.requestId }),
+      const data = await apiFriends(session.access_token, {
+        action: 'cancel-request',
+        user_id: session.user_id,
+        request_id: friendshipStatus.requestId,
       });
-      const data = await response.json();
       if (data.success) await loadProfile();
     } catch (error) {
-      console.error('Error canceling/removing:', error);
+      console.error('[VueProfil] cancelOrRemove error:', error);
     } finally {
       setActionLoading(false);
     }
   };
 
+  // ── Accepter une demande ─────────────────────────────────────────────────
   const acceptRequest = async () => {
-    if (!friendshipStatus.requestId) return;
+    if (!session || !friendshipStatus.requestId) return;
     setActionLoading(true);
     try {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://harmonia-world.vercel.app' },
-        body: JSON.stringify({ action: 'accept-request', user_id: currentUserId, request_id: friendshipStatus.requestId }),
+      const data = await apiFriends(session.access_token, {
+        action: 'accept-request',
+        user_id: session.user_id,
+        request_id: friendshipStatus.requestId,
       });
-      const data = await response.json();
       if (data.success) await loadProfile();
     } catch (error) {
-      console.error('Error accepting request:', error);
+      console.error('[VueProfil] acceptRequest error:', error);
     } finally {
       setActionLoading(false);
     }
   };
 
+  // ── Bouton d'action selon le statut ─────────────────────────────────────
   const renderActionButton = () => {
     if (actionLoading) {
       return (
@@ -158,12 +210,18 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
       case 'none':
         return (
           <TouchableOpacity onPress={sendRequest} activeOpacity={0.8}>
-            <LinearGradient colors={['#8A2BE2', '#DA70D6']} style={styles.actionButton} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+            <LinearGradient
+              colors={['#8A2BE2', '#DA70D6']}
+              style={styles.actionButton}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
               <Ionicons name="person-add" size={20} color="#fff" style={styles.buttonIcon} />
               <Text style={styles.actionButtonText}>Envoyer invitation</Text>
             </LinearGradient>
           </TouchableOpacity>
         );
+
       case 'sent':
         return (
           <TouchableOpacity onPress={cancelOrRemove} activeOpacity={0.8}>
@@ -173,11 +231,17 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </View>
           </TouchableOpacity>
         );
+
       case 'received':
         return (
           <View style={styles.actionButtonsRow}>
             <TouchableOpacity onPress={acceptRequest} activeOpacity={0.8} style={styles.halfButton}>
-              <LinearGradient colors={['#10B981', '#34D399']} style={styles.actionButton} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+              <LinearGradient
+                colors={['#10B981', '#34D399']}
+                style={styles.actionButton}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
                 <Ionicons name="checkmark" size={20} color="#fff" />
                 <Text style={styles.actionButtonText}>Accepter</Text>
               </LinearGradient>
@@ -190,6 +254,7 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </TouchableOpacity>
           </View>
         );
+
       case 'friends':
         return (
           <TouchableOpacity onPress={cancelOrRemove} activeOpacity={0.8}>
@@ -199,17 +264,17 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
             </View>
           </TouchableOpacity>
         );
+
       default:
         return null;
     }
   };
 
-  // Source de l'image (réutilisée pour le zoom)
   const avatarSource = profile?.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR;
 
   return (
     <>
-      {/* ── MODAL PRINCIPAL ── */}
+      {/* ── MODAL PRINCIPAL ────────────────────────────────────────────────── */}
       <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -228,14 +293,13 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
               </View>
             ) : profile ? (
               <>
-                {/* ── PHOTO DE PROFIL (cliquable) ── */}
+                {/* Photo de profil cliquable */}
                 <TouchableOpacity
                   style={styles.avatarContainer}
                   onPress={() => setAvatarZoomed(true)}
                   activeOpacity={0.85}
                 >
                   <Image source={avatarSource} style={styles.avatar} />
-                  {/* Icône zoom */}
                   <View style={styles.zoomBadge}>
                     <Ionicons name="expand" size={14} color="#fff" />
                   </View>
@@ -244,7 +308,12 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
                 <Text style={styles.name}>{profile.prenom} {profile.nom}</Text>
 
                 {profile.role === 'userpro' && (
-                  <LinearGradient colors={['#FFD700', '#FFA500']} style={styles.premiumBadge} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  <LinearGradient
+                    colors={['#FFD700', '#FFA500']}
+                    style={styles.premiumBadge}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
                     <Ionicons name="diamond" size={16} color="#fff" style={styles.badgeIcon} />
                     <Text style={styles.premiumText}>Premium</Text>
                   </LinearGradient>
@@ -253,7 +322,11 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
                 <View style={styles.infoRow}>
                   <Ionicons name="calendar-outline" size={16} color="#999" />
                   <Text style={styles.infoText}>
-                    Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
+                    Membre depuis{' '}
+                    {new Date(profile.created_at).toLocaleDateString('fr-FR', {
+                      month: 'long',
+                      year: 'numeric',
+                    })}
                   </Text>
                 </View>
 
@@ -271,7 +344,7 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
         </View>
       </Modal>
 
-      {/* ── MODAL ZOOM AVATAR ── */}
+      {/* ── MODAL ZOOM AVATAR ──────────────────────────────────────────────── */}
       <Modal
         visible={avatarZoomed}
         animationType="fade"
@@ -283,23 +356,14 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
           activeOpacity={1}
           onPress={() => setAvatarZoomed(false)}
         >
-          {/* Bouton fermer */}
           <TouchableOpacity style={styles.zoomCloseBtn} onPress={() => setAvatarZoomed(false)}>
             <Ionicons name="close" size={26} color="#fff" />
           </TouchableOpacity>
 
-          {/* Image agrandie */}
-          <Image
-            source={avatarSource}
-            style={styles.zoomedAvatar}
-            resizeMode="contain"
-          />
+          <Image source={avatarSource} style={styles.zoomedAvatar} resizeMode="contain" />
 
-          {/* Nom sous l'image */}
           {profile && (
-            <Text style={styles.zoomedName}>
-              {profile.prenom} {profile.nom}
-            </Text>
+            <Text style={styles.zoomedName}>{profile.prenom} {profile.nom}</Text>
           )}
         </TouchableOpacity>
       </Modal>
@@ -307,6 +371,9 @@ export default function VueProfil({ visible, userId, onClose }: VueProfilProps) 
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
@@ -330,26 +397,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     marginBottom: 10,
   },
-  closeButton: {
-    padding: 5,
-  },
+  closeButton: { padding: 5 },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
+  loadingText: { marginTop: 16, fontSize: 16, color: '#666' },
 
-  // ── AVATAR ──
-  avatarContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
+  // Avatar
+  avatarContainer: { alignItems: 'center', marginBottom: 20 },
   avatar: {
     width: 120,
     height: 120,
@@ -377,14 +435,8 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
 
-  // ── INFOS ──
-  name: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
+  // Infos
+  name: { fontSize: 28, fontWeight: 'bold', color: '#333', textAlign: 'center', marginBottom: 12 },
   premiumBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -396,15 +448,10 @@ const styles = StyleSheet.create({
   },
   badgeIcon: { marginRight: 6 },
   premiumText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 30,
-  },
+  infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 30 },
   infoText: { fontSize: 14, color: '#999', marginLeft: 8 },
 
-  // ── ACTIONS ──
+  // Actions
   actionContainer: { marginTop: 10 },
   actionButton: {
     flexDirection: 'row',
@@ -439,15 +486,10 @@ const styles = StyleSheet.create({
   actionButtonDangerText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
   actionButtonsRow: { flexDirection: 'row', gap: 12 },
   halfButton: { flex: 1 },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
   errorText: { marginTop: 16, fontSize: 16, color: '#EF4444' },
 
-  // ── ZOOM MODAL ──
+  // Zoom modal
   zoomOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.92)',
@@ -473,11 +515,5 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: 'rgba(255,255,255,0.15)',
   },
-  zoomedName: {
-    marginTop: 20,
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 0.3,
-  },
+  zoomedName: { marginTop: 20, fontSize: 20, fontWeight: '700', color: '#fff', letterSpacing: 0.3 },
 });
