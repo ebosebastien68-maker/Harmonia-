@@ -1,3 +1,4 @@
+// CommentsModal.tsx — v2 (fix mobile scroll + keyboard)
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -11,15 +12,14 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import CommentLikersModal from './CommentLikersModal';
 
-// ─── Remplace par l'URL de ton service Render ─────────────────────────────────
 const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/comments';
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Comment {
   id: string;
@@ -43,7 +43,6 @@ interface CommentsModalProps {
   onCommentAdded: () => void;
 }
 
-// ─── Helper : récupère le token depuis AsyncStorage ───────────────────────────
 async function getAccessToken(): Promise<string> {
   const sessionStr = await AsyncStorage.getItem('harmonia_session');
   if (!sessionStr) throw new Error('Session introuvable');
@@ -53,6 +52,7 @@ async function getAccessToken(): Promise<string> {
 }
 
 // ─── CommentItem ──────────────────────────────────────────────────────────────
+
 const CommentItem = ({
   comment,
   isReply,
@@ -85,8 +85,8 @@ const CommentItem = ({
     const diffInSeconds = Math.floor(
       (new Date().getTime() - new Date(dateString).getTime()) / 1000
     );
-    if (diffInSeconds < 60) return "À l'instant";
-    if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
+    if (diffInSeconds < 60)    return "À l'instant";
+    if (diffInSeconds < 3600)  return `il y a ${Math.floor(diffInSeconds / 60)}min`;
     if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
     return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
   };
@@ -123,9 +123,7 @@ const CommentItem = ({
                 <TouchableOpacity
                   style={styles.likesCountButton}
                   onPress={() => {
-                    if (Platform.OS !== 'web') {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     onShowLikers(comment.id);
                   }}
                 >
@@ -154,9 +152,7 @@ const CommentItem = ({
                 <Text style={styles.actionSeparator}>•</Text>
                 <TouchableOpacity
                   onPress={() => {
-                    if (Platform.OS !== 'web') {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
+                    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     onReply(comment);
                   }}
                 >
@@ -187,24 +183,23 @@ const CommentItem = ({
 };
 
 // ─── CommentsModal ────────────────────────────────────────────────────────────
+
 export default function CommentsModal({
   visible,
   postId,
   onClose,
   onCommentAdded,
 }: CommentsModalProps) {
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [commentText, setCommentText] = useState('');
-  const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showLikersModal, setShowLikersModal] = useState(false);
-  const [selectedCommentForLikers, setSelectedCommentForLikers] = useState<string | null>(null);
+  const [comments,                   setComments]                   = useState<Comment[]>([]);
+  const [loading,                    setLoading]                    = useState(false);
+  const [commentText,                setCommentText]                = useState('');
+  const [replyingTo,                 setReplyingTo]                 = useState<Comment | null>(null);
+  const [submitting,                 setSubmitting]                 = useState(false);
+  const [showLikersModal,            setShowLikersModal]            = useState(false);
+  const [selectedCommentForLikers,   setSelectedCommentForLikers]   = useState<string | null>(null);
 
   useEffect(() => {
-    if (visible && postId) {
-      loadComments();
-    }
+    if (visible && postId) loadComments();
   }, [visible, postId]);
 
   const loadComments = async () => {
@@ -213,18 +208,12 @@ export default function CommentsModal({
     try {
       const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'get-comments',
-          post_id: postId,
-          access_token,
-        }),
+        body: JSON.stringify({ action: 'get-comments', post_id: postId, access_token }),
       });
       const data = await response.json();
-      if (data.success && data.comments) {
-        setComments(data.comments);
-      }
+      if (data.success && data.comments) setComments(data.comments);
     } catch (error) {
       console.error('[CommentsModal] loadComments:', error);
     } finally {
@@ -235,19 +224,17 @@ export default function CommentsModal({
   const handleAddComment = async () => {
     if (!commentText.trim() || !postId || submitting) return;
     setSubmitting(true);
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: replyingTo ? 'reply-to-comment' : 'add-comment',
-          post_id: postId,
-          content: commentText.trim(),
-          parent_id: replyingTo?.id ?? null,
+          action:     replyingTo ? 'reply-to-comment' : 'add-comment',
+          post_id:    postId,
+          content:    commentText.trim(),
+          parent_id:  replyingTo?.id ?? null,
           access_token,
         }),
       });
@@ -257,25 +244,35 @@ export default function CommentsModal({
         setReplyingTo(null);
         await loadComments();
         onCommentAdded();
+      } else {
+        // FIX — feedback visible sur mobile si le serveur répond success: false
+        if (Platform.OS === 'web') {
+          alert(data.error ?? 'Erreur lors de l\'envoi');
+        } else {
+          Alert.alert('Erreur', data.error ?? 'Erreur lors de l\'envoi');
+        }
       }
     } catch (error) {
       console.error('[CommentsModal] handleAddComment:', error);
+      if (Platform.OS === 'web') {
+        alert('Erreur réseau, veuillez réessayer');
+      } else {
+        Alert.alert('Erreur réseau', 'Veuillez réessayer');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleLikeComment = async (commentId: string, liked: boolean) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: liked ? 'like-comment' : 'unlike-comment',
+          action:     liked ? 'like-comment' : 'unlike-comment',
           comment_id: commentId,
           access_token,
         }),
@@ -300,99 +297,131 @@ export default function CommentsModal({
     setShowLikersModal(true);
   };
 
+  // ─── Rendu ────────────────────────────────────────────────────────────────
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalContainer}
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent
+        onRequestClose={onClose}
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+        {/*
+          FIX STRUCTURE MOBILE :
+          - Le backdrop est en absoluteFill → ne consomme plus d'espace dans le flux
+          - KeyboardAvoidingView enveloppe uniquement le contenu, pas le backdrop
+          - ScrollView passe à flexShrink:1 pour calculer sa hauteur dans maxHeight
+        */}
+        <View style={styles.modalRoot}>
 
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Commentaires</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={28} color="#333" />
-            </TouchableOpacity>
-          </View>
+          {/* Backdrop — absoluteFill, ne perturbe plus le layout */}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={onClose}
+          />
 
-          {/* Liste */}
-          <ScrollView style={styles.commentsList} showsVerticalScrollIndicator={false}>
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#7B1FA2" />
+          {/* Contenu + gestion clavier */}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.kavWrapper}
+          >
+            <View style={styles.modalContent}>
+
+              {/* Header */}
+              <View style={styles.header}>
+                <Text style={styles.headerTitle}>Commentaires</Text>
+                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                  <Ionicons name="close" size={28} color="#333" />
+                </TouchableOpacity>
               </View>
-            ) : comments.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
-                <Text style={styles.emptyText}>Aucun commentaire</Text>
-                <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
-              </View>
-            ) : (
-              comments.map(comment => (
-                <CommentItem
-                  key={comment.id}
-                  comment={comment}
-                  isReply={false}
-                  onLike={handleLikeComment}
-                  onReply={setReplyingTo}
-                  onShowLikers={handleShowLikers}
-                />
-              ))
-            )}
-          </ScrollView>
 
-          {/* Barre "Répondre à" */}
-          {replyingTo && (
-            <View style={styles.replyingToBar}>
-              <Text style={styles.replyingToText}>
-                Répondre à {replyingTo.author.prenom}
-              </Text>
-              <TouchableOpacity onPress={() => setReplyingTo(null)}>
-                <Ionicons name="close-circle" size={20} color="#666" />
-              </TouchableOpacity>
-            </View>
-          )}
+              {/* Liste — flexShrink:1 résout le scroll dans un parent maxHeight */}
+              <ScrollView
+                style={styles.commentsList}
+                contentContainerStyle={styles.commentsListContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {loading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#7B1FA2" />
+                  </View>
+                ) : comments.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
+                    <Text style={styles.emptyText}>Aucun commentaire</Text>
+                    <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
+                  </View>
+                ) : (
+                  comments.map(comment => (
+                    <CommentItem
+                      key={comment.id}
+                      comment={comment}
+                      isReply={false}
+                      onLike={handleLikeComment}
+                      onReply={setReplyingTo}
+                      onShowLikers={handleShowLikers}
+                    />
+                  ))
+                )}
+              </ScrollView>
 
-          {/* Input */}
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder={
-                replyingTo
-                  ? `Répondre à ${replyingTo.author.prenom}...`
-                  : 'Ajouter un commentaire...'
-              }
-              placeholderTextColor="#999"
-              value={commentText}
-              onChangeText={setCommentText}
-              multiline
-              maxLength={500}
-            />
-            <TouchableOpacity
-              style={[
-                styles.sendButton,
-                (!commentText.trim() || submitting) && styles.sendButtonDisabled,
-              ]}
-              onPress={handleAddComment}
-              disabled={!commentText.trim() || submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Ionicons name="send" size={20} color="#FFF" />
+              {/* Barre "Répondre à" */}
+              {replyingTo && (
+                <View style={styles.replyingToBar}>
+                  <Text style={styles.replyingToText}>
+                    Répondre à {replyingTo.author.prenom}
+                  </Text>
+                  <TouchableOpacity onPress={() => setReplyingTo(null)}>
+                    <Ionicons name="close-circle" size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
               )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
 
+              {/* Input */}
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder={
+                    replyingTo
+                      ? `Répondre à ${replyingTo.author.prenom}...`
+                      : 'Ajouter un commentaire...'
+                  }
+                  placeholderTextColor="#999"
+                  value={commentText}
+                  onChangeText={setCommentText}
+                  multiline
+                  maxLength={500}
+                  // FIX — évite que le clavier ferme le modal sur Android
+                  blurOnSubmit={false}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.sendButton,
+                    (!commentText.trim() || submitting) && styles.sendButtonDisabled,
+                  ]}
+                  onPress={handleAddComment}
+                  disabled={!commentText.trim() || submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Ionicons name="send" size={20} color="#FFF" />
+                  )}
+                </TouchableOpacity>
+              </View>
+
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/*
+        FIX — CommentLikersModal rendu HORS du Modal principal
+        Évite les conflits de couches et z-index sur mobile
+      */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -401,25 +430,35 @@ export default function CommentsModal({
           setSelectedCommentForLikers(null);
         }}
       />
-    </Modal>
+    </>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  modalContainer: {
+
+  // FIX — modalRoot remplace l'ancien modalContainer
+  // flex:1 + justifyContent:flex-end → le contenu reste collé en bas
+  modalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
-  },
-  backdrop: {
-    flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
+
+  // FIX — KeyboardAvoidingView ne prend que la hauteur de son contenu
+  kavWrapper: {
+    width: '100%',
+  },
+
   modalContent: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '85%',
+    // FIX — flexShrink permet au contenu de se réduire correctement
+    // sans écraser le ScrollView ni déborder
+    flexShrink: 1,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -430,6 +469,7 @@ const styles = StyleSheet.create({
       android: { elevation: 8 },
     }),
   },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -447,10 +487,19 @@ const styles = StyleSheet.create({
   closeButton: {
     padding: 4,
   },
+
+  // FIX — flexShrink:1 + flexGrow:1 permet au ScrollView de
+  // s'étirer correctement dans un parent maxHeight sans s'écraser
   commentsList: {
-    flex: 1,
+    flexShrink: 1,
+    flexGrow: 1,
     paddingHorizontal: 16,
   },
+  commentsListContent: {
+    paddingVertical: 8,
+    flexGrow: 1,
+  },
+
   loadingContainer: {
     paddingVertical: 40,
     alignItems: 'center',
@@ -585,6 +634,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
     backgroundColor: '#FFF',
