@@ -11,22 +11,31 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/posts';
+// ─── Remplace par l'URL de ton service Render ─────────────────────────────────
+const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/posts';
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface EditPostModalProps {
   visible: boolean;
   postId: string | null;
-  userId: string;
   initialContent: string;
   onClose: () => void;
   onPostUpdated: () => void;
 }
 
+async function getAccessToken(): Promise<string> {
+  const sessionStr = await AsyncStorage.getItem('harmonia_session');
+  if (!sessionStr) throw new Error('Session introuvable');
+  const session = JSON.parse(sessionStr);
+  if (!session.access_token) throw new Error('access_token manquant');
+  return session.access_token;
+}
+
 export default function EditPostModal({
   visible,
   postId,
-  userId,
   initialContent,
   onClose,
   onPostUpdated,
@@ -47,35 +56,29 @@ export default function EditPostModal({
 
   const handleEdit = async () => {
     if (!content.trim() || !postId || submitting) return;
-
     setSubmitting(true);
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-
     try {
+      const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'edit-post',
-          user_id: userId,
           post_id: postId,
           content: content.trim(),
+          access_token,
         }),
       });
-
       const data = await response.json();
-
       if (data.success) {
         onPostUpdated();
         onClose();
       }
     } catch (error) {
-      console.error('Error editing post:', error);
+      console.error('[EditPostModal] handleEdit:', error);
     } finally {
       setSubmitting(false);
     }
@@ -83,53 +86,52 @@ export default function EditPostModal({
 
   const confirmDelete = async () => {
     if (!postId || deleting) return;
-
     setDeleting(true);
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     }
-
     try {
+      const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'delete-post',
-          user_id: userId,
           post_id: postId,
+          access_token,
         }),
       });
-
       const data = await response.json();
-
       if (data.success) {
         onPostUpdated();
         onClose();
       }
     } catch (error) {
-      console.error('Error deleting post:', error);
+      console.error('[EditPostModal] confirmDelete:', error);
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent={true} onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.modalContainer}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-        
+
+        {/* ── CONFIRMATION SUPPRESSION ── */}
         {showDeleteConfirm ? (
-          /* CONFIRMATION DE SUPPRESSION */
           <View style={styles.confirmContent}>
-            <Ionicons name="warning-outline" size={60} color="#FF3B30" />
+            <View style={styles.confirmIconCircle}>
+              <Ionicons name="warning-outline" size={38} color="#FF3B30" />
+            </View>
+
             <Text style={styles.confirmTitle}>Supprimer le post ?</Text>
             <Text style={styles.confirmText}>
-              Cette action est irréversible. Êtes-vous sûr de vouloir supprimer ce post ?
+              Cette action est irréversible. Le post sera définitivement supprimé.
             </Text>
-            
+
+            <View style={styles.divider} />
+
             <View style={styles.confirmActions}>
               <TouchableOpacity
                 style={styles.confirmCancelButton}
@@ -139,6 +141,7 @@ export default function EditPostModal({
                   }
                   setShowDeleteConfirm(false);
                 }}
+                activeOpacity={0.7}
               >
                 <Text style={styles.confirmCancelText}>Annuler</Text>
               </TouchableOpacity>
@@ -147,21 +150,26 @@ export default function EditPostModal({
                 style={[styles.confirmDeleteButton, deleting && styles.buttonDisabled]}
                 onPress={confirmDelete}
                 disabled={deleting}
+                activeOpacity={0.8}
               >
                 {deleting ? (
                   <ActivityIndicator size="small" color="#FFF" />
                 ) : (
-                  <Text style={styles.confirmDeleteText}>Supprimer</Text>
+                  <>
+                    <Ionicons name="trash-outline" size={17} color="#FFF" />
+                    <Text style={styles.confirmDeleteText}>Supprimer</Text>
+                  </>
                 )}
               </TouchableOpacity>
             </View>
           </View>
+
+        /* ── MENU DE CHOIX ── */
         ) : showMenu ? (
-          /* MENU DE CHOIX */
           <View style={styles.menuContent}>
             <View style={styles.menuHandle} />
             <Text style={styles.menuTitle}>Options du post</Text>
-            
+
             <TouchableOpacity
               style={styles.menuOption}
               onPress={() => {
@@ -170,67 +178,96 @@ export default function EditPostModal({
                 }
                 setShowMenu(false);
               }}
+              activeOpacity={0.7}
             >
-              <Ionicons name="create-outline" size={24} color="#8A2BE2" />
+              <View style={[styles.menuIconCircle, { backgroundColor: '#F3E5F5' }]}>
+                <Ionicons name="create-outline" size={20} color="#7B1FA2" />
+              </View>
               <Text style={styles.menuOptionText}>Modifier</Text>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={18} color="#CCC" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.menuOption, styles.menuOptionDanger]}
+              style={styles.menuOption}
               onPress={() => {
                 if (Platform.OS !== 'web') {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
                 setShowDeleteConfirm(true);
               }}
+              activeOpacity={0.7}
             >
-              <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+              <View style={[styles.menuIconCircle, { backgroundColor: '#FFF1F0' }]}>
+                <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+              </View>
               <Text style={[styles.menuOptionText, styles.menuOptionTextDanger]}>
                 Supprimer
               </Text>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={18} color="#CCC" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-              <Text style={styles.cancelButtonText}>Annuler</Text>
+            <TouchableOpacity
+              style={styles.menuCancelButton}
+              onPress={onClose}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.menuCancelText}>Annuler</Text>
             </TouchableOpacity>
           </View>
+
+        /* ── FORMULAIRE D'ÉDITION ── */
         ) : (
-          /* FORMULAIRE D'ÉDITION */
           <View style={styles.editContent}>
+            <View style={styles.editHandle} />
+
             <View style={styles.header}>
               <TouchableOpacity
                 onPress={() => setShowMenu(true)}
                 style={styles.backButton}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="chevron-back" size={28} color="#333" />
+                <Ionicons name="chevron-back" size={26} color="#333" />
               </TouchableOpacity>
               <Text style={styles.headerTitle}>Modifier le post</Text>
-              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                <Ionicons name="close" size={28} color="#333" />
+              <TouchableOpacity
+                onPress={onClose}
+                style={styles.closeButton}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={22} color="#9E9E9E" />
               </TouchableOpacity>
             </View>
+
+            <View style={styles.divider} />
 
             <View style={styles.inputContainer}>
               <TextInput
                 style={styles.input}
                 placeholder="Quoi de neuf ?"
-                placeholderTextColor="#999"
+                placeholderTextColor="#BDBDBD"
                 value={content}
                 onChangeText={setContent}
                 multiline
                 maxLength={500}
                 autoFocus
               />
-              <Text style={styles.charCount}>{content.length}/500</Text>
+              <Text style={[
+                styles.charCount,
+                content.length > 450 && styles.charCountWarning,
+              ]}>
+                {content.length}/500
+              </Text>
             </View>
 
-            <View style={styles.actions}>
+            <View style={styles.editActions}>
               <TouchableOpacity
-                style={[styles.saveButton, (!content.trim() || submitting) && styles.buttonDisabled]}
+                style={[
+                  styles.saveButton,
+                  (!content.trim() || submitting) && styles.buttonDisabled,
+                ]}
                 onPress={handleEdit}
                 disabled={!content.trim() || submitting}
+                activeOpacity={0.85}
               >
                 {submitting ? (
                   <ActivityIndicator size="small" color="#FFF" />
@@ -257,37 +294,30 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.52)',
   },
-  
-  // MENU DE CHOIX
+
+  // ── Menu ──────────────────────────────────────────
   menuContent: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    backgroundColor: '#FAFAFA',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: 0, left: 0, right: 0,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
+        shadowColor: '#7B1FA2',
+        shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowRadius: 12,
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 10 },
     }),
   },
   menuHandle: {
-    width: 40,
+    width: 36,
     height: 4,
     backgroundColor: '#E0E0E0',
     borderRadius: 2,
@@ -296,75 +326,91 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   menuTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1A1A1A',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   menuOption: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
+    borderBottomColor: '#F0F0F0',
+    gap: 14,
   },
-  menuOptionDanger: {},
+  menuIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   menuOptionText: {
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
-    marginLeft: 12,
+    color: '#212121',
   },
   menuOptionTextDanger: {
     color: '#FF3B30',
   },
-  cancelButton: {
+  menuCancelButton: {
     paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 4,
   },
-  cancelButtonText: {
-    fontSize: 16,
-    color: '#666',
+  menuCancelText: {
+    fontSize: 15,
+    color: '#9E9E9E',
     fontWeight: '600',
   },
 
-  // CONFIRMATION SUPPRESSION
+  // ── Confirmation ──────────────────────────────────
   confirmContent: {
     backgroundColor: '#FFF',
-    borderRadius: 20,
-    padding: 30,
+    borderRadius: 24,
+    paddingTop: 32,
+    paddingBottom: 28,
+    paddingHorizontal: 28,
     width: '85%',
     maxWidth: 400,
     alignItems: 'center',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.15,
+        shadowRadius: 16,
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 10 },
     }),
+  },
+  confirmIconCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#FFF1F0',
+    borderWidth: 2,
+    borderColor: '#FFCDD2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   confirmTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 12,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 10,
+    textAlign: 'center',
   },
   confirmText: {
-    fontSize: 15,
-    color: '#666',
+    fontSize: 14,
+    color: '#777',
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
+    lineHeight: 21,
   },
   confirmActions: {
     flexDirection: 'row',
@@ -374,104 +420,133 @@ const styles = StyleSheet.create({
   confirmCancelButton: {
     flex: 1,
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: '#F5F5F5',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
   },
   confirmCancelText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#333',
+    color: '#444',
   },
   confirmDeleteButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: '#FF3B30',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#FF3B30',
+    gap: 8,
   },
   confirmDeleteText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#FFF',
   },
 
-  // FORMULAIRE D'ÉDITION
+  // ── Édition ───────────────────────────────────────
   editContent: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#FAFAFA',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '80%',
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: 0, left: 0, right: 0,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
+        shadowColor: '#7B1FA2',
+        shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowRadius: 12,
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 10 },
     }),
+  },
+  editHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 4,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   backButton: {
-    padding: 4,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1A1A1A',
   },
   closeButton: {
-    padding: 4,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#EEEEEE',
+    marginHorizontal: 20,
+    marginVertical: 4,
   },
   inputContainer: {
     padding: 20,
   },
   input: {
     fontSize: 16,
-    color: '#333',
+    color: '#212121',
     minHeight: 120,
     textAlignVertical: 'top',
+    lineHeight: 24,
   },
   charCount: {
     fontSize: 12,
-    color: '#999',
+    color: '#BDBDBD',
     textAlign: 'right',
-    marginTop: 8,
+    marginTop: 6,
   },
-  actions: {
+  charCountWarning: {
+    color: '#FF3B30',
+    fontWeight: '600',
+  },
+  editActions: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
   },
   saveButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#8A2BE2',
+    backgroundColor: '#7B1FA2',
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 14,
     gap: 8,
   },
   saveButtonText: {
     color: '#FFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   buttonDisabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
 });
