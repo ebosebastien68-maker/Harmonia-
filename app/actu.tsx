@@ -41,6 +41,9 @@ const FEED_FIRST_LIMIT    = 5;
 const FEED_NEXT_LIMIT     = 10;
 const LOAD_MORE_THRESHOLD = 0.85;
 
+// Violet Facebook-like
+const LIKE_ACTIVE_COLOR = '#7C3AED';
+
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
 type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
 type Visibility  = 'public' | 'friends' | 'private';
@@ -177,6 +180,8 @@ async function getValidToken(): Promise<{ uid: string; token: string; refresh_to
 }
 
 // ─── MediaViewer ──────────────────────────────────────────────────────────────
+// Web  → tag <video> natif (fonctionne parfaitement)
+// Mobile → expo-av Video avec useNativeControls (lecture réelle)
 interface MediaViewerProps {
   visible: boolean; url: string | null; type: 'image' | 'video'; onClose: () => void;
 }
@@ -189,18 +194,32 @@ function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
         <TouchableOpacity style={mvStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={30} color="#fff" />
         </TouchableOpacity>
+
         {type === 'image' ? (
           <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.imageWrapper}>
             <Image source={{ uri: url }} style={mvStyles.image} resizeMode="contain" />
           </TouchableOpacity>
+
         ) : Platform.OS === 'web' ? (
+          // ── Web : lecteur HTML natif (inchangé, fonctionne parfaitement) ──
           // @ts-ignore
-          <video src={url} controls autoPlay style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }} />
+          <video
+            src={url}
+            controls
+            autoPlay
+            style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }}
+          />
+
         ) : (
-          <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.videoNative}>
-            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
-            <Text style={mvStyles.videoHint}>Appuyez pour fermer</Text>
-          </TouchableOpacity>
+          // ── Mobile : expo-av Video avec contrôles natifs ──────────────────
+          <Video
+            source={{ uri: url }}
+            style={mvStyles.nativeVideo}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls
+            shouldPlay
+            isLooping={false}
+          />
         )}
       </View>
     </Modal>
@@ -212,8 +231,7 @@ const mvStyles = StyleSheet.create({
   closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   imageWrapper: { width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
   image:        { width, height: height * 0.85 },
-  videoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
-  videoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
+  nativeVideo:  { width, height: height * 0.75 },
 });
 
 // ─── PostCard ─────────────────────────────────────────────────────────────────
@@ -301,8 +319,13 @@ const PostCard = React.memo(({
           </TouchableOpacity>
         )}
 
+        {/* Vignette vidéo — ouvre MediaViewer (web=<video>, mobile=expo-av) */}
         {post.vidposts && (
-          <TouchableOpacity style={styles.videoThumb} activeOpacity={0.92} onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}>
+          <TouchableOpacity
+            style={styles.videoThumb}
+            activeOpacity={0.92}
+            onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}
+          >
             <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
             <Text style={styles.videoThumbLabel}>Appuyer pour lire</Text>
           </TouchableOpacity>
@@ -320,10 +343,25 @@ const PostCard = React.memo(({
         </View>
 
         <View style={styles.actionsBar}>
-          <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
-            <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
-              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
-              <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
+
+          {/* ── Like (style Facebook violet) ──────────────────────────── */}
+          <TouchableOpacity
+            style={[styles.actionBtn, liked && styles.actionBtnActive]}
+            onPress={handleLike}
+            disabled={isAnim}
+          >
+            <LinearGradient
+              colors={liked ? [LIKE_ACTIVE_COLOR, LIKE_ACTIVE_COLOR] : ['transparent', 'transparent']}
+              style={styles.actionGrad}
+            >
+              <Ionicons
+                name={liked ? 'thumbs-up' : 'thumbs-up-outline'}
+                size={20}
+                color={liked ? '#FFF' : '#666'}
+              />
+              <Text style={[styles.actionText, liked && styles.actionTextActive]}>
+                {liked ? 'Liké' : 'Liker'}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
 
@@ -846,7 +884,7 @@ export default function ActuScreen() {
       game_type: sub.game_type, run_id: sub.run_id, user_id: sub.user_id,
     })));
 
-  // ─── Post actions — CORRECTION : access_token inclus dans les 3 handlers ──
+  // ─── Post actions ─────────────────────────────────────────────────────────
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
     const session = await getValidToken(); if (!session) return;
     const res  = await fetch(HOME_URL, {
@@ -1136,7 +1174,7 @@ export default function ActuScreen() {
                 <Text style={styles.modalTitle}>📊 Détails</Text>
                 <View style={styles.modalInfo}><Text style={styles.modalLabel}>Auteur :</Text><Text style={styles.modalValue}>{selectedPost.author.prenom} {selectedPost.author.nom}</Text></View>
                 <View style={styles.modalInfo}><Text style={styles.modalLabel}>Publié :</Text><Text style={styles.modalValue}>{formatTimeAgo(selectedPost.created_at)}</Text></View>
-                <View style={styles.modalInfo}><Text style={styles.modalLabel}>Réactions :</Text><Text style={styles.modalValue}>❤️ {selectedPost.reactions.likes} · 💬 {selectedPost.reactions.comments} · 🔄 {selectedPost.reactions.shares}</Text></View>
+                <View style={styles.modalInfo}><Text style={styles.modalLabel}>Réactions :</Text><Text style={styles.modalValue}>👍 {selectedPost.reactions.likes} · 💬 {selectedPost.reactions.comments} · 🔄 {selectedPost.reactions.shares}</Text></View>
                 <TouchableOpacity style={styles.modalBtn} onPress={() => setSelectedPost(null)}><Text style={styles.modalBtnText}>Fermer</Text></TouchableOpacity>
               </View>
             </TouchableOpacity>
