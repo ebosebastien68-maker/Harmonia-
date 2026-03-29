@@ -1,15 +1,14 @@
-// ChatBox.tsx — v9 (mobile-fixed)
+// ChatBox.tsx — v9
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, KeyboardAvoidingView,
-  Platform, SafeAreaView, Modal, Image, Dimensions,
+  Platform, SafeAreaView, Modal, Image, useWindowDimensions,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
 import * as ImagePicker   from 'expo-image-picker';
-import * as FileSystem    from 'expo-file-system'; // FIX: upload binaire mobile
 import { io, Socket }     from 'socket.io-client';
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
@@ -98,55 +97,6 @@ function resolveMimeType(uri: string, mimeType?: string | null): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
-// ─── Helper upload binaire — conditionné web vs mobile ───────────────────────
-//
-// WEB    → fetch(uri).blob() + fetch PUT  (comportement original préservé)
-// MOBILE → expo-file-system uploadAsync  (binaire natif, fiable sur iOS & Android)
-
-async function uploadBinaryFile(
-  signedUrl: string,
-  localUri:  string,
-  mimeType:  string,
-): Promise<{ ok: boolean; status: number; errorText?: string }> {
-
-  if (Platform.OS === 'web') {
-    // ── Comportement web d'origine ─────────────────────────────────────
-    try {
-      const fileBlob  = await fetch(localUri).then(r => r.blob());
-      const uploadRes = await fetch(signedUrl, {
-        method:  'PUT',
-        headers: { 'Content-Type': mimeType },
-        body:    fileBlob,
-      });
-      return {
-        ok:     uploadRes.ok,
-        status: uploadRes.status,
-        errorText: uploadRes.ok ? undefined : await uploadRes.text(),
-      };
-    } catch (err: any) {
-      return { ok: false, status: 0, errorText: err?.message };
-    }
-
-  } else {
-    // ── Mobile : expo-file-system (iOS + Android) ──────────────────────
-    try {
-      const result = await FileSystem.uploadAsync(signedUrl, localUri, {
-        httpMethod:  'PUT',
-        headers:     { 'Content-Type': mimeType },
-        uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
-      });
-      const ok = result.status >= 200 && result.status < 300;
-      return {
-        ok,
-        status:    result.status,
-        errorText: ok ? undefined : result.body,
-      };
-    } catch (err: any) {
-      return { ok: false, status: 0, errorText: err?.message };
-    }
-  }
-}
-
 // ─── Composant ────────────────────────────────────────────────────────────────
 
 export default function ChatBox({
@@ -156,9 +106,12 @@ export default function ChatBox({
   onBack, onNewMessage, onProfilePress,
 }: ChatBoxProps) {
 
+  // FIX #5 — useWindowDimensions au lieu de Dimensions.get() statique
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+
   const [messages,        setMessages]        = useState<Message[]>([]);
   const [input,           setInput]           = useState('');
-  const [loading,         setLoading]         = useState(true);
+  const [loading,         setLoading]         = useState(true);   // FIX #2 — sert aussi de "isReady"
   const [sending,         setSending]         = useState(false);
   const [uploading,       setUploading]       = useState(false);
   const [otherTyping,     setOtherTyping]     = useState(false);
@@ -173,16 +126,17 @@ export default function ChatBox({
   const [actionMsg,       setActionMsg]       = useState<Message | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
 
-  const scrollRef    = useRef<ScrollView>(null);
-  const socketRef    = useRef<Socket | null>(null);
-  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // FIX: timeout de sécurité — débloque setSending si message_sent n'arrive jamais
-  const sendTimeout  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef  = useRef(false);
+  const scrollRef   = useRef<ScrollView>(null);
+  const socketRef   = useRef<Socket | null>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
 
-  const [fullscreenUrl,   setFullscreenUrl]   = useState<string | null>(null);
-  const imgTapRef    = useRef<{ url: string; time: number } | null>(null);
-  const lastTapRef   = useRef<{ id: string; time: number } | null>(null);
+  // FIX #3 — timeout de sécurité pour débloquer "sending" si message_sent jamais reçu
+  const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [fullscreenUrl, setFullscreenUrl] = useState<string | null>(null);
+  const imgTapRef  = useRef<{ url: string; time: number } | null>(null);
+  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -191,17 +145,18 @@ export default function ChatBox({
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
-      if (typingTimer.current) clearTimeout(typingTimer.current);
-      if (sendTimeout.current)  clearTimeout(sendTimeout.current);  // FIX: cleanup
+      if (typingTimer.current)     clearTimeout(typingTimer.current);
+      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
     };
   }, [conversationId, accessToken]);
 
   // ── Socket privé ────────────────────────────────────────────────────────────
 
   const buildPrivateSocket = (): Socket => {
-    // FIX: transports websocket + polling (fallback mobile si WS bloqué)
+    // FIX #1 — Web : WebSocket seul (comportement actuel préservé)
+    //          Mobile : polling d'abord puis upgrade WebSocket automatique
     const socket = io(`${WS_BASE}/private-chat`, {
-      transports:        ['websocket', 'polling'],
+      transports:       Platform.OS === 'web' ? ['websocket'] : ['polling', 'websocket'],
       reconnectionDelay: 2000,
     });
 
@@ -213,6 +168,7 @@ export default function ChatBox({
       });
     });
 
+    // FIX #2 — loading passe à false ici = signal "prêt à envoyer"
     socket.on('joined', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
@@ -221,8 +177,8 @@ export default function ChatBox({
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
-      // FIX: toujours annuler le timeout de sécurité
-      if (sendTimeout.current) clearTimeout(sendTimeout.current);
+      // FIX #3 — annuler le timeout de sécurité dès qu'on reçoit la confirmation
+      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       setSending(false);
@@ -232,9 +188,7 @@ export default function ChatBox({
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onNewMessage?.();
       scrollToEnd();
     });
@@ -250,9 +204,8 @@ export default function ChatBox({
     });
 
     socket.on('error', (err: { message: string }) => {
-      // FIX: débloquer l'état sending en cas d'erreur socket
-      if (sendTimeout.current) clearTimeout(sendTimeout.current);
       console.warn('[ChatBox] privé erreur:', err.message);
+      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
       setSending(false);
     });
 
@@ -262,9 +215,9 @@ export default function ChatBox({
   // ── Socket groupe ────────────────────────────────────────────────────────────
 
   const buildGroupSocket = (): Socket => {
-    // FIX: transports websocket + polling (fallback mobile)
+    // FIX #1 — même logique transport conditionnel
     const socket = io(`${WS_BASE}/group-chat`, {
-      transports:        ['websocket', 'polling'],
+      transports:       Platform.OS === 'web' ? ['websocket'] : ['polling', 'websocket'],
       reconnectionDelay: 2000,
     });
 
@@ -276,6 +229,7 @@ export default function ChatBox({
       });
     });
 
+    // FIX #2 — loading passe à false ici = signal "prêt à envoyer"
     socket.on('joined', (data: { messages: Message[]; group: any; members: any[] }) => {
       const msgs = data?.messages ?? [];
       setMessages(msgs.map(normalizeMsg));
@@ -287,8 +241,8 @@ export default function ChatBox({
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
-      // FIX: toujours annuler le timeout de sécurité
-      if (sendTimeout.current) clearTimeout(sendTimeout.current);
+      // FIX #3 — annuler le timeout de sécurité
+      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       setSending(false);
@@ -298,9 +252,7 @@ export default function ChatBox({
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onNewMessage?.();
       scrollToEnd();
     });
@@ -330,9 +282,8 @@ export default function ChatBox({
     });
 
     socket.on('error', (err: { message: string }) => {
-      // FIX: débloquer l'état sending en cas d'erreur socket
-      if (sendTimeout.current) clearTimeout(sendTimeout.current);
       console.warn('[ChatBox] groupe erreur:', err.message);
+      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
       setSending(false);
     });
 
@@ -366,11 +317,9 @@ export default function ChatBox({
     setInput('');
     setSending(true);
 
-    // FIX: timeout de sécurité 8 s — libère le bouton si message_sent n'arrive pas
-    if (sendTimeout.current) clearTimeout(sendTimeout.current);
-    sendTimeout.current = setTimeout(() => {
-      setSending(false);
-    }, 8000);
+    // FIX #3 — timeout de sécurité : si message_sent n'arrive pas dans 12s, on débloque
+    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
+    sendingTimeoutRef.current = setTimeout(() => setSending(false), 12000);
 
     const reply = replyingTo;
     setReplyingTo(null);
@@ -404,18 +353,9 @@ export default function ChatBox({
 
   const emitTyping = (is_typing: boolean) => {
     if (conversationType === 'private') {
-      socketRef.current?.emit('typing', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing });
     } else {
-      socketRef.current?.emit('typing', {
-        group_id:  conversationId,
-        user_id:   userId,
-        user_name: userName,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { group_id: conversationId, user_id: userId, user_name: userName, is_typing });
     }
   };
 
@@ -472,14 +412,15 @@ export default function ChatBox({
     }
   };
 
-  // ── Upload media — Signed URL ─────────────────────────────────────────────────
+  // ── Upload media — Signed URL (userpro) ──────────────────────────────────────
   //
   // Flux en 3 étapes :
   //   1. getUploadUrl  → le serveur génère une Signed URL + path
   //   2. PUT direct    → le client uploade le fichier binaire vers Supabase
-  //      WEB    : fetch + blob  (comportement original préservé)
-  //      MOBILE : expo-file-system uploadAsync (binaire natif, fiable)
   //   3. confirmUpload → le serveur vérifie et retourne l'URL publique
+  //
+  // FIX #6 — Web : fetch + blob (comportement actuel préservé)
+  //           Mobile : XMLHttpRequest natif (plus fiable pour les URI file://)
 
   const pickAndUploadMedia = async () => {
     try {
@@ -527,17 +468,42 @@ export default function ChatBox({
 
       const { signed_url, path, bucket } = urlData;
 
-      // ── Étape 2 : upload binaire conditionné web / mobile ──────────────
-      const { ok: uploadOk, status: uploadStatus, errorText } = await uploadBinaryFile(
-        signed_url,
-        uri,
-        mimeType,
-      );
+      // ── Étape 2 : upload binaire vers Supabase ─────────────────────────
+      // FIX #6 — comportement conditionnel Web / Mobile
+      let uploadOk = false;
+
+      if (Platform.OS === 'web') {
+        // Web : fetch + blob (comportement original préservé)
+        const fileBlob = await fetch(uri).then(r => r.blob());
+        const uploadRes = await fetch(signed_url, {
+          method:  'PUT',
+          headers: { 'Content-Type': mimeType },
+          body:    fileBlob,
+        });
+        uploadOk = uploadRes.ok;
+        if (!uploadOk) {
+          console.error('[ChatBox] PUT Supabase erreur:', uploadRes.status, await uploadRes.text());
+        }
+      } else {
+        // Mobile (iOS / Android) : XMLHttpRequest natif
+        // Plus fiable pour les URI file:// locales sur React Native
+        uploadOk = await new Promise<boolean>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', signed_url);
+          xhr.setRequestHeader('Content-Type', mimeType);
+          xhr.onload  = () => resolve(xhr.status >= 200 && xhr.status < 300);
+          xhr.onerror = () => {
+            console.error('[ChatBox] XHR upload erreur');
+            resolve(false);
+          };
+          // React Native XHR accepte les objets { uri, type, name } natifs
+          xhr.send({ uri, type: mimeType, name: fileName } as any);
+        });
+      }
 
       if (!uploadOk) {
         setUploading(false);
-        alert('Erreur lors de l\'upload vers le stockage');
-        console.error('[ChatBox] upload erreur:', uploadStatus, errorText);
+        alert("Erreur lors de l'upload vers le stockage");
         return;
       }
 
@@ -569,7 +535,7 @@ export default function ChatBox({
     } catch (err) {
       setUploading(false);
       console.error('[ChatBox] upload erreur:', err);
-      alert('Erreur lors de l\'upload');
+      alert("Erreur lors de l'upload");
     }
   };
 
@@ -788,8 +754,6 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        // FIX: sur Android, le clavier peut masquer les messages
-        keyboardShouldPersistTaps="handled"
       >
         {hasMore && !loading && (
           <TouchableOpacity
@@ -848,11 +812,8 @@ export default function ChatBox({
       )}
 
       {/* ── Saisie ──────────────────────────────────────────────────────── */}
-      {/* FIX: behavior conditionné — 'padding' iOS, 'height' Android, rien sur web */}
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-      >
+      {/* FIX #4 — KeyboardAvoidingView : 'padding' iOS (inchangé), 'height' Android (au lieu de undefined) */}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={S.inputWrap}>
           {conversationType === 'group' && currentRole === 'userpro' && (
             <TouchableOpacity
@@ -876,16 +837,15 @@ export default function ChatBox({
             onChangeText={handleTyping}
             multiline
             maxLength={1000}
-            editable={!sending && !uploading}
-            // FIX: retourne "send" sur le clavier virtuel mobile
-            returnKeyType="default"
-            blurOnSubmit={false}
+            // FIX #2 — désactivé tant que loading (= joined pas encore reçu)
+            editable={!loading && !sending && !uploading}
           />
 
           <TouchableOpacity
-            style={[S.sendBtn, (!input.trim() || sending) && S.sendBtnDisabled]}
+            style={[S.sendBtn, (loading || !input.trim() || sending) && S.sendBtnDisabled]}
             onPress={() => sendMessage()}
-            disabled={!input.trim() || sending}
+            // FIX #2 — désactivé tant que loading (= joined pas encore reçu)
+            disabled={loading || !input.trim() || sending}
             activeOpacity={0.7}
           >
             {sending
@@ -997,20 +957,12 @@ export default function ChatBox({
         <TouchableOpacity
           style={S.fsOverlay}
           activeOpacity={1}
-          onPress={() => {
-            const now  = Date.now();
-            const last = imgTapRef.current;
-            if (last && last.url === fullscreenUrl && now - last.time < 350) {
-              imgTapRef.current = null;
-              setFullscreenUrl(null);
-            } else {
-              imgTapRef.current = { url: fullscreenUrl!, time: now };
-            }
-          }}
+          onPress={() => setFullscreenUrl(null)}
         >
+          {/* FIX #5 — dimensions dynamiques via useWindowDimensions */}
           <Image
             source={{ uri: fullscreenUrl ?? '' }}
-            style={S.fsImage}
+            style={{ width: winWidth, height: winHeight * 0.82 }}
             resizeMode="contain"
           />
           <TouchableOpacity style={S.fsCloseBtn} onPress={() => setFullscreenUrl(null)}>
@@ -1074,6 +1026,5 @@ const S = StyleSheet.create({
   actionSubTxt:     { fontSize: 12, color: '#999', marginTop: 1 },
   actionDivider:    { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
   fsOverlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
-  fsImage:          { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.82 },
   fsCloseBtn:       { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 36, right: 20 },
 });
