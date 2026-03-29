@@ -14,9 +14,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import CommentLikersModal from './CommentLikersModal';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/comments';
+// ─── Remplace par l'URL de ton service Render ─────────────────────────────────
+const API_BASE = 'https://TON-APP.onrender.com/comments';
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Comment {
   id: string;
@@ -36,20 +39,28 @@ interface Comment {
 interface CommentsModalProps {
   visible: boolean;
   postId: string | null;
-  userId: string;
   onClose: () => void;
   onCommentAdded: () => void;
 }
 
-// ✅ COMPOSANT COMMENTAIRE avec vraies icônes
-const CommentItem = ({ 
-  comment, 
-  isReply, 
-  onLike, 
+// ─── Helper : récupère le token depuis AsyncStorage ───────────────────────────
+async function getAccessToken(): Promise<string> {
+  const sessionStr = await AsyncStorage.getItem('harmonia_session');
+  if (!sessionStr) throw new Error('Session introuvable');
+  const session = JSON.parse(sessionStr);
+  if (!session.access_token) throw new Error('access_token manquant');
+  return session.access_token;
+}
+
+// ─── CommentItem ──────────────────────────────────────────────────────────────
+const CommentItem = ({
+  comment,
+  isReply,
+  onLike,
   onReply,
-  onShowLikers
-}: { 
-  comment: Comment; 
+  onShowLikers,
+}: {
+  comment: Comment;
   isReply: boolean;
   onLike: (commentId: string, liked: boolean) => Promise<void>;
   onReply: (comment: Comment) => void;
@@ -61,30 +72,27 @@ const CommentItem = ({
   const handleLike = async () => {
     const newLiked = !localLiked;
     setLocalLiked(newLiked);
-    setLocalLikes(prev => newLiked ? prev + 1 : prev - 1);
-
+    setLocalLikes(prev => (newLiked ? prev + 1 : prev - 1));
     try {
       await onLike(comment.id, newLiked);
-    } catch (error) {
+    } catch {
       setLocalLiked(!newLiked);
-      setLocalLikes(prev => newLiked ? prev - 1 : prev + 1);
+      setLocalLikes(prev => (newLiked ? prev - 1 : prev + 1));
     }
   };
 
   const formatTimeAgo = (dateString: string) => {
-    const now = new Date();
-    const past = new Date(dateString);
-    const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
-
+    const diffInSeconds = Math.floor(
+      (new Date().getTime() - new Date(dateString).getTime()) / 1000
+    );
     if (diffInSeconds < 60) return "À l'instant";
     if (diffInSeconds < 3600) return `il y a ${Math.floor(diffInSeconds / 60)}min`;
     if (diffInSeconds < 86400) return `il y a ${Math.floor(diffInSeconds / 3600)}h`;
     return `il y a ${Math.floor(diffInSeconds / 86400)}j`;
   };
 
-  const getInitials = (nom: string, prenom: string) => {
-    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
-  };
+  const getInitials = (nom: string, prenom: string) =>
+    `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
   return (
     <View style={[styles.commentItem, isReply && styles.replyItem]}>
@@ -105,10 +113,10 @@ const CommentItem = ({
             </Text>
             <Text style={styles.commentText}>{comment.content}</Text>
           </View>
+
           <View style={styles.commentActions}>
             <Text style={styles.commentTime}>{formatTimeAgo(comment.created_at)}</Text>
-            
-            {/* Compteur de likes cliquable */}
+
             {localLikes > 0 && (
               <>
                 <Text style={styles.actionSeparator}>•</Text>
@@ -127,24 +135,20 @@ const CommentItem = ({
                 </TouchableOpacity>
               </>
             )}
-            
+
             <Text style={styles.actionSeparator}>•</Text>
-            
-            {/* NOUVEAU : Bouton like avec icône */}
-            <TouchableOpacity
-              style={styles.likeButton}
-              onPress={handleLike}
-            >
+
+            <TouchableOpacity style={styles.likeButton} onPress={handleLike}>
               <Ionicons
                 name={localLiked ? 'heart' : 'heart-outline'}
                 size={16}
-                color={localLiked ? '#FF0080' : '#666'}
+                color={localLiked ? '#7B1FA2' : '#666'}
               />
               <Text style={[styles.likeText, localLiked && styles.likeTextActive]}>
                 {localLiked ? 'Aimé' : 'Aimer'}
               </Text>
             </TouchableOpacity>
-            
+
             {!isReply && (
               <>
                 <Text style={styles.actionSeparator}>•</Text>
@@ -163,6 +167,7 @@ const CommentItem = ({
           </View>
         </View>
       </View>
+
       {comment.replies && comment.replies.length > 0 && (
         <View style={styles.repliesContainer}>
           {comment.replies.map(reply => (
@@ -181,10 +186,10 @@ const CommentItem = ({
   );
 };
 
+// ─── CommentsModal ────────────────────────────────────────────────────────────
 export default function CommentsModal({
   visible,
   postId,
-  userId,
   onClose,
   onCommentAdded,
 }: CommentsModalProps) {
@@ -204,28 +209,24 @@ export default function CommentsModal({
 
   const loadComments = async () => {
     if (!postId) return;
-    
     setLoading(true);
     try {
+      const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'get-comments',
           post_id: postId,
-          user_id: userId,
+          access_token,
         }),
       });
-
       const data = await response.json();
       if (data.success && data.comments) {
         setComments(data.comments);
       }
     } catch (error) {
-      console.error('Error loading comments:', error);
+      console.error('[CommentsModal] loadComments:', error);
     } finally {
       setLoading(false);
     }
@@ -233,30 +234,24 @@ export default function CommentsModal({
 
   const handleAddComment = async () => {
     if (!commentText.trim() || !postId || submitting) return;
-
     setSubmitting(true);
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-
     try {
+      const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: replyingTo ? 'reply-to-comment' : 'add-comment',
           post_id: postId,
-          user_id: userId,
           content: commentText.trim(),
-          parent_id: replyingTo?.id || null,
+          parent_id: replyingTo?.id ?? null,
+          access_token,
         }),
       });
-
       const data = await response.json();
-      
       if (data.success) {
         setCommentText('');
         setReplyingTo(null);
@@ -264,7 +259,7 @@ export default function CommentsModal({
         onCommentAdded();
       }
     } catch (error) {
-      console.error('Error adding comment:', error);
+      console.error('[CommentsModal] handleAddComment:', error);
     } finally {
       setSubmitting(false);
     }
@@ -274,39 +269,29 @@ export default function CommentsModal({
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-
     try {
+      const access_token = await getAccessToken();
       const response = await fetch(API_BASE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: liked ? 'like-comment' : 'unlike-comment',
           comment_id: commentId,
-          user_id: userId,
+          access_token,
         }),
       });
-
       const data = await response.json();
-      
       if (data.success) {
-        const updateCommentLikes = (comments: Comment[]): Comment[] => {
-          return comments.map(comment => {
-            if (comment.id === commentId) {
-              return { ...comment, likes: data.likes, user_liked: liked };
-            }
-            if (comment.replies) {
-              return { ...comment, replies: updateCommentLikes(comment.replies) };
-            }
-            return comment;
+        const updateLikes = (list: Comment[]): Comment[] =>
+          list.map(c => {
+            if (c.id === commentId) return { ...c, likes: data.likes, user_liked: liked };
+            if (c.replies) return { ...c, replies: updateLikes(c.replies) };
+            return c;
           });
-        };
-        setComments(updateCommentLikes(comments));
+        setComments(prev => updateLikes(prev));
       }
     } catch (error) {
-      console.error('Error liking comment:', error);
+      console.error('[CommentsModal] handleLikeComment:', error);
     }
   };
 
@@ -319,19 +304,17 @@ export default function CommentsModal({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent
       onRequestClose={onClose}
     >
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.modalContainer}
       >
-        <TouchableOpacity 
-          style={styles.backdrop} 
-          activeOpacity={1} 
-          onPress={onClose}
-        />
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+
         <View style={styles.modalContent}>
+          {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Commentaires</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -339,10 +322,11 @@ export default function CommentsModal({
             </TouchableOpacity>
           </View>
 
+          {/* Liste */}
           <ScrollView style={styles.commentsList} showsVerticalScrollIndicator={false}>
             {loading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#8A2BE2" />
+                <ActivityIndicator size="large" color="#7B1FA2" />
               </View>
             ) : comments.length === 0 ? (
               <View style={styles.emptyContainer}>
@@ -364,6 +348,7 @@ export default function CommentsModal({
             )}
           </ScrollView>
 
+          {/* Barre "Répondre à" */}
           {replyingTo && (
             <View style={styles.replyingToBar}>
               <Text style={styles.replyingToText}>
@@ -375,10 +360,15 @@ export default function CommentsModal({
             </View>
           )}
 
+          {/* Input */}
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
-              placeholder={replyingTo ? `Répondre à ${replyingTo.author.prenom}...` : "Ajouter un commentaire..."}
+              placeholder={
+                replyingTo
+                  ? `Répondre à ${replyingTo.author.prenom}...`
+                  : 'Ajouter un commentaire...'
+              }
               placeholderTextColor="#999"
               value={commentText}
               onChangeText={setCommentText}
@@ -386,7 +376,10 @@ export default function CommentsModal({
               maxLength={500}
             />
             <TouchableOpacity
-              style={[styles.sendButton, (!commentText.trim() || submitting) && styles.sendButtonDisabled]}
+              style={[
+                styles.sendButton,
+                (!commentText.trim() || submitting) && styles.sendButtonDisabled,
+              ]}
               onPress={handleAddComment}
               disabled={!commentText.trim() || submitting}
             >
@@ -412,6 +405,7 @@ export default function CommentsModal({
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
@@ -419,7 +413,7 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
     backgroundColor: '#FFF',
@@ -433,9 +427,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 8,
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 8 },
     }),
   },
   header: {
@@ -497,7 +489,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#8A2BE2',
+    backgroundColor: '#7B1FA2',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -547,7 +539,7 @@ const styles = StyleSheet.create({
   },
   likesCount: {
     fontSize: 12,
-    color: '#8A2BE2',
+    color: '#7B1FA2',
     fontWeight: '600',
   },
   likeButton: {
@@ -562,11 +554,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   likeTextActive: {
-    color: '#FF0080',
+    color: '#7B1FA2',
   },
   replyButton: {
     fontSize: 12,
-    color: '#8A2BE2',
+    color: '#7B1FA2',
     fontWeight: '600',
   },
   repliesContainer: {
@@ -576,16 +568,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F3E5F5',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: '#E1BEE7',
   },
   replyingToText: {
     fontSize: 13,
-    color: '#666',
+    color: '#7B1FA2',
     fontStyle: 'italic',
+    fontWeight: '500',
   },
   inputContainer: {
     flexDirection: 'row',
@@ -610,7 +603,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#8A2BE2',
+    backgroundColor: '#7B1FA2',
     justifyContent: 'center',
     alignItems: 'center',
   },
