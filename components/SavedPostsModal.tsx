@@ -1,41 +1,33 @@
+// =====================================================
+// SavedPostsModal — like violet #7B1FA2 + vidéo mobile expo-av
+// =====================================================
+
 import React, { useState, useEffect } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  Modal,
-  TouchableOpacity,
-  ScrollView,
-  Image,
-  Platform,
-  ActivityIndicator,
-  Dimensions,
+  StyleSheet, Text, View, Modal, TouchableOpacity,
+  ScrollView, Image, Platform, ActivityIndicator, Dimensions,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics       from 'expo-haptics';
+import AsyncStorage       from '@react-native-async-storage/async-storage';
+import { Video, ResizeMode } from 'expo-av';
 
-// ─── Tous les appels passent par le backend Render (plus aucun Edge) ──────────
 const BACKEND_URL = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const HOME_URL    = `${BACKEND_URL}/home`;
-
 const { width, height } = Dimensions.get('window');
-const NATIVE = Platform.OS !== 'web';
+const NATIVE     = Platform.OS !== 'web';
+const LIKE_COLOR = '#7B1FA2';
 
-// ─── Helper : récupère le token depuis AsyncStorage ──────────────────────────
 const getAccessToken = async (): Promise<string | null> => {
   try {
     const raw = await AsyncStorage.getItem('harmonia_session');
     if (!raw) return null;
     const session = JSON.parse(raw);
     return session.access_token ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 };
 
-// ─── Interface Post identique au retour de enrichPosts ────────────────────────
 interface Post {
   item_type:   'post';
   id:          string;
@@ -60,7 +52,6 @@ interface SavedPostsModalProps {
   onCommentPress: (postId: string) => void;
 }
 
-// ─── Helpers (mêmes que actu.tsx) ─────────────────────────────────────────────
 const formatTimeAgo = (dateString: string) => {
   const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
   if (diff < 60)    return "À l'instant";
@@ -72,12 +63,11 @@ const formatTimeAgo = (dateString: string) => {
 const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
-// ─── MediaViewer fullscreen (même logique que actu.tsx) ──────────────────────
+// ─── MediaViewer — même logique que actu.tsx ──────────────────────────────────
+// Web  → <video> HTML natif
+// Mobile → expo-av Video avec useNativeControls
 interface MediaViewerProps {
-  visible: boolean;
-  url:     string | null;
-  type:    'image' | 'video';
-  onClose: () => void;
+  visible: boolean; url: string | null; type: 'image' | 'video'; onClose: () => void;
 }
 
 function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
@@ -88,6 +78,7 @@ function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
         <TouchableOpacity style={mvStyles.closeBtn} onPress={onClose}>
           <Ionicons name="close" size={30} color="#fff" />
         </TouchableOpacity>
+
         {type === 'image' ? (
           <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.imageWrapper}>
             <Image source={{ uri: url }} style={mvStyles.image} resizeMode="contain" />
@@ -96,10 +87,15 @@ function MediaViewer({ visible, url, type, onClose }: MediaViewerProps) {
           // @ts-ignore
           <video src={url} controls autoPlay style={{ width: '100%', maxHeight: '90%', objectFit: 'contain', backgroundColor: '#000' }} />
         ) : (
-          <TouchableOpacity activeOpacity={1} onPress={onClose} style={mvStyles.videoNative}>
-            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.9)" />
-            <Text style={mvStyles.videoHint}>Appuyez pour fermer</Text>
-          </TouchableOpacity>
+          // Mobile — expo-av avec contrôles natifs
+          <Video
+            source={{ uri: url }}
+            style={mvStyles.nativeVideo}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls
+            shouldPlay
+            isLooping={false}
+          />
         )}
       </View>
     </Modal>
@@ -111,18 +107,12 @@ const mvStyles = StyleSheet.create({
   closeBtn:     { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   imageWrapper: { width, height: height * 0.85, justifyContent: 'center', alignItems: 'center' },
   image:        { width, height: height * 0.85 },
-  videoNative:  { justifyContent: 'center', alignItems: 'center', gap: 16 },
-  videoHint:    { color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', paddingHorizontal: 30 },
+  nativeVideo:  { width, height: height * 0.75 },
 });
 
-// ─── Carte de post sauvegardé — même logique que PostCard dans actu.tsx ───────
+// ─── Carte de post sauvegardé ─────────────────────────────────────────────────
 function SavedPostCard({
-  post,
-  userId,
-  onUnsave,
-  onLike,
-  onShare,
-  onCommentPress,
+  post, userId, onUnsave, onLike, onShare, onCommentPress,
 }: {
   post:           Post;
   userId:         string;
@@ -151,8 +141,7 @@ function SavedPostCard({
     setIsAnim(true);
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const next = !liked;
-    setLiked(next);
-    setLikesCount(p => next ? p + 1 : p - 1);
+    setLiked(next); setLikesCount(p => next ? p + 1 : p - 1);
     try   { await onLike(post.id, next); }
     catch { setLiked(!next); setLikesCount(p => next ? p - 1 : p + 1); }
     finally { setTimeout(() => setIsAnim(false), 300); }
@@ -161,56 +150,39 @@ function SavedPostCard({
   const handleShare = async () => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const next = !shared;
-    setShared(next);
-    setSharesCount(p => next ? p + 1 : p - 1);
+    setShared(next); setSharesCount(p => next ? p + 1 : p - 1);
     try   { await onShare(post.id, next); }
     catch { setShared(!next); setSharesCount(p => next ? p - 1 : p + 1); }
   };
 
   return (
     <>
-      <MediaViewer
-        visible={!!viewerUrl}
-        url={viewerUrl}
-        type={viewerType}
-        onClose={() => setViewerUrl(null)}
-      />
+      <MediaViewer visible={!!viewerUrl} url={viewerUrl} type={viewerType} onClose={() => setViewerUrl(null)} />
 
       <View style={styles.postCard}>
-        {/* ── En-tête auteur ──────────────────────────────────────── */}
         <View style={styles.postHeader}>
           <View style={styles.postAuthor}>
             {post.author.avatar_url ? (
               <Image source={{ uri: post.author.avatar_url }} style={styles.postAvatar} />
             ) : (
               <View style={styles.postAvatarPlaceholder}>
-                <Text style={styles.postAvatarText}>
-                  {getInitials(post.author.nom, post.author.prenom)}
-                </Text>
+                <Text style={styles.postAvatarText}>{getInitials(post.author.nom, post.author.prenom)}</Text>
               </View>
             )}
             <View>
-              <Text style={styles.postAuthorName}>
-                {post.author.prenom} {post.author.nom}
-              </Text>
+              <Text style={styles.postAuthorName}>{post.author.prenom} {post.author.nom}</Text>
               <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
             </View>
           </View>
-          {/* Bouton désarchiver */}
           <TouchableOpacity onPress={() => onUnsave(post.id)}>
             <Ionicons name="bookmark" size={22} color="#FFD700" />
           </TouchableOpacity>
         </View>
 
-        {/* ── Contenu texte ────────────────────────────────────────── */}
         <Text style={styles.postContent}>{post.content}</Text>
 
-        {/* ── Image (même logique que PostCard dans actu.tsx) ─────── */}
         {post.imagepots && (
-          <TouchableOpacity
-            activeOpacity={0.92}
-            onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }}
-          >
+          <TouchableOpacity activeOpacity={0.92} onPress={() => { setViewerType('image'); setViewerUrl(post.imagepots!); }}>
             <Image source={{ uri: post.imagepots }} style={styles.postImage} resizeMode="cover" />
             <View style={styles.mediaExpandHint}>
               <Ionicons name="expand-outline" size={16} color="rgba(255,255,255,0.85)" />
@@ -218,23 +190,16 @@ function SavedPostCard({
           </TouchableOpacity>
         )}
 
-        {/* ── Vidéo (même logique que PostCard dans actu.tsx) ──────── */}
+        {/* Vidéo — ouvre MediaViewer (web=<video>, mobile=expo-av) */}
         {post.vidposts && (
-          <TouchableOpacity
-            style={styles.videoThumb}
-            activeOpacity={0.92}
-            onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}
-          >
+          <TouchableOpacity style={styles.videoThumb} activeOpacity={0.92} onPress={() => { setViewerType('video'); setViewerUrl(post.vidposts!); }}>
             <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
             <Text style={styles.videoThumbLabel}>Appuyer pour lire</Text>
           </TouchableOpacity>
         )}
 
-        {/* ── Statistiques ─────────────────────────────────────────── */}
         <View style={styles.statsBar}>
-          <Text style={styles.statsText}>
-            {likesCount} {likesCount === 1 ? 'like' : 'likes'}
-          </Text>
+          <Text style={styles.statsText}>{likesCount} {likesCount === 1 ? 'like' : 'likes'}</Text>
           <View style={styles.statsRight}>
             <Text style={styles.statsText}>{post.reactions.comments} commentaires</Text>
             <Text style={styles.statsSeparator}>•</Text>
@@ -242,53 +207,30 @@ function SavedPostCard({
           </View>
         </View>
 
-        {/* ── Actions (même style que PostCard dans actu.tsx) ─────── */}
         <View style={styles.actionsBar}>
-          {/* Aimer */}
-          <TouchableOpacity
-            style={[styles.actionButton, liked && styles.actionButtonActive]}
-            onPress={handleLike}
-            disabled={isAnim}
-          >
-            <LinearGradient
-              colors={liked ? ['#FF0080', '#FF0080'] : ['transparent', 'transparent']}
-              style={styles.actionGradient}
-            >
-              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
-              <Text style={[styles.actionText, liked && styles.actionTextActive]}>
-                {liked ? 'Aimé' : 'Aimer'}
-              </Text>
+          {/* ── Like style Facebook violet ── */}
+          <TouchableOpacity style={[styles.actionButton, liked && styles.actionButtonActive]} onPress={handleLike} disabled={isAnim}>
+            <LinearGradient colors={liked ? [LIKE_COLOR, LIKE_COLOR] : ['transparent', 'transparent']} style={styles.actionGradient}>
+              <Ionicons name={liked ? 'thumbs-up' : 'thumbs-up-outline'} size={20} color={liked ? '#FFF' : '#666'} />
+              <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Liké' : 'Liker'}</Text>
             </LinearGradient>
           </TouchableOpacity>
 
-          {/* Commenter */}
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => {
-              if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              onCommentPress(post.id);
-            }}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => {
+            if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onCommentPress(post.id);
+          }}>
             <View style={styles.actionGradient}>
               <Ionicons name="chatbubble-outline" size={20} color="#666" />
               <Text style={styles.actionText}>Commenter</Text>
             </View>
           </TouchableOpacity>
 
-          {/* Partager (uniquement si public, même règle que actu.tsx) */}
           {post.visibility === 'public' && (
-            <TouchableOpacity
-              style={[styles.actionButton, shared && styles.actionButtonActive]}
-              onPress={handleShare}
-            >
-              <LinearGradient
-                colors={shared ? ['#10B981', '#10B981'] : ['transparent', 'transparent']}
-                style={styles.actionGradient}
-              >
+            <TouchableOpacity style={[styles.actionButton, shared && styles.actionButtonActive]} onPress={handleShare}>
+              <LinearGradient colors={shared ? ['#10B981', '#10B981'] : ['transparent', 'transparent']} style={styles.actionGradient}>
                 <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
-                <Text style={[styles.actionText, shared && styles.actionTextActive]}>
-                  {shared ? 'Partagé' : 'Partager'}
-                </Text>
+                <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
               </LinearGradient>
             </TouchableOpacity>
           )}
@@ -299,12 +241,7 @@ function SavedPostCard({
 }
 
 // ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
-export default function SavedPostsModal({
-  visible,
-  userId,
-  onClose,
-  onCommentPress,
-}: SavedPostsModalProps) {
+export default function SavedPostsModal({ visible, userId, onClose, onCommentPress }: SavedPostsModalProps) {
   const [posts,        setPosts]        = useState<Post[]>([]);
   const [loading,      setLoading]      = useState(false);
   const [initializing, setInitializing] = useState(false);
@@ -314,116 +251,71 @@ export default function SavedPostsModal({
       setInitializing(true);
       loadSavedPosts().finally(() => setInitializing(false));
     } else {
-      // Réinitialise l'état quand le modal se ferme
-      setPosts([]);
-      setInitializing(false);
+      setPosts([]); setInitializing(false);
     }
   }, [visible, userId]);
 
-  // ─── Charger les posts sauvegardés via le backend Render ─────────────────
   const loadSavedPosts = async () => {
     setLoading(true);
     try {
       const access_token = await getAccessToken();
       const res  = await fetch(HOME_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:  'get-saved-posts',
-          user_id: userId,
-          access_token,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get-saved-posts', user_id: userId, access_token }),
       });
       const data = await res.json();
       if (data.success && data.posts) setPosts(data.posts);
-    } catch (err) {
-      console.error('[SavedPostsModal] loadSavedPosts:', err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error('[SavedPostsModal] loadSavedPosts:', err); }
+    finally { setLoading(false); }
   };
 
-  // ─── Désarchiver (optimiste) ──────────────────────────────────────────────
   const handleUnsave = async (postId: string) => {
     if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPosts(prev => prev.filter(p => p.id !== postId));   // optimiste
+    setPosts(prev => prev.filter(p => p.id !== postId));
     try {
       const access_token = await getAccessToken();
       await fetch(HOME_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:  'unsave-post',
-          user_id: userId,
-          post_id: postId,
-          access_token,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unsave-post', user_id: userId, post_id: postId, access_token }),
       });
-    } catch (err) {
-      console.error('[SavedPostsModal] handleUnsave:', err);
-      loadSavedPosts();   // rollback si erreur
-    }
+    } catch { loadSavedPosts(); }
   };
 
-  // ─── Liker / Unliker ──────────────────────────────────────────────────────
   const handleLike = async (postId: string, liked: boolean) => {
     try {
       const access_token = await getAccessToken();
       const res  = await fetch(HOME_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:  liked ? 'like-post' : 'unlike-post',
-          user_id: userId,
-          post_id: postId,
-          access_token,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: liked ? 'like-post' : 'unlike-post', user_id: userId, post_id: postId, access_token }),
       });
       const data = await res.json();
       if (data.success) {
         setPosts(prev => prev.map(p =>
-          p.id === postId
-            ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked }
-            : p
+          p.id === postId ? { ...p, reactions: { ...p.reactions, likes: data.likes }, user_liked: liked } : p
         ));
       }
-    } catch (err) {
-      console.error('[SavedPostsModal] handleLike:', err);
-    }
+    } catch (err) { console.error('[SavedPostsModal] handleLike:', err); }
   };
 
-  // ─── Partager / Annuler le partage ────────────────────────────────────────
   const handleShare = async (postId: string, shared: boolean) => {
     try {
       const access_token = await getAccessToken();
       const res  = await fetch(HOME_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:  shared ? 'share-post' : 'unshare-post',
-          user_id: userId,
-          post_id: postId,
-          access_token,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: shared ? 'share-post' : 'unshare-post', user_id: userId, post_id: postId, access_token }),
       });
       const data = await res.json();
       if (data.success) {
         setPosts(prev => prev.map(p =>
-          p.id === postId
-            ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared }
-            : p
+          p.id === postId ? { ...p, reactions: { ...p.reactions, shares: data.shares }, user_shared: shared } : p
         ));
       }
-    } catch (err) {
-      console.error('[SavedPostsModal] handleShare:', err);
-    }
+    } catch (err) { console.error('[SavedPostsModal] handleShare:', err); }
   };
 
-  // ─── Rendu ────────────────────────────────────────────────────────────────
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.backButton}>
             <Ionicons name="chevron-back" size={28} color="#FFF" />
@@ -432,37 +324,30 @@ export default function SavedPostsModal({
           <View style={styles.placeholder} />
         </View>
 
-        {/* ── Écran de chargement initial (synchronisation) ─────────────── */}
         {initializing ? (
           <View style={styles.initContainer}>
-            <ActivityIndicator size="large" color="#8A2BE2" />
+            <ActivityIndicator size="large" color="#7B1FA2" />
             <Text style={styles.initText}>Synchronisation en cours…</Text>
           </View>
         ) : (
           <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
             {loading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#8A2BE2" />
+                <ActivityIndicator size="large" color="#7B1FA2" />
               </View>
             ) : posts.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Ionicons name="bookmark-outline" size={80} color="#CCC" />
                 <Text style={styles.emptyText}>Aucun post sauvegardé</Text>
-                <Text style={styles.emptySubtext}>
-                  Les posts que vous enregistrez apparaîtront ici
-                </Text>
+                <Text style={styles.emptySubtext}>Les posts que vous enregistrez apparaîtront ici</Text>
               </View>
             ) : (
               <View style={{ paddingVertical: 8, paddingBottom: 40 }}>
                 {posts.map(post => (
                   <SavedPostCard
-                    key={post.id}
-                    post={post}
-                    userId={userId}
-                    onUnsave={handleUnsave}
-                    onLike={handleLike}
-                    onShare={handleShare}
-                    onCommentPress={onCommentPress}
+                    key={post.id} post={post} userId={userId}
+                    onUnsave={handleUnsave} onLike={handleLike}
+                    onShare={handleShare} onCommentPress={onCommentPress}
                   />
                 ))}
               </View>
@@ -474,22 +359,10 @@ export default function SavedPostsModal({
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    flexDirection:   'row',
-    justifyContent:  'space-between',
-    alignItems:      'center',
-    paddingTop:      Platform.OS === 'ios' ? 55 : 20,
-    paddingBottom:   16,
-    paddingHorizontal: 16,
-    backgroundColor: '#8A2BE2',
-  },
-  backButton: { padding: 4 },
+  container:   { flex: 1, backgroundColor: '#F5F5F5' },
+  header:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 55 : 20, paddingBottom: 16, paddingHorizontal: 16, backgroundColor: '#7B1FA2' },
+  backButton:  { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
   placeholder: { width: 36 },
   scrollView:  { flex: 1 },
@@ -499,95 +372,39 @@ const styles = StyleSheet.create({
   emptyText:        { fontSize: 18, fontWeight: '600', color: '#999', marginTop: 20 },
   emptySubtext:     { fontSize: 14, color: '#CCC', marginTop: 8, textAlign: 'center' },
 
-  // ── Écran de synchronisation initial ─────────────────────────────────────
-  initContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems:     'center',
-    gap:            16,
-    backgroundColor: '#F5F5F5',
-  },
-  initText: {
-    fontSize:   15,
-    fontWeight: '500',
-    color:      '#8A2BE2',
-    letterSpacing: 0.3,
-  },
+  initContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, backgroundColor: '#F5F5F5' },
+  initText:      { fontSize: 15, fontWeight: '500', color: '#7B1FA2', letterSpacing: 0.3 },
 
-  // ── Post card (aligné sur PostCard dans actu.tsx) ─────────────────────────
   postCard: {
-    backgroundColor: '#FFF',
-    marginHorizontal: 12,
-    marginVertical:   6,
-    borderRadius:     14,
-    paddingVertical:  14,
+    backgroundColor: '#FFF', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, paddingVertical: 14,
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8 },
       android: { elevation: 4 },
     }),
   },
-  postHeader: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    paddingHorizontal: 14,
-    marginBottom:   10,
-  },
-  postAuthor: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
-  postAvatar: { width: 40, height: 40, borderRadius: 20 },
-  postAvatarPlaceholder: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center',
-  },
-  postAvatarText:  { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-  postAuthorName:  { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
-  postTime:        { fontSize: 12, color: '#999', marginTop: 1 },
-  postContent:     { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
+  postHeader:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
+  postAuthor:            { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
+  postAvatar:            { width: 40, height: 40, borderRadius: 20 },
+  postAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#7B1FA2', justifyContent: 'center', alignItems: 'center' },
+  postAvatarText:        { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  postAuthorName:        { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  postTime:              { fontSize: 12, color: '#999', marginTop: 1 },
+  postContent:           { fontSize: 14, color: '#333', lineHeight: 20, paddingHorizontal: 14, marginBottom: 10 },
 
-  // ── Médias (mêmes dimensions que actu.tsx) ───────────────────────────────
-  postImage: { width: '100%', height: 240, marginBottom: 10 },
-  mediaExpandHint: {
-    position: 'absolute', bottom: 18, right: 10,
-    backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4,
-  },
-  videoThumb: {
-    width: '100%', height: 180, backgroundColor: '#1A1A2E',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 10, gap: 6,
-  },
+  postImage:       { width: '100%', height: 240, marginBottom: 10 },
+  mediaExpandHint: { position: 'absolute', bottom: 18, right: 10, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4 },
+  videoThumb:      { width: '100%', height: 180, backgroundColor: '#1A1A2E', justifyContent: 'center', alignItems: 'center', marginBottom: 10, gap: 6 },
   videoThumbLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 13 },
 
-  // ── Stats bar ─────────────────────────────────────────────────────────────
-  statsBar: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderTopWidth:    1, borderTopColor:    '#F5F5F5',
-    borderBottomWidth: 1, borderBottomColor: '#F5F5F5',
-  },
+  statsBar:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#F5F5F5', borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
   statsText:      { fontSize: 12, color: '#666' },
   statsRight:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statsSeparator: { color: '#CCC' },
 
-  // ── Actions bar (alignées sur actu.tsx) ──────────────────────────────────
-  actionsBar: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    paddingHorizontal: 6,
-    paddingTop:    6,
-    gap:           3,
-  },
+  actionsBar:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
   actionButton:       { flex: 1, borderRadius: 8, overflow: 'hidden' },
   actionButtonActive: {},
-  actionGradient: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    justifyContent: 'center',
-    paddingVertical:   8,
-    paddingHorizontal: 10,
-    gap: 5,
-  },
-  actionText:       { fontSize: 12, fontWeight: '600', color: '#666' },
-  actionTextActive: { color: '#FFF' },
+  actionGradient:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
+  actionText:         { fontSize: 12, fontWeight: '600', color: '#666' },
+  actionTextActive:   { color: '#FFF' },
 });
