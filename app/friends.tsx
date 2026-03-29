@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,6 +10,8 @@ import {
   RefreshControl,
   ActivityIndicator,
   Platform,
+  StatusBar,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,9 +19,28 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import VueProfil from './VueProfil';
 
-const API_BASE = 'https://sjdjwtlcryyqqewapxip.supabase.co/functions/v1/friends';
+// ─── Config ───────────────────────────────────────────────────────────────────
+const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/friends';
 
-type TabName = 'suggestions' | 'search' | 'requests' | 'groups';
+const COLORS = {
+  primary:      '#7B1FA2',
+  primaryLight: '#9C27B0',
+  primaryDark:  '#4A0072',
+  accent:       '#E040FB',
+  success:      '#00C853',
+  error:        '#FF1744',
+  warning:      '#FFD600',
+  bg:           '#F3E5F5',
+  card:         '#FFFFFF',
+  border:       '#E1BEE7',
+  textPrimary:  '#1A0033',
+  textSecondary:'#6D4C7D',
+  textMuted:    '#AB8FBB',
+  badge:        '#FF1744',
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+type TabName = 'suggestions' | 'search' | 'requests';
 
 interface User {
   id: string;
@@ -40,735 +61,492 @@ interface FriendRequest {
   receiver: User;
 }
 
-interface Group {
-  id: string;
-  name: string;
-  description: string | null;
-  created_by: string;
-  created_at: string;
-  member_count: number;
-  is_member: boolean;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const getInitials = (nom: string, prenom: string) =>
+  `${(prenom ?? '').charAt(0)}${(nom ?? '').charAt(0)}`.toUpperCase();
+
+const getRoleBadge = (role: string): { color: string; icon: string } => {
+  switch (role) {
+    case 'supreme':  return { color: '#FF1744', icon: '👑' };
+    case 'adminpro': return { color: '#FFD600', icon: '⭐' };
+    case 'admin':    return { color: COLORS.primary, icon: '🛡️' };
+    case 'userpro':  return { color: COLORS.success, icon: '✦' };
+    default:         return { color: COLORS.textMuted, icon: '' };
+  }
+};
+
+const haptic = (type: 'light' | 'medium' | 'success') => {
+  if (Platform.OS === 'web') return;
+  if (type === 'success') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  else if (type === 'medium') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+};
+
+// ─── API call ─────────────────────────────────────────────────────────────────
+async function apiFriends(body: Record<string, any>) {
+  const session = await AsyncStorage.getItem('harmonia_session');
+  if (!session) throw new Error('Session introuvable — reconnectez-vous');
+  const { access_token } = JSON.parse(session);
+
+  const res = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, access_token }),
+  });
+  return res.json();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SUB-COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Avatar({ user, size = 50 }: { user: User; size?: number }) {
+  const { color } = getRoleBadge(user.role);
+  return user.avatar_url ? (
+    <Image
+      source={{ uri: user.avatar_url }}
+      style={{ width: size, height: size, borderRadius: size / 2 }}
+    />
+  ) : (
+    <LinearGradient
+      colors={[color, COLORS.primaryDark]}
+      style={{
+        width: size, height: size, borderRadius: size / 2,
+        justifyContent: 'center', alignItems: 'center',
+      }}
+    >
+      <Text style={{ color: '#fff', fontSize: size * 0.32, fontWeight: '700' }}>
+        {getInitials(user.nom, user.prenom)}
+      </Text>
+    </LinearGradient>
+  );
+}
+
+function RolePill({ role }: { role: string }) {
+  const { color, icon } = getRoleBadge(role);
+  if (!icon) return null;
+  return (
+    <View style={[pillStyles.pill, { backgroundColor: color + '22', borderColor: color + '44' }]}>
+      <Text style={[pillStyles.text, { color }]}>{icon} {role}</Text>
+    </View>
+  );
+}
+
+const pillStyles = StyleSheet.create({
+  pill: { borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2, borderWidth: 1, marginTop: 3 },
+  text: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
 export default function FriendsScreen() {
-  const [activeTab, setActiveTab] = useState<TabName>('suggestions');
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab]         = useState<TabName>('suggestions');
+  const [refreshing, setRefreshing]       = useState(false);
+  const [loading, setLoading]             = useState(false);
+  const [loadingMore, setLoadingMore]     = useState(false);
+  const [searchQuery, setSearchQuery]     = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
 
   // Suggestions
-  const [suggestions, setSuggestions] = useState<User[]>([]);
+  const [suggestions, setSuggestions]       = useState<User[]>([]);
   const [suggestionsOffset, setSuggestionsOffset] = useState(0);
   const [hasMoreSuggestions, setHasMoreSuggestions] = useState(true);
 
   // Search
   const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [searching, setSearching]         = useState(false);
 
   // Requests
   const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([]);
-  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
+  const [sentRequests, setSentRequests]         = useState<FriendRequest[]>([]);
 
-  // Groups
-  const [groups, setGroups] = useState<Group[]>([]);
+  useEffect(() => { loadTab(); }, [activeTab]);
 
-  // Pending actions
-  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    loadInitialData();
-  }, [activeTab]);
-
-  const loadInitialData = async () => {
+  const loadTab = async () => {
     setLoading(true);
     try {
-      switch (activeTab) {
-        case 'suggestions':
-          await loadSuggestions(0);
-          break;
-        case 'requests':
-          await loadRequests();
-          break;
-        case 'groups':
-          await loadGroups();
-          break;
-      }
+      if (activeTab === 'suggestions') await loadSuggestions(0);
+      else if (activeTab === 'requests') await loadRequests();
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Suggestions ─────────────────────────────────────────────────────────────
   const loadSuggestions = async (offset: number) => {
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-suggestions',
-          user_id: parsed.user.id,
-          offset: offset,
-          limit: 20,
-        }),
-      });
-
-      const data = await response.json();
-
+      const data = await apiFriends({ action: 'get-suggestions', offset, limit: 20 });
       if (data.success && data.users) {
-        if (offset === 0) {
-          setSuggestions(data.users);
-        } else {
-          setSuggestions(prev => [...prev, ...data.users]);
-        }
+        if (offset === 0) setSuggestions(data.users);
+        else setSuggestions(prev => [...prev, ...data.users]);
         setSuggestionsOffset(offset);
-        setHasMoreSuggestions(data.users.length === 20);
+        setHasMoreSuggestions(data.users.length === 20 && offset + 20 < 100);
       }
-    } catch (error) {
-      console.error('Error loading suggestions:', error);
-    }
+    } catch (e) { console.error('[loadSuggestions]', e); }
   };
 
   const loadMoreSuggestions = async () => {
     if (!hasMoreSuggestions || loadingMore) return;
-
     setLoadingMore(true);
     await loadSuggestions(suggestionsOffset + 20);
     setLoadingMore(false);
   };
 
+  // ── Search ──────────────────────────────────────────────────────────────────
   const searchUsers = async () => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
+    if (!searchQuery.trim()) { setSearchResults([]); return; }
+    setSearching(true);
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'search-users',
-          user_id: parsed.user.id,
-          query: searchQuery.trim(),
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success && data.users) {
-        setSearchResults(data.users);
-      }
-    } catch (error) {
-      console.error('Error searching users:', error);
-    }
+      const data = await apiFriends({ action: 'search-users', query: searchQuery.trim() });
+      if (data.success) setSearchResults(data.users ?? []);
+    } catch (e) { console.error('[searchUsers]', e); }
+    finally { setSearching(false); }
   };
 
+  // ── Requests ────────────────────────────────────────────────────────────────
   const loadRequests = async () => {
     try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-requests',
-          user_id: parsed.user.id,
-        }),
-      });
-
-      const data = await response.json();
-
+      const data = await apiFriends({ action: 'get-requests' });
       if (data.success) {
-        setReceivedRequests(data.received || []);
-        setSentRequests(data.sent || []);
+        setReceivedRequests(data.received ?? []);
+        setSentRequests(data.sent ?? []);
       }
-    } catch (error) {
-      console.error('Error loading requests:', error);
+    } catch (e) { console.error('[loadRequests]', e); }
+  };
+
+  // ── Actions ──────────────────────────────────────────────────────────────────
+  const withPending = (id: string, fn: () => Promise<void>) => async () => {
+    if (pendingActions.has(id)) return;
+    setPendingActions(prev => new Set(prev).add(id));
+    try { await fn(); }
+    finally {
+      setPendingActions(prev => { const n = new Set(prev); n.delete(id); return n; });
     }
   };
 
-  const loadGroups = async () => {
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'get-groups',
-          user_id: parsed.user.id,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success && data.groups) {
-        setGroups(data.groups);
-      }
-    } catch (error) {
-      console.error('Error loading groups:', error);
+  const sendRequest = (targetId: string) => withPending(targetId, async () => {
+    haptic('medium');
+    const data = await apiFriends({ action: 'send-request', target_user_id: targetId });
+    if (data.success) {
+      setSuggestions(prev => prev.filter(u => u.id !== targetId));
+      setSearchResults(prev => prev.filter(u => u.id !== targetId));
     }
-  };
+  })();
 
-  const sendFriendRequest = async (targetUserId: string) => {
-    if (pendingActions.has(targetUserId)) return;
+  const acceptRequest = (requestId: string) => withPending(requestId, async () => {
+    haptic('success');
+    const data = await apiFriends({ action: 'accept-request', request_id: requestId });
+    if (data.success) await loadRequests();
+  })();
 
-    setPendingActions(prev => new Set(prev).add(targetUserId));
-
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      if (Platform.OS !== 'web') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'send-request',
-          user_id: parsed.user.id,
-          target_user_id: targetUserId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        loadInitialData();
-      }
-    } catch (error) {
-      console.error('Error sending friend request:', error);
-    } finally {
-      setPendingActions(prev => {
-        const next = new Set(prev);
-        next.delete(targetUserId);
-        return next;
-      });
-    }
-  };
-
-  const acceptFriendRequest = async (requestId: string) => {
-    if (pendingActions.has(requestId)) return;
-
-    setPendingActions(prev => new Set(prev).add(requestId));
-
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'accept-request',
-          user_id: parsed.user.id,
-          request_id: requestId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        loadRequests();
-      }
-    } catch (error) {
-      console.error('Error accepting request:', error);
-    } finally {
-      setPendingActions(prev => {
-        const next = new Set(prev);
-        next.delete(requestId);
-        return next;
-      });
-    }
-  };
-
-  const cancelRequest = async (requestId: string) => {
-    if (pendingActions.has(requestId)) return;
-
-    setPendingActions(prev => new Set(prev).add(requestId));
-
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      if (Platform.OS !== 'web') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'cancel-request',
-          user_id: parsed.user.id,
-          request_id: requestId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        loadRequests();
-      }
-    } catch (error) {
-      console.error('Error canceling request:', error);
-    } finally {
-      setPendingActions(prev => {
-        const next = new Set(prev);
-        next.delete(requestId);
-        return next;
-      });
-    }
-  };
-
-  const joinGroup = async (groupId: string) => {
-    if (pendingActions.has(groupId)) return;
-
-    setPendingActions(prev => new Set(prev).add(groupId));
-
-    try {
-      const session = await AsyncStorage.getItem('harmonia_session');
-      if (!session) return;
-
-      const parsed = JSON.parse(session);
-
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://harmonia-world.vercel.app',
-        },
-        body: JSON.stringify({
-          action: 'join-group',
-          user_id: parsed.user.id,
-          group_id: groupId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        loadGroups();
-      }
-    } catch (error) {
-      console.error('Error joining group:', error);
-    } finally {
-      setPendingActions(prev => {
-        const next = new Set(prev);
-        next.delete(groupId);
-        return next;
-      });
-    }
-  };
+  const cancelRequest = (requestId: string) => withPending(requestId, async () => {
+    haptic('light');
+    const data = await apiFriends({ action: 'cancel-request', request_id: requestId });
+    if (data.success) await loadRequests();
+  })();
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadInitialData();
+    await loadTab();
     setRefreshing(false);
   };
 
-  const handleTabPress = (tab: TabName) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setActiveTab(tab);
-  };
+  const totalRequests = receivedRequests.length + sentRequests.length;
 
-  const getInitials = (nom: string, prenom: string) => {
-    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
-  };
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDERS
+  // ─────────────────────────────────────────────────────────────────────────
 
-  const getRoleColor = (role: string) => {
-    switch (role) {
-      case 'supreme': return '#FF0080';
-      case 'adminpro': return '#FFD700';
-      case 'admin': return '#8A2BE2';
-      case 'userpro': return '#10B981';
-      default: return '#999';
-    }
-  };
-
-  const renderAvatar = (user: User) => {
-    if (user.avatar_url) {
-      return <Image source={{ uri: user.avatar_url }} style={styles.userAvatar} />;
-    }
-    return (
-      <View style={[styles.userAvatarPlaceholder, { backgroundColor: getRoleColor(user.role) }]}>
-        <Text style={styles.userAvatarText}>{getInitials(user.nom, user.prenom)}</Text>
-      </View>
-    );
-  };
-
-  const renderUserCard = (user: User, showSendButton: boolean = true) => {
+  const renderUserCard = (user: User) => {
     const isPending = pendingActions.has(user.id);
-
     return (
-      <View key={user.id} style={styles.userCard}>
-        <TouchableOpacity
-          onPress={() => setSelectedUserId(user.id)}
-          style={styles.userInfo}
-        >
-          {renderAvatar(user)}
-          <View style={styles.userDetails}>
-            <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
+      <TouchableOpacity
+        key={user.id}
+        style={styles.card}
+        onPress={() => setSelectedUserId(user.id)}
+        activeOpacity={0.92}
+      >
+        <View style={styles.cardLeft}>
+          <View style={styles.avatarWrap}>
+            <Avatar user={user} size={52} />
           </View>
-        </TouchableOpacity>
-        {showSendButton && (
-          <TouchableOpacity
-            style={[styles.sendButton, isPending && styles.sendButtonDisabled]}
-            onPress={() => sendFriendRequest(user.id)}
-            disabled={isPending}
-          >
-            {isPending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="person-add" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
-
-  const renderRequestCard = (req: FriendRequest, isSent: boolean = false) => {
-    const isPending = pendingActions.has(req.id);
-    const user = isSent ? req.receiver : req.requester;
-
-    return (
-      <View key={req.id} style={isSent ? styles.sentCard : styles.requestCard}>
-        <TouchableOpacity
-          onPress={() => setSelectedUserId(user.id)}
-          style={styles.userInfo}
-        >
-          {renderAvatar(user)}
-          <View style={styles.userDetails}>
-            <Text style={styles.userName}>
+          <View style={styles.cardInfo}>
+            <Text style={styles.cardName} numberOfLines={1}>
               {user.prenom} {user.nom}
             </Text>
-            <Text style={styles.requestTime}>
-              {isSent ? 'En attente...' : new Date(req.created_at).toLocaleDateString()}
+            <RolePill role={user.role} />
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[styles.iconBtn, styles.btnPrimary, isPending && styles.btnDisabled]}
+          onPress={() => sendRequest(user.id)}
+          disabled={isPending}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          {isPending
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Ionicons name="person-add" size={18} color="#fff" />
+          }
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderRequestCard = (req: FriendRequest, isSent: boolean) => {
+    const isPending = pendingActions.has(req.id);
+    const user = isSent ? req.receiver : req.requester;
+    return (
+      <View key={req.id} style={[styles.card, isSent && styles.cardSent]}>
+        <TouchableOpacity
+          style={styles.cardLeft}
+          onPress={() => setSelectedUserId(user.id)}
+          activeOpacity={0.8}
+        >
+          <View style={styles.avatarWrap}>
+            <Avatar user={user} size={52} />
+            {!isSent && (
+              <View style={styles.statusDot} />
+            )}
+          </View>
+          <View style={styles.cardInfo}>
+            <Text style={styles.cardName} numberOfLines={1}>
+              {user.prenom} {user.nom}
+            </Text>
+            <Text style={[styles.cardSub, isSent && { color: COLORS.warning }]}>
+              {isSent
+                ? '⏳ En attente de réponse'
+                : `📅 ${new Date(req.created_at).toLocaleDateString('fr-FR', { day:'numeric', month:'short' })}`
+              }
             </Text>
           </View>
         </TouchableOpacity>
-        {isSent ? (
-          <TouchableOpacity
-            style={[styles.cancelButton, isPending && styles.buttonDisabled]}
-            onPress={() => cancelRequest(req.id)}
-            disabled={isPending}
-          >
-            <Text style={styles.cancelButtonText}>Annuler</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.requestActions}>
+
+        <View style={styles.cardActions}>
+          {isSent ? (
             <TouchableOpacity
-              style={[styles.acceptButton, isPending && styles.buttonDisabled]}
-              onPress={() => acceptFriendRequest(req.id)}
-              disabled={isPending}
-            >
-              <Ionicons name="checkmark" size={20} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.rejectButton, isPending && styles.buttonDisabled]}
+              style={[styles.tagBtn, styles.tagBtnError, isPending && styles.btnDisabled]}
               onPress={() => cancelRequest(req.id)}
               disabled={isPending}
             >
-              <Ionicons name="close" size={20} color="#fff" />
+              {isPending
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={styles.tagBtnText}>Annuler</Text>
+              }
             </TouchableOpacity>
-          </View>
-        )}
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.iconBtn, styles.btnSuccess, isPending && styles.btnDisabled]}
+                onPress={() => acceptRequest(req.id)}
+                disabled={isPending}
+              >
+                <Ionicons name="checkmark" size={18} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.iconBtn, styles.btnError, isPending && styles.btnDisabled]}
+                onPress={() => cancelRequest(req.id)}
+                disabled={isPending}
+              >
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </View>
     );
   };
 
+  // ─── Tab: Suggestions ────────────────────────────────────────────────────────
   const renderSuggestions = () => (
     <ScrollView
       style={styles.tabContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      contentContainerStyle={styles.listContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       onScroll={({ nativeEvent }) => {
         const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-        const paddingToBottom = 20;
-        if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
+        if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 40) {
           loadMoreSuggestions();
         }
       }}
-      scrollEventThrottle={400}
+      scrollEventThrottle={300}
     >
-      <Text style={styles.sectionTitle}>Suggestions d'amis</Text>
       {loading && suggestions.length === 0 ? (
-        <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
-      ) : suggestions.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="people-outline" size={60} color="#CCC" />
-          <Text style={styles.emptyText}>Aucune suggestion</Text>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Chargement…</Text>
         </View>
+      ) : suggestions.length === 0 ? (
+        <EmptyState icon="people-outline" text="Aucune suggestion pour l'instant" />
       ) : (
         <>
-          {suggestions.map(user => renderUserCard(user))}
+          <SectionHeader
+            icon="sparkles"
+            title="Personnes que vous pourriez connaître"
+            count={suggestions.length}
+          />
+          {suggestions.map(renderUserCard)}
           {loadingMore && (
-            <ActivityIndicator size="small" color="#8A2BE2" style={styles.loaderMore} />
+            <View style={styles.loadMoreRow}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text style={styles.loadMoreText}>Chargement…</Text>
+            </View>
           )}
           {!hasMoreSuggestions && suggestions.length >= 20 && (
-            <Text style={styles.endText}>Fin des suggestions</Text>
+            <Text style={styles.endText}>— Fin des suggestions —</Text>
           )}
         </>
       )}
     </ScrollView>
   );
 
+  // ─── Tab: Search ─────────────────────────────────────────────────────────────
   const renderSearch = () => (
     <View style={styles.tabContent}>
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Rechercher un utilisateur..."
-          placeholderTextColor="#999"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={searchUsers}
-          returnKeyType="search"
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
-            <Ionicons name="close-circle" size={20} color="#999" />
-          </TouchableOpacity>
-        )}
+      {/* Search bar */}
+      <View style={styles.searchWrap}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={18} color={COLORS.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Nom, prénom…"
+            placeholderTextColor={COLORS.textMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={searchUsers}
+            returnKeyType="search"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+              <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity style={styles.searchBtn} onPress={searchUsers}>
+          {searching
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Ionicons name="search" size={18} color="#fff" />
+          }
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity style={styles.searchButton} onPress={searchUsers}>
-        <Text style={styles.searchButtonText}>Rechercher</Text>
-      </TouchableOpacity>
-      <ScrollView style={styles.searchResults}>
-        {searchResults.length === 0 && searchQuery.length > 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="search-outline" size={60} color="#CCC" />
-            <Text style={styles.emptyText}>Aucun résultat</Text>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.listContent}>
+        {searching ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
           </View>
+        ) : searchResults.length === 0 && searchQuery.length > 0 ? (
+          <EmptyState icon="search-outline" text={`Aucun résultat pour « ${searchQuery} »`} />
+        ) : searchResults.length > 0 ? (
+          <>
+            <SectionHeader icon="search" title="Résultats" count={searchResults.length} />
+            {searchResults.map(renderUserCard)}
+          </>
         ) : (
-          searchResults.map(user => renderUserCard(user))
+          <View style={styles.centered}>
+            <Ionicons name="search-circle-outline" size={64} color={COLORS.border} />
+            <Text style={styles.searchHint}>Tapez un nom pour rechercher</Text>
+          </View>
         )}
       </ScrollView>
     </View>
   );
 
+  // ─── Tab: Requests ───────────────────────────────────────────────────────────
   const renderRequests = () => (
     <ScrollView
       style={styles.tabContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      contentContainerStyle={styles.listContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
     >
-      {/* Demandes reçues */}
-      <Text style={styles.sectionTitle}>Demandes reçues ({receivedRequests.length})</Text>
-      {receivedRequests.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="mail-outline" size={60} color="#CCC" />
-          <Text style={styles.emptyText}>Aucune demande reçue</Text>
-        </View>
-      ) : (
-        receivedRequests.map(req => renderRequestCard(req, false))
-      )}
-
-      {/* Demandes envoyées */}
-      <Text style={styles.sectionTitle}>Demandes envoyées ({sentRequests.length})</Text>
-      {sentRequests.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="paper-plane-outline" size={60} color="#CCC" />
-          <Text style={styles.emptyText}>Aucune demande envoyée</Text>
-        </View>
-      ) : (
-        sentRequests.map(req => renderRequestCard(req, true))
-      )}
-    </ScrollView>
-  );
-
-  const renderGroups = () => (
-    <ScrollView
-      style={styles.tabContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      <Text style={styles.sectionTitle}>Groupes Messenger ({groups.length})</Text>
       {loading ? (
-        <ActivityIndicator size="large" color="#8A2BE2" style={styles.loader} />
-      ) : groups.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
-          <Text style={styles.emptyText}>Aucun groupe</Text>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       ) : (
-        groups.map(group => {
-          const isPending = pendingActions.has(group.id);
-          return (
-            <View key={group.id} style={styles.groupCard}>
-              <View style={styles.groupIcon}>
-                <Ionicons name="people" size={30} color="#8A2BE2" />
-              </View>
-              <View style={styles.groupInfo}>
-                <Text style={styles.groupName}>{group.name}</Text>
-                {group.description && (
-                  <Text style={styles.groupDescription} numberOfLines={2}>
-                    {group.description}
-                  </Text>
-                )}
-                <Text style={styles.groupMembers}>
-                  {group.member_count} membre{group.member_count > 1 ? 's' : ''}
-                </Text>
-              </View>
-              {!group.is_member && (
-                <TouchableOpacity
-                  style={[styles.joinButton, isPending && styles.buttonDisabled]}
-                  onPress={() => joinGroup(group.id)}
-                  disabled={isPending}
-                >
-                  {isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.joinButtonText}>Rejoindre</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-              {group.is_member && (
-                <View style={styles.memberBadge}>
-                  <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-                </View>
-              )}
-            </View>
-          );
-        })
+        <>
+          <SectionHeader icon="mail" title="Demandes reçues" count={receivedRequests.length} />
+          {receivedRequests.length === 0
+            ? <EmptyState icon="mail-outline" text="Aucune demande reçue" compact />
+            : receivedRequests.map(r => renderRequestCard(r, false))
+          }
+
+          <SectionHeader icon="paper-plane" title="Demandes envoyées" count={sentRequests.length} />
+          {sentRequests.length === 0
+            ? <EmptyState icon="paper-plane-outline" text="Aucune demande envoyée" compact />
+            : sentRequests.map(r => renderRequestCard(r, true))
+          }
+        </>
       )}
     </ScrollView>
   );
 
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.primaryDark} />
+
       {/* Header */}
-      <LinearGradient colors={['#8A2BE2', '#4B0082']} style={styles.header}>
-        <Text style={styles.headerTitle}>Amis & Groupes</Text>
+      <LinearGradient colors={[COLORS.primaryDark, COLORS.primary]} style={styles.header}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>Communauté</Text>
+            <Text style={styles.headerSub}>Découvrez & connectez-vous</Text>
+          </View>
+          <View style={styles.headerIcon}>
+            <Ionicons name="people" size={26} color="rgba(255,255,255,0.9)" />
+          </View>
+        </View>
       </LinearGradient>
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'suggestions' && styles.activeTab]}
-          onPress={() => handleTabPress('suggestions')}
-        >
-          <Ionicons
-            name="people"
-            size={20}
-            color={activeTab === 'suggestions' ? '#8A2BE2' : '#999'}
-          />
-          <Text style={[styles.tabText, activeTab === 'suggestions' && styles.activeTabText]}>
-            Suggestions
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'search' && styles.activeTab]}
-          onPress={() => handleTabPress('search')}
-        >
-          <Ionicons
-            name="search"
-            size={20}
-            color={activeTab === 'search' ? '#8A2BE2' : '#999'}
-          />
-          <Text style={[styles.tabText, activeTab === 'search' && styles.activeTabText]}>
-            Recherche
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'requests' && styles.activeTab]}
-          onPress={() => handleTabPress('requests')}
-        >
-          <Ionicons
-            name="mail"
-            size={20}
-            color={activeTab === 'requests' ? '#8A2BE2' : '#999'}
-          />
-          <Text style={[styles.tabText, activeTab === 'requests' && styles.activeTabText]}>
-            Demandes
-          </Text>
-          {(receivedRequests.length + sentRequests.length) > 0 && (
-            <View style={styles.tabBadge}>
-              <Text style={styles.tabBadgeText}>
-                {receivedRequests.length + sentRequests.length}
+      {/* Tab Bar */}
+      <View style={styles.tabBar}>
+        {(
+          [
+            { key: 'suggestions', icon: 'people',  label: 'Suggestions' },
+            { key: 'search',      icon: 'search',   label: 'Recherche'   },
+            { key: 'requests',    icon: 'mail',      label: 'Demandes'    },
+          ] as const
+        ).map(tab => {
+          const isActive = activeTab === tab.key;
+          const showBadge = tab.key === 'requests' && totalRequests > 0;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={styles.tabItem}
+              onPress={() => { haptic('light'); setActiveTab(tab.key); }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.tabIconWrap, isActive && styles.tabIconActive]}>
+                <Ionicons
+                  name={isActive ? tab.icon : `${tab.icon}-outline` as any}
+                  size={20}
+                  color={isActive ? COLORS.primary : COLORS.textMuted}
+                />
+                {showBadge && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {totalRequests > 9 ? '9+' : totalRequests}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+                {tab.label}
               </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'groups' && styles.activeTab]}
-          onPress={() => handleTabPress('groups')}
-        >
-          <Ionicons
-            name="chatbubbles"
-            size={20}
-            color={activeTab === 'groups' ? '#8A2BE2' : '#999'}
-          />
-          <Text style={[styles.tabText, activeTab === 'groups' && styles.activeTabText]}>
-            Groupes
-          </Text>
-        </TouchableOpacity>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Content */}
       {activeTab === 'suggestions' && renderSuggestions()}
-      {activeTab === 'search' && renderSearch()}
-      {activeTab === 'requests' && renderRequests()}
-      {activeTab === 'groups' && renderGroups()}
+      {activeTab === 'search'      && renderSearch()}
+      {activeTab === 'requests'    && renderRequests()}
 
-      {/* Modal VueProfil */}
+      {/* Profile Modal */}
       <VueProfil
         visible={selectedUserId !== null}
         userId={selectedUserId || ''}
@@ -778,311 +556,329 @@ export default function FriendsScreen() {
   );
 }
 
+// ─── Helper components ────────────────────────────────────────────────────────
+function SectionHeader({ icon, title, count }: { icon: any; title: string; count: number }) {
+  return (
+    <View style={shStyles.row}>
+      <View style={shStyles.iconWrap}>
+        <Ionicons name={icon} size={14} color={COLORS.primary} />
+      </View>
+      <Text style={shStyles.title}>{title}</Text>
+      <View style={shStyles.countWrap}>
+        <Text style={shStyles.count}>{count}</Text>
+      </View>
+    </View>
+  );
+}
+
+const shStyles = StyleSheet.create({
+  row:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  iconWrap: { width: 24, height: 24, borderRadius: 6, backgroundColor: COLORS.primary + '18', justifyContent: 'center', alignItems: 'center' },
+  title:    { flex: 1, fontSize: 13, fontWeight: '700', color: COLORS.textSecondary, letterSpacing: 0.3 },
+  countWrap:{ backgroundColor: COLORS.primary + '18', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  count:    { fontSize: 11, fontWeight: '700', color: COLORS.primary },
+});
+
+function EmptyState({ icon, text, compact = false }: { icon: any; text: string; compact?: boolean }) {
+  return (
+    <View style={[esStyles.wrap, compact && esStyles.compact]}>
+      <View style={esStyles.iconBg}>
+        <Ionicons name={icon} size={compact ? 32 : 48} color={COLORS.border} />
+      </View>
+      <Text style={esStyles.text}>{text}</Text>
+    </View>
+  );
+}
+
+const esStyles = StyleSheet.create({
+  wrap:    { alignItems: 'center', paddingVertical: 48, gap: 12 },
+  compact: { paddingVertical: 24 },
+  iconBg:  { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.border + '33', justifyContent: 'center', alignItems: 'center' },
+  text:    { fontSize: 14, color: COLORS.textMuted, textAlign: 'center', maxWidth: 240, lineHeight: 20 },
+});
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: COLORS.bg,
   },
+
+  // Header
   header: {
-    paddingTop: 50,
-    paddingBottom: 15,
+    paddingTop: Platform.OS === 'ios' ? 54 : 40,
+    paddingBottom: 18,
     paddingHorizontal: 20,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  tabs: {
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  headerSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 2,
+    letterSpacing: 0.2,
+  },
+  headerIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Tab bar
+  tabBar: {
     flexDirection: 'row',
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    borderBottomColor: COLORS.border,
+    elevation: 2,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
   },
-  tab: {
+  tabItem: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    gap: 5,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  tabIconWrap: {
     position: 'relative',
-  },
-  activeTab: {
-    borderBottomWidth: 3,
-    borderBottomColor: '#8A2BE2',
-  },
-  tabText: {
-    fontSize: 12,
-    color: '#999',
-    fontWeight: '600',
-  },
-  activeTabText: {
-    color: '#8A2BE2',
-  },
-  tabBadge: {
-    position: 'absolute',
-    top: 5,
-    right: 10,
-    backgroundColor: '#FF0080',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
+    width: 38,
+    height: 30,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 10,
   },
-  tabBadgeText: {
+  tabIconActive: {
+    backgroundColor: COLORS.primary + '15',
+  },
+  tabLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  tabLabelActive: {
+    color: COLORS.primary,
+    fontWeight: '700',
+  },
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: COLORS.badge,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: {
     color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
+    fontSize: 9,
+    fontWeight: '800',
   },
+
+  // Content
   tabContent: {
     flex: 1,
+  },
+  listContent: {
     paddingBottom: 100,
+    paddingTop: 4,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    padding: 15,
-    backgroundColor: '#F5F5F5',
-  },
-  userCard: {
+
+  // Cards
+  card: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 15,
-    marginHorizontal: 15,
-    marginVertical: 5,
-    borderRadius: 10,
-    elevation: 2,
-    shadowColor: '#000',
+    backgroundColor: COLORS.card,
+    marginHorizontal: 14,
+    marginVertical: 4,
+    borderRadius: 14,
+    padding: 14,
+    elevation: 1,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  userInfo: {
+  cardSent: {
+    backgroundColor: '#FFFDE7',
+    borderColor: '#FFD600' + '55',
+  },
+  cardLeft: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
   },
-  userAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  avatarWrap: {
+    position: 'relative',
   },
-  userAvatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#8A2BE2',
-    justifyContent: 'center',
-    alignItems: 'center',
+  statusDot: {
+    position: 'absolute',
+    bottom: 1,
+    right: 1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: COLORS.success,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  userAvatarText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  userDetails: {
+  cardInfo: {
     marginLeft: 12,
     flex: 1,
   },
-  userName: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#333',
+  cardName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    letterSpacing: 0.1,
   },
-  sendButton: {
-    backgroundColor: '#8A2BE2',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  cardSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  cardActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+
+  // Buttons
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendButtonDisabled: {
-    opacity: 0.5,
+  btnPrimary: {
+    backgroundColor: COLORS.primary,
   },
-  searchContainer: {
+  btnSuccess: {
+    backgroundColor: COLORS.success,
+  },
+  btnError: {
+    backgroundColor: COLORS.error,
+  },
+  btnDisabled: {
+    opacity: 0.45,
+  },
+  tagBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tagBtnError: {
+    backgroundColor: COLORS.error,
+  },
+  tagBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
+  // Search
+  searchWrap: {
+    flexDirection: 'row',
+    gap: 10,
+    margin: 14,
+    marginBottom: 4,
+  },
+  searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
     backgroundColor: '#fff',
-    margin: 15,
-    paddingHorizontal: 15,
-    borderRadius: 25,
-    elevation: 2,
-    shadowColor: '#000',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    elevation: 1,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  searchIcon: {
-    marginRight: 10,
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 12,
     fontSize: 14,
-    color: '#333',
+    color: COLORS.textPrimary,
+    fontWeight: '500',
   },
-  searchButton: {
-    backgroundColor: '#8A2BE2',
-    marginHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 10,
+  searchBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
     alignItems: 'center',
-  },
-  searchButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  searchResults: {
-    flex: 1,
-    marginTop: 10,
-  },
-  requestCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 15,
-    marginHorizontal: 15,
-    marginVertical: 5,
-    borderRadius: 10,
     elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  requestTime: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 2,
+  searchHint: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginTop: 12,
+    textAlign: 'center',
   },
-  requestActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  acceptButton: {
-    backgroundColor: '#10B981',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  rejectButton: {
-    backgroundColor: '#EF4444',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  sentCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFF8E1',
-    padding: 15,
-    marginHorizontal: 15,
-    marginVertical: 5,
-    borderRadius: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: '#FFD700',
-  },
-  cancelButton: {
-    backgroundColor: '#EF4444',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  cancelButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  groupCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 15,
-    marginHorizontal: 15,
-    marginVertical: 5,
-    borderRadius: 10,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  groupIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#F0E6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  groupInfo: {
-    flex: 1,
-  },
-  groupName: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  groupDescription: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 3,
-  },
-  groupMembers: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 3,
-  },
-  joinButton: {
-    backgroundColor: '#8A2BE2',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  joinButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  memberBadge: {
-    marginLeft: 10,
-  },
-  emptyState: {
+
+  // Misc
+  centered: {
     alignItems: 'center',
     paddingVertical: 60,
+    gap: 12,
   },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 10,
+  loadingText: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    fontWeight: '500',
   },
-  loader: {
-    marginTop: 50,
+  loadMoreRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    gap: 8,
   },
-  loaderMore: {
-    marginVertical: 20,
+  loadMoreText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '500',
   },
   endText: {
     textAlign: 'center',
-    color: '#999',
+    color: COLORS.textMuted,
     fontSize: 12,
     paddingVertical: 20,
+    fontStyle: 'italic',
   },
 });
