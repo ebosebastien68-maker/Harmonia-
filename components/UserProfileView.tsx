@@ -1,15 +1,5 @@
 // =====================================================
-// UserProfileView — Profil public d'un utilisateur
-// =====================================================
-//
-// Utilisation depuis n'importe quel écran :
-//   <UserProfileView userId="xxx" viewerId="yyy" accessToken="zzz" asModal onClose={() => ...} />
-//
-// Logique amitié :
-//   - accepted       → "Retirer ami" + "Voir plus" (posts amis+publics)
-//   - pending_sent   → "En attente"
-//   - pending_received → "Accepter"
-//   - none           → "Ajouter ami" (posts: aucun)
+// UserProfileView — like violet #7B1FA2 + thumbs-up
 // =====================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -24,15 +14,14 @@ import * as Haptics       from 'expo-haptics';
 import CommentsModal from './CommentsModal';
 import LikersModal   from './LikersModal';
 
-// ⚠️ Ajuste le chemin selon l'emplacement de ce fichier dans ton projet
 const DEFAULT_AVATAR = require('../app/assets/default-avatar.png');
 
 const WS_BASE          = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const USER_PROFILE_URL = `${WS_BASE}/user-profile`;
 const HOME_URL         = `${WS_BASE}/home`;
 const NATIVE           = Platform.OS !== 'web';
+const LIKE_COLOR       = '#7B1FA2';
 
-// ─── TYPES ────────────────────────────────────────────────────────────────────
 type FriendStatus = 'none' | 'pending_sent' | 'pending_received' | 'accepted'
 
 interface UserProfile {
@@ -81,7 +70,6 @@ const getInitials = (nom: string, prenom: string) =>
   `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
 // ─── POST CARD ────────────────────────────────────────────────────────────────
-
 const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenComments, onOpenLikers }: {
   post: Post; viewerId: string;
   onLike: (id: string, liked: boolean) => Promise<void>;
@@ -129,11 +117,7 @@ const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenCo
     <View style={styles.postCard}>
       <View style={styles.postHeader}>
         <View style={styles.postAuthor}>
-          {/* Avatar auteur du post — default-avatar si pas de photo */}
-          <Image
-            source={post.author.avatar_url ? { uri: post.author.avatar_url } : DEFAULT_AVATAR}
-            style={styles.postAvatar}
-          />
+          <Image source={post.author.avatar_url ? { uri: post.author.avatar_url } : DEFAULT_AVATAR} style={styles.postAvatar} />
           <View>
             <Text style={styles.authorName}>{post.author.prenom} {post.author.nom}</Text>
             <Text style={styles.postTime}>{formatTimeAgo(post.created_at)}</Text>
@@ -163,10 +147,11 @@ const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenCo
       </View>
 
       <View style={styles.actionsBar}>
+        {/* ── Like style Facebook violet ── */}
         <TouchableOpacity style={[styles.actionBtn, liked && styles.actionBtnActive]} onPress={handleLike} disabled={isAnim}>
-          <LinearGradient colors={liked ? ['#FF0080','#FF0080'] : ['transparent','transparent']} style={styles.actionGrad}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#FFF' : '#666'} />
-            <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Aimé' : 'Aimer'}</Text>
+          <LinearGradient colors={liked ? [LIKE_COLOR, LIKE_COLOR] : ['transparent', 'transparent']} style={styles.actionGrad}>
+            <Ionicons name={liked ? 'thumbs-up' : 'thumbs-up-outline'} size={20} color={liked ? '#FFF' : '#666'} />
+            <Text style={[styles.actionText, liked && styles.actionTextActive]}>{liked ? 'Liké' : 'Liker'}</Text>
           </LinearGradient>
         </TouchableOpacity>
 
@@ -177,10 +162,9 @@ const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenCo
           </View>
         </TouchableOpacity>
 
-        {/* Partage uniquement si post public */}
         {post.visibility === 'public' && (
           <TouchableOpacity style={[styles.actionBtn, shared && styles.actionBtnActive]} onPress={handleShare}>
-            <LinearGradient colors={shared ? ['#10B981','#10B981'] : ['transparent','transparent']} style={styles.actionGrad}>
+            <LinearGradient colors={shared ? ['#10B981', '#10B981'] : ['transparent', 'transparent']} style={styles.actionGrad}>
               <Ionicons name={shared ? 'repeat' : 'repeat-outline'} size={22} color={shared ? '#FFF' : '#666'} />
               <Text style={[styles.actionText, shared && styles.actionTextActive]}>{shared ? 'Partagé' : 'Partager'}</Text>
             </LinearGradient>
@@ -196,7 +180,6 @@ const PostCard = React.memo(({ post, viewerId, onLike, onShare, onSave, onOpenCo
 });
 
 // ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
-
 export default function UserProfileView({ userId, viewerId, accessToken, onClose, asModal = false }: Props) {
   const [profile,         setProfile]         = useState<UserProfile | null>(null);
   const [friendStatus,    setFriendStatus]    = useState<FriendStatus>('none');
@@ -224,10 +207,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
         body: JSON.stringify({ action: 'get-user-profile', access_token: accessToken, target_user_id: userId }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setProfile(data.profile);
-        setFriendStatus(data.friendship_status || 'none');
-      }
+      if (res.ok) { setProfile(data.profile); setFriendStatus(data.friendship_status || 'none'); }
     } catch (err) { console.error('[UserProfileView] loadProfile:', err); }
     finally { setLoading(false); }
   };
@@ -250,11 +230,10 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
     setFriendLoading(true);
     try {
       let action = '';
-      if (friendStatus === 'none')              action = 'add-friend';
-      else if (friendStatus === 'pending_sent') action = 'remove-friend';
+      if (friendStatus === 'none')               action = 'add-friend';
+      else if (friendStatus === 'pending_sent')  action = 'remove-friend';
       else if (friendStatus === 'pending_received') action = 'accept-friend';
-      else if (friendStatus === 'accepted')     action = 'remove-friend';
-
+      else if (friendStatus === 'accepted')      action = 'remove-friend';
       const res  = await fetch(USER_PROFILE_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, access_token: accessToken, target_user_id: userId }),
@@ -269,10 +248,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
     finally { setFriendLoading(false); }
   };
 
-  const handleVoirPlus = () => {
-    setShowPosts(true);
-    loadUserPosts();
-  };
+  const handleVoirPlus = () => { setShowPosts(true); loadUserPosts(); };
 
   const handleLike = useCallback(async (postId: string, liked: boolean) => {
     const res  = await fetch(HOME_URL, {
@@ -310,13 +286,12 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
     setSelectedPostForLikers(postId); setShowLikersModal(true);
   }, []);
 
-  // ── Bouton ami ────────────────────────────────────────────────────────────
   const renderFriendButton = () => {
     const configs: Record<FriendStatus, { label: string; icon: string; color: string[] }> = {
-      none:              { label: 'Ajouter ami',    icon: 'person-add-outline',   color: ['#7B1FE8', '#4B0082'] },
-      pending_sent:      { label: 'En attente',     icon: 'time-outline',          color: ['#999', '#777'] },
-      pending_received:  { label: 'Accepter',       icon: 'checkmark-outline',     color: ['#10B981', '#059669'] },
-      accepted:          { label: 'Retirer ami',    icon: 'person-remove-outline', color: ['#EF4444', '#DC2626'] },
+      none:             { label: 'Ajouter ami',    icon: 'person-add-outline',   color: ['#7B1FA2', '#4B0082'] },
+      pending_sent:     { label: 'En attente',     icon: 'time-outline',          color: ['#999', '#777'] },
+      pending_received: { label: 'Accepter',       icon: 'checkmark-outline',     color: ['#10B981', '#059669'] },
+      accepted:         { label: 'Retirer ami',    icon: 'person-remove-outline', color: ['#EF4444', '#DC2626'] },
     };
     const cfg = configs[friendStatus];
     return (
@@ -339,7 +314,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
       )}
 
       {loading ? (
-        <View style={styles.centered}><ActivityIndicator size="large" color="#7B1FE8" /></View>
+        <View style={styles.centered}><ActivityIndicator size="large" color="#7B1FA2" /></View>
       ) : !profile ? (
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
@@ -347,20 +322,12 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-
-          {/* Header */}
-          <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.header}>
+          <LinearGradient colors={['#7B1FA2', '#4B0082']} style={styles.header}>
             <TouchableOpacity onPress={() => profile.avatar_url && setShowAvatarViewer(true)} activeOpacity={profile.avatar_url ? 0.8 : 1}>
-              {/* Avatar profil — default-avatar.png si pas de photo */}
-              <Image
-                source={profile.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR}
-                style={styles.avatar}
-              />
+              <Image source={profile.avatar_url ? { uri: profile.avatar_url } : DEFAULT_AVATAR} style={styles.avatar} />
             </TouchableOpacity>
             <Text style={styles.headerName}>{profile.prenom} {profile.nom}</Text>
             <Text style={styles.headerSub}>Membre depuis {new Date(profile.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</Text>
-
-            {/* Stats */}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{profile.friends_count || 0}</Text>
@@ -372,19 +339,13 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
                 <Text style={styles.statLabel}>Trophées</Text>
               </View>
             </View>
-
-            {/* Bouton ami */}
-            <View style={styles.friendBtnContainer}>
-              {renderFriendButton()}
-            </View>
+            <View style={styles.friendBtnContainer}>{renderFriendButton()}</View>
           </LinearGradient>
 
-          {/* Section posts */}
           <View style={styles.postsSection}>
-
             {friendStatus === 'accepted' && !showPosts && (
               <TouchableOpacity style={styles.voirPlusBtn} onPress={handleVoirPlus} activeOpacity={0.8}>
-                <LinearGradient colors={['#7B1FE8', '#4B0082']} style={styles.voirPlusGrad}>
+                <LinearGradient colors={['#7B1FA2', '#4B0082']} style={styles.voirPlusGrad}>
                   <Ionicons name="eye-outline" size={18} color="#fff" />
                   <Text style={styles.voirPlusText}>Voir les publications</Text>
                 </LinearGradient>
@@ -395,7 +356,7 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
               <>
                 <Text style={styles.sectionTitle}>Publications</Text>
                 {loadingPosts ? (
-                  <View style={styles.postsLoading}><ActivityIndicator size="small" color="#7B1FE8" /></View>
+                  <View style={styles.postsLoading}><ActivityIndicator size="small" color="#7B1FA2" /></View>
                 ) : posts.length === 0 ? (
                   <View style={styles.emptyPosts}>
                     <Ionicons name="newspaper-outline" size={40} color="#DDD" />
@@ -403,11 +364,9 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
                   </View>
                 ) : (
                   posts.map(post => (
-                    <PostCard
-                      key={post.id} post={post} viewerId={viewerId}
+                    <PostCard key={post.id} post={post} viewerId={viewerId}
                       onLike={handleLike} onShare={handleShare} onSave={handleSave}
-                      onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers}
-                    />
+                      onOpenComments={handleOpenComments} onOpenLikers={handleOpenLikers} />
                   ))
                 )}
               </>
@@ -424,11 +383,9 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
               </View>
             )}
           </View>
-
         </ScrollView>
       )}
 
-      {/* ── VIEWER PLEIN ÉCRAN ──────────────────────────────────────────── */}
       <Modal visible={showAvatarViewer} transparent animationType="fade" onRequestClose={() => setShowAvatarViewer(false)} statusBarTranslucent>
         <View style={styles.viewerOverlay}>
           <TouchableOpacity style={styles.viewerClose} onPress={() => setShowAvatarViewer(false)}>
@@ -438,15 +395,11 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
         </View>
       </Modal>
 
-      <CommentsModal
-        visible={showCommentsModal} postId={selectedPostForComments} userId={viewerId}
+      <CommentsModal visible={showCommentsModal} postId={selectedPostForComments} userId={viewerId}
         onClose={() => { setShowCommentsModal(false); setSelectedPostForComments(null); }}
-        onCommentAdded={() => loadUserPosts()}
-      />
-      <LikersModal
-        visible={showLikersModal} postId={selectedPostForLikers}
-        onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }}
-      />
+        onCommentAdded={() => loadUserPosts()} />
+      <LikersModal visible={showLikersModal} postId={selectedPostForLikers}
+        onClose={() => { setShowLikersModal(false); setSelectedPostForLikers(null); }} />
     </View>
   );
 
@@ -456,19 +409,16 @@ export default function UserProfileView({ userId, viewerId, accessToken, onClose
   return content;
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:      { flex: 1, backgroundColor: '#F5F5F5' },
   containerModal: { flex: 1 },
   scrollContent:  { paddingBottom: 80 },
   centered:       { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40, minHeight: 200 },
   errorText:      { fontSize: 15, color: '#EF4444', marginTop: 12 },
-  closeBtn:       { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 30, right: 16, zIndex: 100, backgroundColor: 'rgba(123,31,232,0.8)', borderRadius: 20, padding: 8 },
+  closeBtn:       { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 30, right: 16, zIndex: 100, backgroundColor: 'rgba(123,31,162,0.8)', borderRadius: 20, padding: 8 },
 
   header:         { paddingTop: Platform.OS === 'ios' ? 64 : 44, paddingBottom: 24, alignItems: 'center', paddingHorizontal: 20 },
   avatar:         { width: 100, height: 100, borderRadius: 50, borderWidth: 4, borderColor: '#fff', backgroundColor: '#E0E0E0', marginBottom: 12 },
-  avatarFallback: { backgroundColor: '#7B1FE8', justifyContent: 'center', alignItems: 'center' },
-  avatarFallbackText: { color: '#fff', fontSize: 32, fontWeight: 'bold' },
   headerName:     { fontSize: 22, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   headerSub:      { fontSize: 13, color: 'rgba(255,255,255,0.75)', marginBottom: 16 },
 
@@ -495,7 +445,6 @@ const styles = StyleSheet.create({
   notFriendBox:  { alignItems: 'center', paddingVertical: 40, gap: 12, paddingHorizontal: 20 },
   notFriendText: { fontSize: 14, color: '#999', textAlign: 'center', lineHeight: 20 },
 
-  // PostCard
   postCard:          { backgroundColor: '#fff', marginVertical: 6, borderRadius: 14, paddingVertical: 14 },
   postHeader:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10 },
   postAuthor:        { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
@@ -520,7 +469,6 @@ const styles = StyleSheet.create({
   actionTextActive:  { color: '#FFF' },
   saveBtn:           { padding: 8 },
 
-  // Viewer plein écran
   viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   viewerClose:   { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 20, zIndex: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   viewerImage:   { width: '100%', height: '80%' },
