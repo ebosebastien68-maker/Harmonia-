@@ -18,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import CommentLikersModal from './CommentLikersModal';
 
 // ─── Remplace par l'URL de ton service Render ─────────────────────────────────
-const API_BASE = 'https://TON-APP.onrender.com/comments';
+const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/comments';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Comment {
