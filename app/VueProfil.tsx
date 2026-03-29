@@ -23,7 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ── 🔧 Remplacez par l'URL de votre service Render ──────────────────────────
-const API_BASE = 'https://VOTRE_APP.onrender.com/friends';
+const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/friends';
 // ────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_AVATAR = require('./assets/default-avatar.png');
