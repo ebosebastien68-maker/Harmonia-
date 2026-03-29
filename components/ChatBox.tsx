@@ -1,4 +1,4 @@
-// ChatBox.tsx — v8
+// ChatBox.tsx — v9 (mobile-fixed)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
@@ -9,6 +9,7 @@ import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
 import * as ImagePicker   from 'expo-image-picker';
+import * as FileSystem    from 'expo-file-system'; // FIX: upload binaire mobile
 import { io, Socket }     from 'socket.io-client';
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
@@ -38,7 +39,7 @@ interface Message {
   is_visible?:      boolean;
   is_private_reply?: boolean;
   replyTo?:         ReplyTo | null;
-  mediaType?:       string | null;  // 'image' | 'video' | 'audio' | 'document' | 'file'
+  mediaType?:       string | null;
 }
 
 interface ChatBoxProps {
@@ -46,7 +47,7 @@ interface ChatBoxProps {
   conversationType: 'private' | 'group';
   userId:           string;
   userName?:        string;
-  userRole?:        string;   // 'userpro' → bouton media activé
+  userRole?:        string;
   accessToken:      string;
   otherUser?: {
     id: string; nom: string; prenom: string;
@@ -61,10 +62,6 @@ interface ChatBoxProps {
 
 // ─── Helpers media ────────────────────────────────────────────────────────────
 
-/**
- * Détecte le type media à partir du mimeType ou de l'extension
- * Retourne : 'image' | 'video' | 'audio' | 'document' | 'file'
- */
 function detectMediaType(mimeType: string, fileName: string): string {
   const mime = mimeType.toLowerCase();
   if (mime.startsWith('image/'))  return 'image';
@@ -78,7 +75,6 @@ function detectMediaType(mimeType: string, fileName: string): string {
     mime === 'text/csv'
   ) return 'document';
 
-  // Fallback sur l'extension si le mimeType est générique
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (['jpg','jpeg','png','webp','gif','bmp','tiff','svg','heic','heif'].includes(ext)) return 'image';
   if (['mp4','mov','webm','avi','mkv','m4v','3gp'].includes(ext))                        return 'video';
@@ -87,9 +83,6 @@ function detectMediaType(mimeType: string, fileName: string): string {
   return 'file';
 }
 
-/**
- * Déduit le mimeType à partir de l'extension si non fourni
- */
 function resolveMimeType(uri: string, mimeType?: string | null): string {
   if (mimeType) return mimeType;
   const ext = uri.split('.').pop()?.toLowerCase() ?? '';
@@ -103,6 +96,55 @@ function resolveMimeType(uri: string, mimeType?: string | null): string {
     pdf: 'application/pdf',
   };
   return map[ext] ?? 'application/octet-stream';
+}
+
+// ─── Helper upload binaire — conditionné web vs mobile ───────────────────────
+//
+// WEB    → fetch(uri).blob() + fetch PUT  (comportement original préservé)
+// MOBILE → expo-file-system uploadAsync  (binaire natif, fiable sur iOS & Android)
+
+async function uploadBinaryFile(
+  signedUrl: string,
+  localUri:  string,
+  mimeType:  string,
+): Promise<{ ok: boolean; status: number; errorText?: string }> {
+
+  if (Platform.OS === 'web') {
+    // ── Comportement web d'origine ─────────────────────────────────────
+    try {
+      const fileBlob  = await fetch(localUri).then(r => r.blob());
+      const uploadRes = await fetch(signedUrl, {
+        method:  'PUT',
+        headers: { 'Content-Type': mimeType },
+        body:    fileBlob,
+      });
+      return {
+        ok:     uploadRes.ok,
+        status: uploadRes.status,
+        errorText: uploadRes.ok ? undefined : await uploadRes.text(),
+      };
+    } catch (err: any) {
+      return { ok: false, status: 0, errorText: err?.message };
+    }
+
+  } else {
+    // ── Mobile : expo-file-system (iOS + Android) ──────────────────────
+    try {
+      const result = await FileSystem.uploadAsync(signedUrl, localUri, {
+        httpMethod:  'PUT',
+        headers:     { 'Content-Type': mimeType },
+        uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      });
+      const ok = result.status >= 200 && result.status < 300;
+      return {
+        ok,
+        status:    result.status,
+        errorText: ok ? undefined : result.body,
+      };
+    } catch (err: any) {
+      return { ok: false, status: 0, errorText: err?.message };
+    }
+  }
 }
 
 // ─── Composant ────────────────────────────────────────────────────────────────
@@ -125,24 +167,22 @@ export default function ChatBox({
   const [loadingMore,     setLoadingMore]     = useState(false);
   const [currentRole,     setCurrentRole]     = useState(userRole);
 
-  // Réponse en cours
   const [replyingTo,      setReplyingTo]      = useState<Message | null>(null);
   const [replyVisible,    setReplyVisible]    = useState(true);
 
-  // Action sheet (appui long)
   const [actionMsg,       setActionMsg]       = useState<Message | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
 
-  const scrollRef   = useRef<ScrollView>(null);
-  const socketRef   = useRef<Socket | null>(null);
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef = useRef(false);
-  // Image plein écran
-  const [fullscreenUrl,    setFullscreenUrl]    = useState<string | null>(null);
-  const imgTapRef = useRef<{ url: string; time: number } | null>(null);
+  const scrollRef    = useRef<ScrollView>(null);
+  const socketRef    = useRef<Socket | null>(null);
+  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FIX: timeout de sécurité — débloque setSending si message_sent n'arrive jamais
+  const sendTimeout  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef  = useRef(false);
 
-  // Double tap bulle
-  const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
+  const [fullscreenUrl,   setFullscreenUrl]   = useState<string | null>(null);
+  const imgTapRef    = useRef<{ url: string; time: number } | null>(null);
+  const lastTapRef   = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -152,55 +192,88 @@ export default function ChatBox({
       socket.removeAllListeners();
       socket.disconnect();
       if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (sendTimeout.current)  clearTimeout(sendTimeout.current);  // FIX: cleanup
     };
   }, [conversationId, accessToken]);
 
   // ── Socket privé ────────────────────────────────────────────────────────────
 
   const buildPrivateSocket = (): Socket => {
-    const socket = io(`${WS_BASE}/private-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
+    // FIX: transports websocket + polling (fallback mobile si WS bloqué)
+    const socket = io(`${WS_BASE}/private-chat`, {
+      transports:        ['websocket', 'polling'],
+      reconnectionDelay: 2000,
+    });
 
     socket.on('connect', () => {
-      socket.emit('join_conversation', { conversation_id: conversationId, user_id: userId, access_token: accessToken });
+      socket.emit('join_conversation', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+      });
     });
+
     socket.on('joined', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
       setLoading(false);
       scrollToEnd();
     });
+
     socket.on('message_sent', (data: { message: Message }) => {
+      // FIX: toujours annuler le timeout de sécurité
+      if (sendTimeout.current) clearTimeout(sendTimeout.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       setSending(false);
       scrollToEnd();
     });
+
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
+
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false);
       setLoadingMore(false);
     });
+
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
       if (data.user_id !== userId) setOtherTyping(data.is_typing);
     });
-    socket.on('error', (err: { message: string }) => { console.warn('[ChatBox] privé erreur:', err.message); setSending(false); });
+
+    socket.on('error', (err: { message: string }) => {
+      // FIX: débloquer l'état sending en cas d'erreur socket
+      if (sendTimeout.current) clearTimeout(sendTimeout.current);
+      console.warn('[ChatBox] privé erreur:', err.message);
+      setSending(false);
+    });
+
     return socket;
   };
 
   // ── Socket groupe ────────────────────────────────────────────────────────────
 
   const buildGroupSocket = (): Socket => {
-    const socket = io(`${WS_BASE}/group-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
+    // FIX: transports websocket + polling (fallback mobile)
+    const socket = io(`${WS_BASE}/group-chat`, {
+      transports:        ['websocket', 'polling'],
+      reconnectionDelay: 2000,
+    });
 
     socket.on('connect', () => {
-      socket.emit('join_group', { group_id: conversationId, user_id: userId, access_token: accessToken });
+      socket.emit('join_group', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
+      });
     });
 
     socket.on('joined', (data: { messages: Message[]; group: any; members: any[] }) => {
@@ -214,6 +287,8 @@ export default function ChatBox({
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
+      // FIX: toujours annuler le timeout de sécurité
+      if (sendTimeout.current) clearTimeout(sendTimeout.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       setSending(false);
@@ -223,7 +298,9 @@ export default function ChatBox({
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
@@ -252,7 +329,13 @@ export default function ChatBox({
       ));
     });
 
-    socket.on('error', (err: { message: string }) => { console.warn('[ChatBox] groupe erreur:', err.message); setSending(false); });
+    socket.on('error', (err: { message: string }) => {
+      // FIX: débloquer l'état sending en cas d'erreur socket
+      if (sendTimeout.current) clearTimeout(sendTimeout.current);
+      console.warn('[ChatBox] groupe erreur:', err.message);
+      setSending(false);
+    });
+
     return socket;
   };
 
@@ -282,6 +365,12 @@ export default function ChatBox({
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setInput('');
     setSending(true);
+
+    // FIX: timeout de sécurité 8 s — libère le bouton si message_sent n'arrive pas
+    if (sendTimeout.current) clearTimeout(sendTimeout.current);
+    sendTimeout.current = setTimeout(() => {
+      setSending(false);
+    }, 8000);
 
     const reply = replyingTo;
     setReplyingTo(null);
@@ -315,9 +404,18 @@ export default function ChatBox({
 
   const emitTyping = (is_typing: boolean) => {
     if (conversationType === 'private') {
-      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing });
+      socketRef.current?.emit('typing', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        is_typing,
+      });
     } else {
-      socketRef.current?.emit('typing', { group_id: conversationId, user_id: userId, user_name: userName, is_typing });
+      socketRef.current?.emit('typing', {
+        group_id:  conversationId,
+        user_id:   userId,
+        user_name: userName,
+        is_typing,
+      });
     }
   };
 
@@ -374,11 +472,13 @@ export default function ChatBox({
     }
   };
 
-  // ── Upload media — Signed URL (userpro) ──────────────────────────────────────
+  // ── Upload media — Signed URL ─────────────────────────────────────────────────
   //
   // Flux en 3 étapes :
   //   1. getUploadUrl  → le serveur génère une Signed URL + path
   //   2. PUT direct    → le client uploade le fichier binaire vers Supabase
+  //      WEB    : fetch + blob  (comportement original préservé)
+  //      MOBILE : expo-file-system uploadAsync (binaire natif, fiable)
   //   3. confirmUpload → le serveur vérifie et retourne l'URL publique
 
   const pickAndUploadMedia = async () => {
@@ -392,7 +492,6 @@ export default function ChatBox({
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.All,
         quality:    0.8,
-        // ⚠️ Plus de base64 — on lit le fichier via son URI
       });
 
       if (result.canceled || !result.assets?.[0]) return;
@@ -428,19 +527,17 @@ export default function ChatBox({
 
       const { signed_url, path, bucket } = urlData;
 
-      // ── Étape 2 : upload direct binaire vers Supabase ──────────────────
-      const fileBlob = await fetch(uri).then(r => r.blob());
+      // ── Étape 2 : upload binaire conditionné web / mobile ──────────────
+      const { ok: uploadOk, status: uploadStatus, errorText } = await uploadBinaryFile(
+        signed_url,
+        uri,
+        mimeType,
+      );
 
-      const uploadRes = await fetch(signed_url, {
-        method:  'PUT',
-        headers: { 'Content-Type': mimeType },
-        body:    fileBlob,
-      });
-
-      if (!uploadRes.ok) {
+      if (!uploadOk) {
         setUploading(false);
         alert('Erreur lors de l\'upload vers le stockage');
-        console.error('[ChatBox] PUT Supabase erreur:', uploadRes.status, await uploadRes.text());
+        console.error('[ChatBox] upload erreur:', uploadStatus, errorText);
         return;
       }
 
@@ -511,7 +608,6 @@ export default function ChatBox({
     if (!msg.media_url) return null;
 
     const url  = msg.media_url;
-    // Priorité : type stocké dans le message → détection depuis l'URL en fallback
     const type = (msg.mediaType && msg.mediaType !== 'text')
       ? msg.mediaType
       : detectMediaType(resolveMimeType(url), url);
@@ -521,7 +617,7 @@ export default function ChatBox({
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() => {
-            const now = Date.now();
+            const now  = Date.now();
             const last = imgTapRef.current;
             if (last && last.url === url && now - last.time < 350) {
               imgTapRef.current = null;
@@ -570,7 +666,6 @@ export default function ChatBox({
       );
     }
 
-    // Fichier générique
     return (
       <View style={S.mediaFileWrap}>
         <Ionicons name="attach-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
@@ -596,12 +691,10 @@ export default function ChatBox({
         onLongPress={() => handleLongPress(msg)}
         style={[S.bubble, fromMe ? S.bubbleMe : S.bubbleThem]}
       >
-        {/* Nom de l'expéditeur (groupe uniquement) */}
         {!fromMe && isGroup && !deleted && (
           <Text style={S.senderName}>{msg.senderName}</Text>
         )}
 
-        {/* Citation de la réponse */}
         {msg.replyTo && !deleted && (
           <View style={[S.replyBlock, fromMe ? S.replyBlockMe : S.replyBlockThem]}>
             <Text style={S.replyAuthor} numberOfLines={1}>
@@ -613,7 +706,6 @@ export default function ChatBox({
           </View>
         )}
 
-        {/* Contenu principal */}
         {deleted ? (
           <Text style={[S.msgText, S.msgDeleted]}>Message supprimé</Text>
         ) : msg.is_private_reply ? (
@@ -631,7 +723,6 @@ export default function ChatBox({
           </Text>
         )}
 
-        {/* Footer : heure + badge visibilité */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
           {isGroup && isAuthor(msg) && msg.reply_to_id && !deleted && (
             <Ionicons
@@ -697,6 +788,8 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
+        // FIX: sur Android, le clavier peut masquer les messages
+        keyboardShouldPersistTaps="handled"
       >
         {hasMore && !loading && (
           <TouchableOpacity
@@ -755,9 +848,12 @@ export default function ChatBox({
       )}
 
       {/* ── Saisie ──────────────────────────────────────────────────────── */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* FIX: behavior conditionné — 'padding' iOS, 'height' Android, rien sur web */}
+      <KeyboardAvoidingView
+        behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
         <View style={S.inputWrap}>
-          {/* Bouton media — userpro uniquement en groupe */}
           {conversationType === 'group' && currentRole === 'userpro' && (
             <TouchableOpacity
               style={S.mediaBtn}
@@ -781,6 +877,9 @@ export default function ChatBox({
             multiline
             maxLength={1000}
             editable={!sending && !uploading}
+            // FIX: retourne "send" sur le clavier virtuel mobile
+            returnKeyType="default"
+            blurOnSubmit={false}
           />
 
           <TouchableOpacity
@@ -888,7 +987,7 @@ export default function ChatBox({
         </TouchableOpacity>
       </Modal>
 
-      {/* ── Visionneuse plein écran — double tap sur image ───────────── */}
+      {/* ── Visionneuse plein écran ──────────────────────────────────────── */}
       <Modal
         visible={!!fullscreenUrl}
         transparent
@@ -899,7 +998,7 @@ export default function ChatBox({
           style={S.fsOverlay}
           activeOpacity={1}
           onPress={() => {
-            const now = Date.now();
+            const now  = Date.now();
             const last = imgTapRef.current;
             if (last && last.url === fullscreenUrl && now - last.time < 350) {
               imgTapRef.current = null;
@@ -943,13 +1042,11 @@ const S = StyleSheet.create({
   bubbleMe:         { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
   bubbleThem:       { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
   senderName:       { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
-  // Citation (reply)
   replyBlock:       { borderRadius: 8, padding: 8, marginBottom: 6 },
   replyBlockMe:     { backgroundColor: 'rgba(255,255,255,0.15)' },
   replyBlockThem:   { backgroundColor: '#F0E8FF' },
   replyAuthor:      { fontSize: 11, fontWeight: '700', color: '#8A2BE2', marginBottom: 2 },
   replyContent:     { fontSize: 12, color: '#555' },
-  // Contenu message
   msgText:          { fontSize: 15, lineHeight: 20 },
   msgTextMe:        { color: '#fff' },
   msgTextThem:      { color: '#333' },
@@ -958,29 +1055,24 @@ const S = StyleSheet.create({
   msgTimeMe:        { color: '#E0D0FF', textAlign: 'right' },
   msgTimeThem:      { color: '#999' },
   privateReplyWrap: { flexDirection: 'row', alignItems: 'center' },
-  // Media
   mediaImage:       { width: 200, height: 150, borderRadius: 8 },
   mediaFileWrap:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   mediaFileName:    { fontSize: 13, flex: 1 },
-  // Barre réponse
   replyBar:         { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0E8FF', paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
   replyBarContent:  { flex: 1, flexDirection: 'row', alignItems: 'center' },
   replyBarAuthor:   { fontSize: 12, fontWeight: '700', color: '#8A2BE2' },
   replyBarText:     { fontSize: 12, color: '#666', marginTop: 1 },
-  // Saisie
   inputWrap:        { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 10, paddingBottom: Platform.OS === 'ios' ? 20 : 10, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
   mediaBtn:         { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
   input:            { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, marginRight: 8 },
   sendBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
   sendBtnDisabled:  { backgroundColor: '#ccc' },
-  // Action sheet
   modalOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   actionSheet:      { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Platform.OS === 'ios' ? 30 : 16, paddingTop: 8 },
   actionItem:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 },
   actionTxt:        { fontSize: 16, color: '#333', fontWeight: '500' },
   actionSubTxt:     { fontSize: 12, color: '#999', marginTop: 1 },
   actionDivider:    { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
-  // Visionneuse plein écran
   fsOverlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
   fsImage:          { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.82 },
   fsCloseBtn:       { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 36, right: 20 },
