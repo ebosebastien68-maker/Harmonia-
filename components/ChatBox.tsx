@@ -1,9 +1,9 @@
-// ChatBox.tsx — v9
+// ChatBox.tsx — v9 (fix: new_message fallback confirmation)
 // ┌─────────────────────────────────────────────────────────────────────────┐
 // │  Web    → sendMessage V8 : emit direct, state `sending`, pas de pending │
 // │  Mobile → sendMessage V11 : optimistic UI, retries, ⏳ / ✔️             │
+// │  Fix    → new_message utilisé comme fallback si message_sent échoue     │
 // │  Upload → uploadBinaryFile conditionné (blob web / FileSystem mobile)   │
-// │  Socket → transports conditionné (['websocket'] web / +polling mobile)  │
 // └─────────────────────────────────────────────────────────────────────────┘
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -25,7 +25,6 @@ const FileSystem: any = Platform.OS !== 'web'
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
-// Délais retries (mobile uniquement)
 const RETRY_INTERVAL_MS = 5_000;
 const RETRY_MAX_MS      = 30_000;
 
@@ -55,8 +54,6 @@ interface Message {
   is_private_reply?: boolean;
   replyTo?:          ReplyTo | null;
   mediaType?:        string | null;
-  // Optimistic UI (mobile uniquement)
-  // 'sending' → ⏳  |  'sent' → ✔️  |  'failed' → ❌  |  undefined → historique confirmé
   status?: 'sending' | 'sent' | 'failed';
 }
 
@@ -125,7 +122,6 @@ async function uploadBinaryFile(
 ): Promise<{ ok: boolean; status: number; errorText?: string }> {
 
   if (Platform.OS === 'web') {
-    // Web : fetch URI → Blob → PUT
     try {
       const fileBlob  = await fetch(localUri).then(r => r.blob());
       const uploadRes = await fetch(signedUrl, {
@@ -142,7 +138,6 @@ async function uploadBinaryFile(
       return { ok: false, status: 0, errorText: err?.message };
     }
   } else {
-    // Mobile : expo-file-system PUT binaire natif
     try {
       const result = await FileSystem.uploadAsync(signedUrl, localUri, {
         httpMethod:  'PUT',
@@ -169,8 +164,7 @@ export default function ChatBox({
   const [messages,        setMessages]        = useState<Message[]>([]);
   const [input,           setInput]           = useState('');
   const [loading,         setLoading]         = useState(true);
-  // `sending` utilisé uniquement sur web (méthode V8)
-  const [sending,         setSending]         = useState(false);
+  const [sending,         setSending]         = useState(false); // web uniquement
   const [uploading,       setUploading]       = useState(false);
   const [otherTyping,     setOtherTyping]     = useState(false);
   const [otherOnline,     setOtherOnline]     = useState(otherUser?.isOnline ?? false);
@@ -189,10 +183,6 @@ export default function ChatBox({
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
-  // ── Optimistic UI (mobile uniquement) ─────────────────────────────────────
-  // pendingQueue : IDs temporaires dans l'ordre d'envoi
-  // retryTimers  : Map<tempId → intervalId> — retry toutes les 5 s pendant 30 s max
-  // pendingPayloads : Map<tempId → payload> — permet le retry manuel après échec
   const pendingQueue    = useRef<string[]>([]);
   const retryTimers     = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const pendingPayloads = useRef<Map<string, object>>(new Map());
@@ -201,9 +191,7 @@ export default function ChatBox({
   const imgTapRef  = useRef<{ url: string; time: number } | null>(null);
   const lastTapRef = useRef<{ id: string; time: number } | null>(null);
 
-  // ── Transports socket conditionné ─────────────────────────────────────────
-  // Web    → ['websocket'] : connexion directe, pas de polling
-  // Mobile → ['websocket', 'polling'] : fallback si WS bloqué réseau 4G
+  // Web → websocket seul. Mobile → websocket + polling (fallback réseau 4G)
   const socketTransports = Platform.OS === 'web'
     ? ['websocket']
     : ['websocket', 'polling'];
@@ -218,13 +206,17 @@ export default function ChatBox({
       if (typingTimer.current) clearTimeout(typingTimer.current);
       retryTimers.current.forEach(t => clearInterval(t));
       retryTimers.current.clear();
-      pendingQueue.current    = [];
+      pendingQueue.current = [];
       pendingPayloads.current.clear();
     };
   }, [conversationId, accessToken]);
 
   // ── Confirmation optimiste (mobile) ───────────────────────────────────────
-  // Appelé sur 'message_sent'. Dépile le premier tempId et remplace ⏳ par ✔️.
+  //
+  // Appelé depuis message_sent ET new_message (fallback).
+  // Si double confirmation (message_sent + new_message tous les deux arrivent) :
+  //   - 1er appel : pendingQueue.shift() → tempId trouvé, remplacement effectué
+  //   - 2e appel : pendingQueue.shift() → undefined, vérification doublon par ID réel
 
   const confirmOptimistic = (raw: Message) => {
     const confirmed = { ...normalizeMsg(raw), status: 'sent' as const };
@@ -235,18 +227,14 @@ export default function ChatBox({
       pendingPayloads.current.delete(tempId);
       setMessages(prev => prev.map(m => m.id === tempId ? confirmed : m));
     } else {
+      // pendingQueue déjà vide → double confirmation, vérification doublon
       setMessages(prev => prev.find(m => m.id === confirmed.id) ? prev : [...prev, confirmed]);
     }
   };
 
-  // ── Arrêt d'un timer de retry ─────────────────────────────────────────────
-
   const stopRetry = (tempId: string) => {
     const timer = retryTimers.current.get(tempId);
-    if (timer) {
-      clearInterval(timer);
-      retryTimers.current.delete(tempId);
-    }
+    if (timer) { clearInterval(timer); retryTimers.current.delete(tempId); }
   };
 
   // ── Socket privé ────────────────────────────────────────────────────────────
@@ -274,12 +262,10 @@ export default function ChatBox({
 
     socket.on('message_sent', (data: { message: Message }) => {
       if (Platform.OS === 'web') {
-        // Web (V8) : ajout simple sans optimistic
         const msg = normalizeMsg(data.message);
         setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
         setSending(false);
       } else {
-        // Mobile (V11) : remplace le message optimiste
         confirmOptimistic(data.message);
       }
       scrollToEnd();
@@ -287,9 +273,22 @@ export default function ChatBox({
 
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
-      // Mobile : si c'est notre propre message et qu'on a des pending
-      // → message_sent s'en charge, on ignore new_message pour éviter les doublons
-      if (Platform.OS !== 'web' && msg.senderId === userId && pendingQueue.current.length > 0) return;
+
+      // ── FIX clé ──────────────────────────────────────────────────────────
+      // Sur mobile, si c'est notre propre message ET qu'on a des pending :
+      // au lieu de jeter l'event, on l'utilise comme fallback de confirmation.
+      // Cas d'usage : message_sent ne revient pas (ex. erreur serveur avant
+      // l'émission, comme le crash du handler de push notification).
+      if (Platform.OS !== 'web' && msg.senderId === userId && pendingQueue.current.length > 0) {
+        console.log(
+          `[ChatBox] ℹ️ Confirmation via new_message (fallback message_sent absent).\n` +
+          `  ID serveur : ${msg.id} | pending restants : ${pendingQueue.current.length}`
+        );
+        confirmOptimistic(msg);
+        scrollToEnd();
+        return;
+      }
+
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       if (msg.senderId !== userId && Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -355,7 +354,18 @@ export default function ChatBox({
 
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
-      if (Platform.OS !== 'web' && msg.senderId === userId && pendingQueue.current.length > 0) return;
+
+      // Même fallback que pour le socket privé
+      if (Platform.OS !== 'web' && msg.senderId === userId && pendingQueue.current.length > 0) {
+        console.log(
+          `[ChatBox] ℹ️ Groupe — confirmation via new_message (fallback).\n` +
+          `  ID serveur : ${msg.id} | pending restants : ${pendingQueue.current.length}`
+        );
+        confirmOptimistic(msg);
+        scrollToEnd();
+        return;
+      }
+
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       if (msg.senderId !== userId && Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -396,7 +406,7 @@ export default function ChatBox({
     return socket;
   };
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
+  // ── Actions ───────────────────────────────────────────────────────────────────
 
   const scrollToEnd = () => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
@@ -407,18 +417,15 @@ export default function ChatBox({
     setLoadingMore(true);
     const key = conversationType === 'private' ? 'conversation_id' : 'group_id';
     socketRef.current?.emit('load_more', {
-      [key]:        conversationId,
-      user_id:      userId,
-      access_token: accessToken,
-      before:       messages[0]?.createdAt,
+      [key]: conversationId, user_id: userId, access_token: accessToken,
+      before: messages[0]?.createdAt,
     });
   };
 
-  // ── Envoi — méthode conditionnée par plateforme ───────────────────────────
+  // ── Envoi conditionné par plateforme ──────────────────────────────────────────
   //
-  // WEB    (V8) : emit direct, `sending` state, pas de message optimiste
-  // MOBILE (V11) : message optimiste ⏳, retries toutes les 5 s pendant 30 s,
-  //                puis status 'failed' si toujours pas de confirmation
+  // Web    (V8) : emit direct, `sending` state, spinner sur Send
+  // Mobile (V11) : optimistic ⏳ immédiat + retries auto 5 s / 30 s max
 
   const sendMessage = (mediaUrl?: string, mediaType?: string) => {
     const content = input.trim();
@@ -430,23 +437,12 @@ export default function ChatBox({
     const reply = replyingTo;
     setReplyingTo(null);
 
-    if (isTypingRef.current) {
-      isTypingRef.current = false;
-      emitTyping(false);
-    }
+    if (isTypingRef.current) { isTypingRef.current = false; emitTyping(false); }
 
-    // ── Payload commun ────────────────────────────────────────────────────
     const emitPayload = conversationType === 'private'
-      ? {
-          conversation_id: conversationId,
-          user_id:         userId,
-          access_token:    accessToken,
-          content,
-        }
+      ? { conversation_id: conversationId, user_id: userId, access_token: accessToken, content }
       : {
-          group_id:     conversationId,
-          user_id:      userId,
-          access_token: accessToken,
+          group_id: conversationId, user_id: userId, access_token: accessToken,
           content:      content || null,
           type:         mediaType ?? 'text',
           media_url:    mediaUrl  ?? null,
@@ -454,9 +450,7 @@ export default function ChatBox({
           is_visible:   reply ? replyVisible : true,
         };
 
-    // ════════════════════════════════════════════════════════════════════════
-    // WEB — méthode V8 : émission simple, state `sending`
-    // ════════════════════════════════════════════════════════════════════════
+    // ── WEB (V8) ──────────────────────────────────────────────────────────
     if (Platform.OS === 'web') {
       setSending(true);
       socketRef.current?.emit('send_message', emitPayload);
@@ -464,11 +458,7 @@ export default function ChatBox({
       return;
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // MOBILE — méthode V11 : optimistic UI + retries automatiques
-    // ════════════════════════════════════════════════════════════════════════
-
-    // 1. Message optimiste affiché immédiatement
+    // ── MOBILE (V11) ──────────────────────────────────────────────────────
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
     const optimisticMsg: Message = {
@@ -482,10 +472,10 @@ export default function ChatBox({
       createdAt:        new Date().toISOString(),
       isRead:           false,
       deletedAt:        null,
-      reply_to_id:      reply?.id    ?? null,
+      reply_to_id:      reply?.id ?? null,
       is_visible:       reply ? replyVisible : true,
       is_private_reply: false,
-      replyTo:          reply ? {
+      replyTo: reply ? {
         id:            reply.id,
         sender_id:     reply.senderId,
         content:       reply.content,
@@ -501,296 +491,181 @@ export default function ChatBox({
     pendingPayloads.current.set(tempId, emitPayload);
     scrollToEnd();
 
-    // 2. Émission initiale
     if (!socketRef.current?.connected) {
-      console.warn(`[ChatBox] Envoi impossible — socket déconnecté (message temporaire : ${tempId})`);
+      console.warn(`[ChatBox] ⚠️ Envoi alors que le socket est déconnecté (${tempId})`);
     }
     socketRef.current?.emit('send_message', emitPayload);
 
-    // 3. Retries automatiques toutes les RETRY_INTERVAL_MS
     const startedAt = Date.now();
     const interval  = setInterval(() => {
-      // Message déjà confirmé → plus dans pendingQueue
       if (!pendingQueue.current.includes(tempId)) {
-        clearInterval(interval);
-        retryTimers.current.delete(tempId);
-        return;
+        clearInterval(interval); retryTimers.current.delete(tempId); return;
       }
-
-      const elapsed = Date.now() - startedAt;
-
+      const elapsed     = Date.now() - startedAt;
+      const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
       if (elapsed >= RETRY_MAX_MS) {
-        // 30 s sans confirmation → abandon des retries, passage en 'failed'
-        clearInterval(interval);
-        retryTimers.current.delete(tempId);
-        // Retirer de la pendingQueue sans confirmer
+        clearInterval(interval); retryTimers.current.delete(tempId);
         pendingQueue.current = pendingQueue.current.filter(id => id !== tempId);
-        setMessages(prev => prev.map(m =>
-          m.id === tempId ? { ...m, status: 'failed' as const } : m
-        ));
-        const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'failed' as const } : m));
         console.error(
-          `[ChatBox] ❌ Échec d'envoi définitif — aucune confirmation serveur après ${RETRY_MAX_MS / 1000} s.\n` +
-          `  Message temporaire : ${tempId}\n` +
-          `  Socket : ${socketState}\n` +
-          `  Contenu : ${content ? `"${content.slice(0, 60)}${content.length > 60 ? '…' : ''}"` : '(média)'}\n` +
-          `  Conseil : vérifier la connexion réseau ou l'état du serveur.`
+          `[ChatBox] ❌ Échec définitif — aucune confirmation après ${RETRY_MAX_MS / 1000} s.\n` +
+          `  Message : ${tempId} | Socket : ${socketState}\n` +
+          `  Contenu : ${content ? `"${content.slice(0, 60)}${content.length > 60 ? '…' : ''}"` : '(média)'}`
         );
         return;
       }
-
-      // Retry silencieux
-      const attemptNum = Math.floor(elapsed / RETRY_INTERVAL_MS) + 1;
-      const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
-      console.warn(
-        `[ChatBox] ⚠️ Retry n°${attemptNum} — message non confirmé après ${Math.round(elapsed / 1000)} s.\n` +
-        `  Message temporaire : ${tempId} | Socket : ${socketState}`
-      );
+      const n = Math.floor(elapsed / RETRY_INTERVAL_MS) + 1;
+      console.warn(`[ChatBox] ⚠️ Retry n°${n} — ${tempId} | Socket : ${socketState} | ${Math.round(elapsed / 1000)} s écoulées`);
       socketRef.current?.emit('send_message', emitPayload);
     }, RETRY_INTERVAL_MS);
 
     retryTimers.current.set(tempId, interval);
   };
 
-  // ── Retry manuel — appel depuis l'action sheet (mobile, status 'failed') ──
+  // ── Retry manuel (mobile, status 'failed') ────────────────────────────────────
 
   const retryMessage = (msg: Message) => {
     const payload = pendingPayloads.current.get(msg.id);
     if (!payload) {
-      console.warn(`[ChatBox] Retry manuel impossible — payload introuvable pour ${msg.id}`);
+      console.warn(`[ChatBox] Retry impossible — payload introuvable pour ${msg.id}`);
       return;
     }
-
-    // Remettre en 'sending' et ré-enregistrer dans pendingQueue
-    const newTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const newTempId   = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
 
     setMessages(prev => prev.map(m =>
       m.id === msg.id ? { ...m, id: newTempId, status: 'sending' as const } : m
     ));
-
     pendingPayloads.current.delete(msg.id);
     pendingPayloads.current.set(newTempId, payload);
     pendingQueue.current.push(newTempId);
 
-    const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
-    console.log(
-      `[ChatBox] 🔄 Retry manuel déclenché.\n` +
-      `  Ancien ID : ${msg.id} → Nouveau : ${newTempId} | Socket : ${socketState}`
-    );
-
+    console.log(`[ChatBox] 🔄 Retry manuel — ${msg.id} → ${newTempId} | Socket : ${socketState}`);
     if (!socketRef.current?.connected) {
-      console.error('[ChatBox] ❌ Retry manuel échoué — socket déconnecté. Vérifier la connexion réseau.');
+      console.error('[ChatBox] ❌ Retry — socket déconnecté. Vérifier la connexion réseau.');
     }
-
     socketRef.current?.emit('send_message', payload);
 
-    // Relancer le mécanisme de retries automatiques
     const startedAt = Date.now();
     const interval  = setInterval(() => {
       if (!pendingQueue.current.includes(newTempId)) {
-        clearInterval(interval);
-        retryTimers.current.delete(newTempId);
-        return;
+        clearInterval(interval); retryTimers.current.delete(newTempId); return;
       }
       const elapsed     = Date.now() - startedAt;
       const socketState = socketRef.current?.connected ? 'connecté' : 'déconnecté';
       if (elapsed >= RETRY_MAX_MS) {
-        clearInterval(interval);
-        retryTimers.current.delete(newTempId);
+        clearInterval(interval); retryTimers.current.delete(newTempId);
         pendingQueue.current = pendingQueue.current.filter(id => id !== newTempId);
-        setMessages(prev => prev.map(m =>
-          m.id === newTempId ? { ...m, status: 'failed' as const } : m
-        ));
-        console.error(
-          `[ChatBox] ❌ Retry manuel — échec définitif après ${RETRY_MAX_MS / 1000} s.\n` +
-          `  Message temporaire : ${newTempId} | Socket : ${socketState}\n` +
-          `  Conseil : vérifier la connexion réseau ou l'état du serveur.`
-        );
+        setMessages(prev => prev.map(m => m.id === newTempId ? { ...m, status: 'failed' as const } : m));
+        console.error(`[ChatBox] ❌ Retry manuel — échec définitif après ${RETRY_MAX_MS / 1000} s. | Socket : ${socketState}`);
         return;
       }
-      const attemptNum = Math.floor(elapsed / RETRY_INTERVAL_MS) + 1;
-      console.warn(
-        `[ChatBox] ⚠️ Retry manuel n°${attemptNum} — message non confirmé après ${Math.round(elapsed / 1000)} s.\n` +
-        `  Message temporaire : ${newTempId} | Socket : ${socketState}`
-      );
+      const n = Math.floor(elapsed / RETRY_INTERVAL_MS) + 1;
+      console.warn(`[ChatBox] ⚠️ Retry manuel n°${n} — ${newTempId} | Socket : ${socketState}`);
       socketRef.current?.emit('send_message', payload);
     }, RETRY_INTERVAL_MS);
-
     retryTimers.current.set(newTempId, interval);
   };
 
-  // ── Typing ───────────────────────────────────────────────────────────────────
+  // ── Typing ────────────────────────────────────────────────────────────────────
 
   const emitTyping = (is_typing: boolean) => {
     if (conversationType === 'private') {
-      socketRef.current?.emit('typing', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing });
     } else {
-      socketRef.current?.emit('typing', {
-        group_id:  conversationId,
-        user_id:   userId,
-        user_name: userName,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { group_id: conversationId, user_id: userId, user_name: userName, is_typing });
     }
   };
 
   const handleTyping = (text: string) => {
     setInput(text);
-    if (text.length > 0 && !isTypingRef.current) {
-      isTypingRef.current = true;
-      emitTyping(true);
-    }
+    if (text.length > 0 && !isTypingRef.current) { isTypingRef.current = true; emitTyping(true); }
     if (typingTimer.current) clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => {
-      isTypingRef.current = false;
-      emitTyping(false);
-    }, 2000);
+    typingTimer.current = setTimeout(() => { isTypingRef.current = false; emitTyping(false); }, 2000);
   };
 
-  // ── Suppression / visibilité ──────────────────────────────────────────────
-
   const deleteMessage = (msg: Message) => {
-    socketRef.current?.emit('delete_message', {
-      message_id:   msg.id,
-      user_id:      userId,
-      access_token: accessToken,
-    });
+    socketRef.current?.emit('delete_message', { message_id: msg.id, user_id: userId, access_token: accessToken });
   };
 
   const toggleVisibility = (msg: Message) => {
     if (conversationType !== 'group') return;
-    socketRef.current?.emit('toggle_visibility', {
-      message_id:   msg.id,
-      user_id:      userId,
-      access_token: accessToken,
-    });
+    socketRef.current?.emit('toggle_visibility', { message_id: msg.id, user_id: userId, access_token: accessToken });
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  // ── Interactions sur les bulles ───────────────────────────────────────────
-
   const handleLongPress = (msg: Message) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setActionMsg(msg);
-    setShowActionSheet(true);
+    setActionMsg(msg); setShowActionSheet(true);
   };
 
   const handleTap = (msg: Message) => {
     if (conversationType !== 'group') return;
-    const now  = Date.now();
-    const last = lastTapRef.current;
+    const now = Date.now(); const last = lastTapRef.current;
     if (last && last.id === msg.id && now - last.time < 350) {
       lastTapRef.current = null;
       if (msg.senderId === userId && msg.reply_to_id) toggleVisibility(msg);
-    } else {
-      lastTapRef.current = { id: msg.id, time: now };
-    }
+    } else { lastTapRef.current = { id: msg.id, time: now }; }
   };
 
-  // ── Upload media — Signed URL ─────────────────────────────────────────────
+  // ── Upload media ───────────────────────────────────────────────────────────────
 
   const pickAndUploadMedia = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (perm.status !== 'granted') {
-        alert('Permission requise pour accéder à la galerie.');
-        return;
-      }
+      if (perm.status !== 'granted') { alert('Permission requise pour accéder à la galerie.'); return; }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
-        quality:    0.8,
-      });
-
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.8 });
       if (result.canceled || !result.assets?.[0]) return;
 
-      const asset    = result.assets[0];
-      const uri      = asset.uri;
+      const asset = result.assets[0]; const uri = asset.uri;
       const mimeType = resolveMimeType(uri, asset.mimeType);
       const fileName = uri.split('/').pop() ?? `media_${Date.now()}`;
 
       setUploading(true);
 
-      // Étape 1 — obtenir la Signed Upload URL
-      const urlRes = await fetch(`${WS_BASE}/media`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          function:     'getUploadUrl',
-          user_id:      userId,
-          access_token: accessToken,
-          file_name:    fileName,
-          file_type:    mimeType,
-          context:      'media-premium',
-        }),
+      const urlRes  = await fetch(`${WS_BASE}/media`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'getUploadUrl', user_id: userId, access_token: accessToken, file_name: fileName, file_type: mimeType, context: 'media-premium' }),
       });
       const urlData = await urlRes.json();
-
       if (!urlData.success) {
         setUploading(false);
-        const raison = urlData.error ?? 'Raison inconnue';
-        console.error(`[ChatBox] ❌ Échec génération URL d'upload — ${raison}`);
-        alert(`Impossible de préparer l'envoi du fichier.\nRaison : ${raison}`);
-        return;
+        const r = urlData.error ?? 'Raison inconnue';
+        console.error(`[ChatBox] ❌ Échec génération URL d'upload — ${r}`);
+        alert(`Impossible de préparer l'envoi du fichier.\nRaison : ${r}`); return;
       }
 
       const { signed_url, path, bucket } = urlData;
-
-      // Étape 2 — upload binaire (méthode conditionnée par plateforme)
-      const { ok: uploadOk, status: uploadStatus, errorText } = await uploadBinaryFile(
-        signed_url, uri, mimeType,
-      );
-
-      if (!uploadOk) {
+      const { ok, status, errorText } = await uploadBinaryFile(signed_url, uri, mimeType);
+      if (!ok) {
         setUploading(false);
-        const detail = errorText ?? 'Réponse vide du serveur de stockage';
-        console.error(
-          `[ChatBox] ❌ Échec upload vers le stockage.\n` +
-          `  Statut HTTP : ${uploadStatus}\n` +
-          `  Détail : ${detail}`
-        );
-        alert(`L'envoi du fichier a échoué (code ${uploadStatus}).\nVérifiez votre connexion et réessayez.`);
-        return;
+        console.error(`[ChatBox] ❌ Échec upload — HTTP ${status} — ${errorText ?? 'Réponse vide'}`);
+        alert(`L'envoi du fichier a échoué (code ${status}).\nVérifiez votre connexion et réessayez.`); return;
       }
 
-      // Étape 3 — confirmer l'upload et récupérer l'URL publique
-      const confirmRes = await fetch(`${WS_BASE}/media`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          function:     'confirmUpload',
-          user_id:      userId,
-          access_token: accessToken,
-          path,
-          bucket,
-        }),
+      const confirmRes  = await fetch(`${WS_BASE}/media`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function: 'confirmUpload', user_id: userId, access_token: accessToken, path, bucket }),
       });
       const confirmData = await confirmRes.json();
       setUploading(false);
-
       if (!confirmData.success) {
-        const raison = confirmData.error ?? 'Raison inconnue';
-        console.error(`[ChatBox] ❌ Échec confirmation upload — ${raison}`);
-        alert(`Le fichier a été envoyé mais n'a pas pu être confirmé.\nRaison : ${raison}`);
-        return;
+        const r = confirmData.error ?? 'Raison inconnue';
+        console.error(`[ChatBox] ❌ Échec confirmation upload — ${r}`);
+        alert(`Le fichier a été envoyé mais n'a pas pu être confirmé.\nRaison : ${r}`); return;
       }
 
-      const mediaType = detectMediaType(mimeType, fileName);
-      sendMessage(confirmData.url, mediaType);
-
+      sendMessage(confirmData.url, detectMediaType(mimeType, fileName));
     } catch (err: any) {
       setUploading(false);
-      const detail = err?.message ?? 'Erreur inconnue';
-      console.error(`[ChatBox] ❌ Exception inattendue lors de l'upload — ${detail}`, err);
-      alert(`Une erreur inattendue est survenue lors de l'envoi du fichier.\nDétail : ${detail}`);
+      const d = err?.message ?? 'Erreur inconnue';
+      console.error(`[ChatBox] ❌ Exception upload — ${d}`, err);
+      alert(`Une erreur inattendue est survenue.\nDétail : ${d}`);
     }
   };
 
-  // ── Normalisation message ─────────────────────────────────────────────────
+  // ── Normalisation ──────────────────────────────────────────────────────────────
 
   const normalizeMsg = (msg: any): Message => ({
     id:               msg.id,
@@ -808,25 +683,15 @@ export default function ChatBox({
     is_private_reply: msg.is_private_reply ?? false,
     replyTo:          msg.reply_to     ?? msg.replyTo    ?? null,
     mediaType:        msg.mediaType    ?? msg.type       ?? null,
-    // status absent des messages serveur → undefined (historique confirmé)
   });
 
-  const fmtTime = (value: string | null | undefined): string => {
-    if (!value) return '';
-    const date = new Date(value);
-    if (isNaN(date.getTime())) return '';
-    return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const fmtTime = (v: string | null | undefined): string => {
+    if (!v) return '';
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
 
   const isAuthor = (msg: Message) => msg.senderId === userId;
-
-  // ── Icône de statut (mobile uniquement) ───────────────────────────────────
-  //
-  //   status === 'sending'   → ⏳  (en attente de confirmation serveur)
-  //   status === 'failed'    → ❌  (retries épuisés, appui long → Réessayer)
-  //   status === 'sent'      → ✔️  (confirmé par le serveur)
-  //   status === undefined   → ✔️  (message historique, forcément confirmé)
-  //   isRead === true        → ✔✔  (lu)
 
   const renderStatusIcon = (msg: Message) => {
     if (!msg.isFromMe || Platform.OS === 'web') return null;
@@ -835,76 +700,52 @@ export default function ChatBox({
     return <Text style={S.msgTimeMe}>{msg.isRead ? ' ✓✓' : ' ✓'}</Text>;
   };
 
-  // ── Rendu media ───────────────────────────────────────────────────────────
+  // ── Rendu media ────────────────────────────────────────────────────────────────
 
   const renderMediaContent = (msg: Message, fromMe: boolean) => {
     if (!msg.media_url) return null;
     const url  = msg.media_url;
-    const type = (msg.mediaType && msg.mediaType !== 'text')
-      ? msg.mediaType
-      : detectMediaType(resolveMimeType(url), url);
+    const type = (msg.mediaType && msg.mediaType !== 'text') ? msg.mediaType : detectMediaType(resolveMimeType(url), url);
 
-    if (type === 'image') {
-      return (
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={() => {
-            const now  = Date.now();
-            const last = imgTapRef.current;
-            if (last && last.url === url && now - last.time < 350) {
-              imgTapRef.current = null;
-              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setFullscreenUrl(url);
-            } else {
-              imgTapRef.current = { url, time: now };
-            }
-          }}
-        >
-          <Image source={{ uri: url }} style={S.mediaImage} resizeMode="cover" />
-        </TouchableOpacity>
-      );
-    }
-    if (type === 'video') {
-      return (
-        <View style={S.mediaFileWrap}>
-          <Ionicons name="videocam-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
-          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
-            {url.split('/').pop()?.split('?')[0] ?? 'Vidéo'}
-          </Text>
-        </View>
-      );
-    }
-    if (type === 'audio') {
-      return (
-        <View style={S.mediaFileWrap}>
-          <Ionicons name="musical-notes-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
-          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
-            {url.split('/').pop()?.split('?')[0] ?? 'Audio'}
-          </Text>
-        </View>
-      );
-    }
-    if (type === 'document') {
-      return (
-        <View style={S.mediaFileWrap}>
-          <Ionicons name="document-text-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
-          <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
-            {url.split('/').pop()?.split('?')[0] ?? 'Document'}
-          </Text>
-        </View>
-      );
-    }
+    if (type === 'image') return (
+      <TouchableOpacity activeOpacity={0.9} onPress={() => {
+        const now = Date.now(); const last = imgTapRef.current;
+        if (last && last.url === url && now - last.time < 350) {
+          imgTapRef.current = null;
+          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setFullscreenUrl(url);
+        } else { imgTapRef.current = { url, time: now }; }
+      }}>
+        <Image source={{ uri: url }} style={S.mediaImage} resizeMode="cover" />
+      </TouchableOpacity>
+    );
+    if (type === 'video') return (
+      <View style={S.mediaFileWrap}>
+        <Ionicons name="videocam-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>{url.split('/').pop()?.split('?')[0] ?? 'Vidéo'}</Text>
+      </View>
+    );
+    if (type === 'audio') return (
+      <View style={S.mediaFileWrap}>
+        <Ionicons name="musical-notes-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>{url.split('/').pop()?.split('?')[0] ?? 'Audio'}</Text>
+      </View>
+    );
+    if (type === 'document') return (
+      <View style={S.mediaFileWrap}>
+        <Ionicons name="document-text-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
+        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>{url.split('/').pop()?.split('?')[0] ?? 'Document'}</Text>
+      </View>
+    );
     return (
       <View style={S.mediaFileWrap}>
         <Ionicons name="attach-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
-        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>
-          {url.split('/').pop()?.split('?')[0] ?? 'Fichier'}
-        </Text>
+        <Text style={[S.mediaFileName, fromMe ? S.msgTextMe : S.msgTextThem]} numberOfLines={1}>{url.split('/').pop()?.split('?')[0] ?? 'Fichier'}</Text>
       </View>
     );
   };
 
-  // ── Rendu bulle ───────────────────────────────────────────────────────────
+  // ── Rendu bulle ────────────────────────────────────────────────────────────────
 
   const renderBubble = (msg: Message) => {
     const fromMe  = msg.isFromMe;
@@ -918,25 +759,17 @@ export default function ChatBox({
         onPress={() => handleTap(msg)}
         onLongPress={() => handleLongPress(msg)}
         style={[
-          S.bubble,
-          fromMe ? S.bubbleMe : S.bubbleThem,
-          // Légère opacité sur les messages en attente ou échoués
+          S.bubble, fromMe ? S.bubbleMe : S.bubbleThem,
           msg.status === 'sending' && { opacity: 0.75 },
           msg.status === 'failed'  && { opacity: 0.65, borderWidth: 1, borderColor: '#FF6B6B' },
         ]}
       >
-        {!fromMe && isGroup && !deleted && (
-          <Text style={S.senderName}>{msg.senderName}</Text>
-        )}
+        {!fromMe && isGroup && !deleted && <Text style={S.senderName}>{msg.senderName}</Text>}
 
         {msg.replyTo && !deleted && (
           <View style={[S.replyBlock, fromMe ? S.replyBlockMe : S.replyBlockThem]}>
-            <Text style={S.replyAuthor} numberOfLines={1}>
-              {msg.replyTo.sender_prenom} {msg.replyTo.sender_nom}
-            </Text>
-            <Text style={S.replyContent} numberOfLines={2}>
-              {msg.replyTo.content ?? 'Message supprimé'}
-            </Text>
+            <Text style={S.replyAuthor} numberOfLines={1}>{msg.replyTo.sender_prenom} {msg.replyTo.sender_nom}</Text>
+            <Text style={S.replyContent} numberOfLines={2}>{msg.replyTo.content ?? 'Message supprimé'}</Text>
           </View>
         )}
 
@@ -945,31 +778,19 @@ export default function ChatBox({
         ) : msg.is_private_reply ? (
           <View style={S.privateReplyWrap}>
             <Ionicons name="lock-closed" size={12} color={fromMe ? '#E0D0FF' : '#999'} />
-            <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem, { fontStyle: 'italic', marginLeft: 4 }]}>
-              Réponse privée
-            </Text>
+            <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem, { fontStyle: 'italic', marginLeft: 4 }]}>Réponse privée</Text>
           </View>
         ) : msg.media_url ? (
           renderMediaContent(msg, fromMe)
         ) : (
-          <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem]}>
-            {msg.content}
-          </Text>
+          <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
         )}
 
-        {/* Footer : heure + badge visibilité + statut */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
           {isGroup && isAuthor(msg) && msg.reply_to_id && !deleted && (
-            <Ionicons
-              name={msg.is_visible ? 'eye-outline' : 'eye-off-outline'}
-              size={11}
-              color={fromMe ? '#E0D0FF' : '#aaa'}
-            />
+            <Ionicons name={msg.is_visible ? 'eye-outline' : 'eye-off-outline'} size={11} color={fromMe ? '#E0D0FF' : '#aaa'} />
           )}
-          <Text style={[S.msgTime, fromMe ? S.msgTimeMe : S.msgTimeThem]}>
-            {fmtTime(msg.createdAt)}
-          </Text>
-          {/* Sur web, le statut ✓✓ est géré via `sending` state (V8) */}
+          <Text style={[S.msgTime, fromMe ? S.msgTimeMe : S.msgTimeThem]}>{fmtTime(msg.createdAt)}</Text>
           {Platform.OS === 'web'
             ? fromMe && !sending && <Text style={S.msgTimeMe}>{msg.isRead ? ' ✓✓' : ''}</Text>
             : renderStatusIcon(msg)
@@ -979,17 +800,15 @@ export default function ChatBox({
     );
   };
 
-  // ─── Rendu principal ─────────────────────────────────────────────────────────
+  // ─── Rendu ────────────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={S.container}>
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
       <LinearGradient colors={['#8A2BE2', '#4B0082']} style={S.header}>
         <TouchableOpacity onPress={onBack} style={S.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-
         {conversationType === 'private' ? (
           <TouchableOpacity
             style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
@@ -1002,9 +821,7 @@ export default function ChatBox({
             </View>
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{otherUser?.prenom} {otherUser?.nom}</Text>
-              <Text style={S.headerStatus}>
-                {otherTyping ? "En train d'écrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}
-              </Text>
+              <Text style={S.headerStatus}>{otherTyping ? "En train d'écrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}</Text>
             </View>
             {onProfilePress && <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.5)" />}
           </TouchableOpacity>
@@ -1015,21 +832,13 @@ export default function ChatBox({
             </View>
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{groupName}</Text>
-              <Text style={S.headerStatus}>
-                {otherTyping ? "Quelqu'un écrit..." : `${memberCount} membres`}
-              </Text>
+              <Text style={S.headerStatus}>{otherTyping ? "Quelqu'un écrit..." : `${memberCount} membres`}</Text>
             </View>
           </View>
         )}
       </LinearGradient>
 
-      {/* ── Messages ────────────────────────────────────────────────────── */}
-      <ScrollView
-        ref={scrollRef}
-        style={S.msgs}
-        contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView ref={scrollRef} style={S.msgs} contentContainerStyle={{ padding: 15, paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
         {hasMore && !loading && (
           <TouchableOpacity onPress={loadMore} disabled={loadingMore} style={S.loadMoreBtn}>
             {loadingMore
@@ -1038,7 +847,6 @@ export default function ChatBox({
             }
           </TouchableOpacity>
         )}
-
         {loading ? (
           <View style={{ alignItems: 'center', paddingVertical: 80 }}>
             <ActivityIndicator size="large" color="#8A2BE2" />
@@ -1047,34 +855,21 @@ export default function ChatBox({
         ) : messages.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 80 }}>
             <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#888', marginTop: 15 }}>
-              Aucun message pour l'instant
-            </Text>
-            <Text style={{ fontSize: 14, color: '#aaa', marginTop: 6, textAlign: 'center' }}>
-              Démarrez la discussion !
-            </Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#888', marginTop: 15 }}>Aucun message pour l'instant</Text>
+            <Text style={{ fontSize: 14, color: '#aaa', marginTop: 6, textAlign: 'center' }}>Démarrez la discussion !</Text>
           </View>
         ) : messages.map(msg => renderBubble(msg))}
       </ScrollView>
 
-      {/* ── Barre de réponse ────────────────────────────────────────────── */}
       {replyingTo && (
         <View style={S.replyBar}>
           <View style={S.replyBarContent}>
-            <Ionicons
-              name={replyVisible ? 'earth-outline' : 'lock-closed-outline'}
-              size={14}
-              color={replyVisible ? '#8A2BE2' : '#6B21A8'}
-              style={{ marginRight: 6 }}
-            />
+            <Ionicons name={replyVisible ? 'earth-outline' : 'lock-closed-outline'} size={14} color={replyVisible ? '#8A2BE2' : '#6B21A8'} style={{ marginRight: 6 }} />
             <View style={{ flex: 1 }}>
               <Text style={[S.replyBarAuthor, { color: replyVisible ? '#8A2BE2' : '#6B21A8' }]} numberOfLines={1}>
-                {replyVisible ? 'Réponse publique à ' : 'Réponse privée à '}
-                {replyingTo.senderName}
+                {replyVisible ? 'Réponse publique à ' : 'Réponse privée à '}{replyingTo.senderName}
               </Text>
-              <Text style={S.replyBarText} numberOfLines={1}>
-                {replyingTo.content ?? 'Message supprimé'}
-              </Text>
+              <Text style={S.replyBarText} numberOfLines={1}>{replyingTo.content ?? 'Message supprimé'}</Text>
             </View>
           </View>
           <TouchableOpacity onPress={() => { setReplyingTo(null); setReplyVisible(true); }} style={{ padding: 6 }}>
@@ -1083,39 +878,19 @@ export default function ChatBox({
         </View>
       )}
 
-      {/* ── Saisie ──────────────────────────────────────────────────────── */}
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}
-      >
+      <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}>
         <View style={S.inputWrap}>
           {conversationType === 'group' && currentRole === 'userpro' && (
-            <TouchableOpacity
-              style={S.mediaBtn}
-              onPress={pickAndUploadMedia}
-              disabled={uploading || (Platform.OS === 'web' ? sending : false)}
-              activeOpacity={0.7}
-            >
-              {uploading
-                ? <ActivityIndicator size="small" color="#8A2BE2" />
-                : <Ionicons name="attach-outline" size={24} color="#8A2BE2" />
-              }
+            <TouchableOpacity style={S.mediaBtn} onPress={pickAndUploadMedia} disabled={uploading || (Platform.OS === 'web' ? sending : false)} activeOpacity={0.7}>
+              {uploading ? <ActivityIndicator size="small" color="#8A2BE2" /> : <Ionicons name="attach-outline" size={24} color="#8A2BE2" />}
             </TouchableOpacity>
           )}
-
           <TextInput
-            style={S.input}
-            placeholder="Écrivez un message…"
-            placeholderTextColor="#999"
-            value={input}
-            onChangeText={handleTyping}
-            multiline
-            maxLength={1000}
-            // Web (V8) : bloqué pendant `sending`. Mobile : jamais bloqué.
+            style={S.input} placeholder="Écrivez un message…" placeholderTextColor="#999"
+            value={input} onChangeText={handleTyping} multiline maxLength={1000}
             editable={Platform.OS === 'web' ? (!sending && !uploading) : !uploading}
-            returnKeyType="default"
-            blurOnSubmit={false}
+            returnKeyType="default" blurOnSubmit={false}
           />
-
           <TouchableOpacity
             style={[S.sendBtn, (!input.trim() || uploading || (Platform.OS === 'web' && sending)) && S.sendBtnDisabled]}
             onPress={() => sendMessage()}
@@ -1130,78 +905,42 @@ export default function ChatBox({
         </View>
       </KeyboardAvoidingView>
 
-      {/* ── Action sheet ────────────────────────────────────────────────── */}
-      <Modal
-        visible={showActionSheet}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowActionSheet(false)}
-      >
-        <TouchableOpacity
-          style={S.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowActionSheet(false)}
-        >
+      {/* Action sheet */}
+      <Modal visible={showActionSheet} transparent animationType="fade" onRequestClose={() => setShowActionSheet(false)}>
+        <TouchableOpacity style={S.modalOverlay} activeOpacity={1} onPress={() => setShowActionSheet(false)}>
           <View style={S.actionSheet}>
             {actionMsg && (
               <>
-                {/* ── Cas spécial : message en échec (mobile) → Réessayer uniquement ── */}
                 {Platform.OS !== 'web' && actionMsg.status === 'failed' ? (
                   <>
-                    <TouchableOpacity
-                      style={S.actionItem}
-                      onPress={() => {
-                        retryMessage(actionMsg);
-                        setShowActionSheet(false);
-                      }}
-                    >
+                    <TouchableOpacity style={S.actionItem} onPress={() => { retryMessage(actionMsg); setShowActionSheet(false); }}>
                       <Ionicons name="refresh-outline" size={20} color="#8A2BE2" />
                       <View style={{ flex: 1 }}>
                         <Text style={[S.actionTxt, { color: '#8A2BE2' }]}>Réessayer l'envoi</Text>
                         <Text style={S.actionSubTxt}>Le message n'a pas pu être envoyé</Text>
                       </View>
                     </TouchableOpacity>
-                    {/* Permettre aussi la suppression du message échoué */}
-                    <TouchableOpacity
-                      style={S.actionItem}
-                      onPress={() => {
-                        setMessages(prev => prev.filter(m => m.id !== actionMsg.id));
-                        pendingPayloads.current.delete(actionMsg.id);
-                        setShowActionSheet(false);
-                      }}
-                    >
+                    <TouchableOpacity style={S.actionItem} onPress={() => {
+                      setMessages(prev => prev.filter(m => m.id !== actionMsg.id));
+                      pendingPayloads.current.delete(actionMsg.id);
+                      setShowActionSheet(false);
+                    }}>
                       <Ionicons name="trash-outline" size={20} color="#DC2626" />
                       <Text style={[S.actionTxt, { color: '#DC2626' }]}>Supprimer le brouillon</Text>
                     </TouchableOpacity>
                   </>
                 ) : (
                   <>
-                    {/* ── Actions normales ─────────────────────────────────── */}
                     {conversationType === 'group' && !actionMsg.deletedAt && !actionMsg.is_private_reply && (
                       <>
-                        <TouchableOpacity
-                          style={S.actionItem}
-                          onPress={() => {
-                            setReplyingTo(actionMsg);
-                            setReplyVisible(true);
-                            setShowActionSheet(false);
-                          }}
-                        >
+                        <TouchableOpacity style={S.actionItem} onPress={() => { setReplyingTo(actionMsg); setReplyVisible(true); setShowActionSheet(false); }}>
                           <Ionicons name="earth-outline" size={20} color="#8A2BE2" />
                           <View style={{ flex: 1 }}>
                             <Text style={[S.actionTxt, { color: '#8A2BE2' }]}>Répondre en public</Text>
                             <Text style={S.actionSubTxt}>Tout le groupe voit la réponse</Text>
                           </View>
                         </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={S.actionItem}
-                          onPress={() => {
-                            setReplyingTo(actionMsg);
-                            setReplyVisible(false);
-                            setShowActionSheet(false);
-                          }}
-                        >
+                        <TouchableOpacity style={S.actionItem} onPress={() => { setReplyingTo(actionMsg); setReplyVisible(false); setShowActionSheet(false); }}>
                           <Ionicons name="lock-closed-outline" size={20} color="#6B21A8" />
                           <View style={{ flex: 1 }}>
                             <Text style={[S.actionTxt, { color: '#6B21A8' }]}>Répondre en privé</Text>
@@ -1210,41 +949,20 @@ export default function ChatBox({
                         </TouchableOpacity>
                       </>
                     )}
-
                     {conversationType === 'group' && isAuthor(actionMsg) && actionMsg.reply_to_id && !actionMsg.deletedAt && (
-                      <TouchableOpacity
-                        style={S.actionItem}
-                        onPress={() => {
-                          toggleVisibility(actionMsg);
-                          setShowActionSheet(false);
-                        }}
-                      >
-                        <Ionicons
-                          name={actionMsg.is_visible ? 'eye-off-outline' : 'eye-outline'}
-                          size={20}
-                          color="#555"
-                        />
-                        <Text style={S.actionTxt}>
-                          {actionMsg.is_visible ? 'Rendre privé' : 'Rendre visible'}
-                        </Text>
+                      <TouchableOpacity style={S.actionItem} onPress={() => { toggleVisibility(actionMsg); setShowActionSheet(false); }}>
+                        <Ionicons name={actionMsg.is_visible ? 'eye-off-outline' : 'eye-outline'} size={20} color="#555" />
+                        <Text style={S.actionTxt}>{actionMsg.is_visible ? 'Rendre privé' : 'Rendre visible'}</Text>
                       </TouchableOpacity>
                     )}
-
                     {isAuthor(actionMsg) && !actionMsg.deletedAt && !actionMsg.status && (
-                      <TouchableOpacity
-                        style={S.actionItem}
-                        onPress={() => {
-                          deleteMessage(actionMsg);
-                          setShowActionSheet(false);
-                        }}
-                      >
+                      <TouchableOpacity style={S.actionItem} onPress={() => { deleteMessage(actionMsg); setShowActionSheet(false); }}>
                         <Ionicons name="trash-outline" size={20} color="#DC2626" />
                         <Text style={[S.actionTxt, { color: '#DC2626' }]}>Supprimer</Text>
                       </TouchableOpacity>
                     )}
                   </>
                 )}
-
                 <View style={S.actionDivider} />
                 <TouchableOpacity style={S.actionItem} onPress={() => setShowActionSheet(false)}>
                   <Text style={[S.actionTxt, { textAlign: 'center', color: '#999', flex: 1 }]}>Annuler</Text>
@@ -1255,32 +973,15 @@ export default function ChatBox({
         </TouchableOpacity>
       </Modal>
 
-      {/* ── Visionneuse plein écran ──────────────────────────────────────── */}
-      <Modal
-        visible={!!fullscreenUrl}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setFullscreenUrl(null)}
-      >
-        <TouchableOpacity
-          style={S.fsOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            const now  = Date.now();
-            const last = imgTapRef.current;
-            if (last && last.url === fullscreenUrl && now - last.time < 350) {
-              imgTapRef.current = null;
-              setFullscreenUrl(null);
-            } else {
-              imgTapRef.current = { url: fullscreenUrl!, time: now };
-            }
-          }}
-        >
-          <Image
-            source={{ uri: fullscreenUrl ?? '' }}
-            style={S.fsImage}
-            resizeMode="contain"
-          />
+      {/* Visionneuse plein écran */}
+      <Modal visible={!!fullscreenUrl} transparent animationType="fade" onRequestClose={() => setFullscreenUrl(null)}>
+        <TouchableOpacity style={S.fsOverlay} activeOpacity={1} onPress={() => {
+          const now = Date.now(); const last = imgTapRef.current;
+          if (last && last.url === fullscreenUrl && now - last.time < 350) {
+            imgTapRef.current = null; setFullscreenUrl(null);
+          } else { imgTapRef.current = { url: fullscreenUrl!, time: now }; }
+        }}>
+          <Image source={{ uri: fullscreenUrl ?? '' }} style={S.fsImage} resizeMode="contain" />
           <TouchableOpacity style={S.fsCloseBtn} onPress={() => setFullscreenUrl(null)}>
             <Ionicons name="close-circle" size={36} color="rgba(255,255,255,0.85)" />
           </TouchableOpacity>
