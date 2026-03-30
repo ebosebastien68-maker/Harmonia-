@@ -1,4 +1,4 @@
-// CommentsModal.tsx — v2 (fix mobile scroll + keyboard)
+// CommentsModal.tsx — v3 (fix backdrop mobile intercepting touches)
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -190,13 +190,13 @@ export default function CommentsModal({
   onClose,
   onCommentAdded,
 }: CommentsModalProps) {
-  const [comments,                   setComments]                   = useState<Comment[]>([]);
-  const [loading,                    setLoading]                    = useState(false);
-  const [commentText,                setCommentText]                = useState('');
-  const [replyingTo,                 setReplyingTo]                 = useState<Comment | null>(null);
-  const [submitting,                 setSubmitting]                 = useState(false);
-  const [showLikersModal,            setShowLikersModal]            = useState(false);
-  const [selectedCommentForLikers,   setSelectedCommentForLikers]   = useState<string | null>(null);
+  const [comments,                 setComments]                 = useState<Comment[]>([]);
+  const [loading,                  setLoading]                  = useState(false);
+  const [commentText,              setCommentText]              = useState('');
+  const [replyingTo,               setReplyingTo]               = useState<Comment | null>(null);
+  const [submitting,               setSubmitting]               = useState(false);
+  const [showLikersModal,          setShowLikersModal]          = useState(false);
+  const [selectedCommentForLikers, setSelectedCommentForLikers] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible && postId) loadComments();
@@ -231,10 +231,10 @@ export default function CommentsModal({
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action:     replyingTo ? 'reply-to-comment' : 'add-comment',
-          post_id:    postId,
-          content:    commentText.trim(),
-          parent_id:  replyingTo?.id ?? null,
+          action:    replyingTo ? 'reply-to-comment' : 'add-comment',
+          post_id:   postId,
+          content:   commentText.trim(),
+          parent_id: replyingTo?.id ?? null,
           access_token,
         }),
       });
@@ -245,11 +245,10 @@ export default function CommentsModal({
         await loadComments();
         onCommentAdded();
       } else {
-        // FIX — feedback visible sur mobile si le serveur répond success: false
         if (Platform.OS === 'web') {
-          alert(data.error ?? 'Erreur lors de l\'envoi');
+          alert(data.error ?? "Erreur lors de l'envoi");
         } else {
-          Alert.alert('Erreur', data.error ?? 'Erreur lors de l\'envoi');
+          Alert.alert('Erreur', data.error ?? "Erreur lors de l'envoi");
         }
       }
     } catch (error) {
@@ -308,25 +307,25 @@ export default function CommentsModal({
         onRequestClose={onClose}
       >
         {/*
-          FIX STRUCTURE MOBILE :
-          - Le backdrop est en absoluteFill → ne consomme plus d'espace dans le flux
-          - KeyboardAvoidingView enveloppe uniquement le contenu, pas le backdrop
-          - ScrollView passe à flexShrink:1 pour calculer sa hauteur dans maxHeight
+          FIX MOBILE — le KAV est à la racine du Modal (flex:1).
+          Le backdrop est un TouchableOpacity flex:1 dans le flux,
+          au-dessus du sheet → il ne chevauche plus le contenu
+          et ne capte plus les touches destinées aux boutons.
         */}
-        <View style={styles.modalRoot}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.modalRoot}>
 
-          {/* Backdrop — absoluteFill, ne perturbe plus le layout */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={onClose}
-          />
+            {/* Backdrop dans le flux — flex:1 remplit tout l'espace au-dessus du sheet */}
+            <TouchableOpacity
+              style={{ flex: 1 }}
+              activeOpacity={1}
+              onPress={onClose}
+            />
 
-          {/* Contenu + gestion clavier */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.kavWrapper}
-          >
+            {/* Sheet — positionné naturellement sous le backdrop, sans chevauchement */}
             <View style={styles.modalContent}>
 
               {/* Header */}
@@ -337,7 +336,7 @@ export default function CommentsModal({
                 </TouchableOpacity>
               </View>
 
-              {/* Liste — flexShrink:1 résout le scroll dans un parent maxHeight */}
+              {/* Liste */}
               <ScrollView
                 style={styles.commentsList}
                 contentContainerStyle={styles.commentsListContent}
@@ -394,7 +393,6 @@ export default function CommentsModal({
                   onChangeText={setCommentText}
                   multiline
                   maxLength={500}
-                  // FIX — évite que le clavier ferme le modal sur Android
                   blurOnSubmit={false}
                 />
                 <TouchableOpacity
@@ -414,14 +412,11 @@ export default function CommentsModal({
               </View>
 
             </View>
-          </KeyboardAvoidingView>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      {/*
-        FIX — CommentLikersModal rendu HORS du Modal principal
-        Évite les conflits de couches et z-index sur mobile
-      */}
+      {/* CommentLikersModal hors du Modal principal — évite les conflits de couches */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -438,17 +433,11 @@ export default function CommentsModal({
 
 const styles = StyleSheet.create({
 
-  // FIX — modalRoot remplace l'ancien modalContainer
-  // flex:1 + justifyContent:flex-end → le contenu reste collé en bas
+  // flex:1 + backgroundColor → le fond semi-transparent couvre tout l'écran.
+  // Pas de justifyContent ici — c'est le flex:1 du backdrop qui pousse le sheet en bas.
   modalRoot: {
     flex: 1,
-    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-
-  // FIX — KeyboardAvoidingView ne prend que la hauteur de son contenu
-  kavWrapper: {
-    width: '100%',
   },
 
   modalContent: {
@@ -456,8 +445,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '85%',
-    // FIX — flexShrink permet au contenu de se réduire correctement
-    // sans écraser le ScrollView ni déborder
     flexShrink: 1,
     ...Platform.select({
       ios: {
@@ -488,8 +475,6 @@ const styles = StyleSheet.create({
     padding: 4,
   },
 
-  // FIX — flexShrink:1 + flexGrow:1 permet au ScrollView de
-  // s'étirer correctement dans un parent maxHeight sans s'écraser
   commentsList: {
     flexShrink: 1,
     flexGrow: 1,
