@@ -1,9 +1,10 @@
-// ChatBox.tsx — v9
+// ChatBox.tsx — v10 (web + mobile)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, KeyboardAvoidingView,
-  Platform, SafeAreaView, Modal, Image, useWindowDimensions,
+  Platform, SafeAreaView, Modal, Image, Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -97,6 +98,70 @@ function resolveMimeType(uri: string, mimeType?: string | null): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
+// ─── Alert : Alert.alert (mobile) | window.alert (web) ───────────────────────
+const showAlert = (title: string, message?: string) => {
+  if (Platform.OS === 'web') {
+    window.alert(message ? `${title}\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+};
+
+// ─── Upload PUT vers Supabase ─────────────────────────────────────────────────
+//
+//  WEB    → fetch + blob (comportement original, inchangé)
+//  MOBILE → XMLHttpRequest natif (React Native résout l'URI locale vers les octets)
+//
+const uploadToSignedUrl = (
+  signedUrl: string,
+  uri:       string,
+  mimeType:  string,
+  fileName:  string,
+): Promise<void> => {
+  if (Platform.OS === 'web') {
+    return fetch(uri)
+      .then(r => r.blob())
+      .then(blob =>
+        fetch(signedUrl, {
+          method:  'PUT',
+          headers: { 'Content-Type': mimeType },
+          body:    blob,
+        })
+      )
+      .then(res => {
+        if (!res.ok) throw new Error(`PUT ${res.status}`);
+      });
+  }
+
+  // Mobile uniquement
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('Content-Type', mimeType);
+    xhr.onload   = () => xhr.status >= 200 && xhr.status < 300
+      ? resolve()
+      : reject(new Error(`PUT ${xhr.status}: ${xhr.responseText}`));
+    xhr.onerror   = () => reject(new Error('Upload réseau — erreur XHR'));
+    xhr.ontimeout = () => reject(new Error('Upload timeout'));
+    xhr.timeout   = 60000;
+    xhr.send({ uri, type: mimeType, name: fileName } as unknown as Document);
+  });
+};
+
+// ─── Transports socket.io ─────────────────────────────────────────────────────
+//
+//  WEB    → ['websocket'] uniquement
+//           Le serveur est configuré pour WebSocket pur. Ajouter 'polling'
+//           provoque des conflits CORS/proxy qui bloquent les événements.
+//
+//  MOBILE → ['websocket', 'polling']
+//           Sur réseau 4G/5G le WebSocket peut être interrompu silencieusement.
+//           Le fallback polling garantit la connexion.
+//
+const SOCKET_TRANSPORTS: string[] = Platform.OS === 'web'
+  ? ['websocket']
+  : ['websocket', 'polling'];
+
 // ─── Composant ────────────────────────────────────────────────────────────────
 
 export default function ChatBox({
@@ -106,12 +171,12 @@ export default function ChatBox({
   onBack, onNewMessage, onProfilePress,
 }: ChatBoxProps) {
 
-  // FIX #5 — useWindowDimensions au lieu de Dimensions.get() statique
-  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  // useWindowDimensions : réactif aux rotations (mobile) et redimensionnements (web)
+  const { width: WIN_W, height: WIN_H } = useWindowDimensions();
 
   const [messages,        setMessages]        = useState<Message[]>([]);
   const [input,           setInput]           = useState('');
-  const [loading,         setLoading]         = useState(true);   // FIX #2 — sert aussi de "isReady"
+  const [loading,         setLoading]         = useState(true);
   const [sending,         setSending]         = useState(false);
   const [uploading,       setUploading]       = useState(false);
   const [otherTyping,     setOtherTyping]     = useState(false);
@@ -130,13 +195,26 @@ export default function ChatBox({
   const socketRef   = useRef<Socket | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
+  const imgTapRef   = useRef<{ url: string; time: number } | null>(null);
+  const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
-  // FIX #3 — timeout de sécurité pour débloquer "sending" si message_sent jamais reçu
-  const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // sendTimer : garde-fou MOBILE uniquement.
+  // Sur mobile, si l'ack socket ne revient pas (réseau instable),
+  // "sending" resterait bloqué indéfiniment sans ce timeout.
+  // Sur web, le WebSocket est fiable — ce timer est inutile et peut
+  // créer des conflits d'état si l'ack et le timeout se chevauchent.
+  const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [fullscreenUrl, setFullscreenUrl] = useState<string | null>(null);
-  const imgTapRef  = useRef<{ url: string; time: number } | null>(null);
-  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
+
+  // ── clearSending ────────────────────────────────────────────────────────────
+  const clearSending = () => {
+    setSending(false);
+    if (Platform.OS !== 'web' && sendTimer.current) {
+      clearTimeout(sendTimer.current);
+      sendTimer.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!accessToken) return;
@@ -145,18 +223,16 @@ export default function ChatBox({
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
-      if (typingTimer.current)     clearTimeout(typingTimer.current);
-      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (sendTimer.current)   clearTimeout(sendTimer.current);
     };
   }, [conversationId, accessToken]);
 
   // ── Socket privé ────────────────────────────────────────────────────────────
 
   const buildPrivateSocket = (): Socket => {
-    // FIX #1 — Web : WebSocket seul (comportement actuel préservé)
-    //          Mobile : polling d'abord puis upgrade WebSocket automatique
     const socket = io(`${WS_BASE}/private-chat`, {
-      transports:       Platform.OS === 'web' ? ['websocket'] : ['polling', 'websocket'],
+      transports:        SOCKET_TRANSPORTS,
       reconnectionDelay: 2000,
     });
 
@@ -168,7 +244,12 @@ export default function ChatBox({
       });
     });
 
-    // FIX #2 — loading passe à false ici = signal "prêt à envoyer"
+    // Relâche "sending" si la connexion tombe — MOBILE uniquement
+    if (Platform.OS !== 'web') {
+      socket.on('connect_error', () => clearSending());
+      socket.on('disconnect',    () => clearSending());
+    }
+
     socket.on('joined', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
@@ -177,18 +258,18 @@ export default function ChatBox({
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
-      // FIX #3 — annuler le timeout de sécurité dès qu'on reçoit la confirmation
-      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      setSending(false);
+      clearSending();
       scrollToEnd();
     });
 
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
@@ -205,8 +286,7 @@ export default function ChatBox({
 
     socket.on('error', (err: { message: string }) => {
       console.warn('[ChatBox] privé erreur:', err.message);
-      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
-      setSending(false);
+      clearSending();
     });
 
     return socket;
@@ -215,9 +295,8 @@ export default function ChatBox({
   // ── Socket groupe ────────────────────────────────────────────────────────────
 
   const buildGroupSocket = (): Socket => {
-    // FIX #1 — même logique transport conditionnel
     const socket = io(`${WS_BASE}/group-chat`, {
-      transports:       Platform.OS === 'web' ? ['websocket'] : ['polling', 'websocket'],
+      transports:        SOCKET_TRANSPORTS,
       reconnectionDelay: 2000,
     });
 
@@ -229,7 +308,11 @@ export default function ChatBox({
       });
     });
 
-    // FIX #2 — loading passe à false ici = signal "prêt à envoyer"
+    if (Platform.OS !== 'web') {
+      socket.on('connect_error', () => clearSending());
+      socket.on('disconnect',    () => clearSending());
+    }
+
     socket.on('joined', (data: { messages: Message[]; group: any; members: any[] }) => {
       const msgs = data?.messages ?? [];
       setMessages(msgs.map(normalizeMsg));
@@ -241,18 +324,18 @@ export default function ChatBox({
     });
 
     socket.on('message_sent', (data: { message: Message }) => {
-      // FIX #3 — annuler le timeout de sécurité
-      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
       const msg = normalizeMsg(data.message);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      setSending(false);
+      clearSending();
       scrollToEnd();
     });
 
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (msg.senderId !== userId && Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       onNewMessage?.();
       scrollToEnd();
     });
@@ -283,8 +366,7 @@ export default function ChatBox({
 
     socket.on('error', (err: { message: string }) => {
       console.warn('[ChatBox] groupe erreur:', err.message);
-      if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current); // FIX #3
-      setSending(false);
+      clearSending();
     });
 
     return socket;
@@ -317,9 +399,14 @@ export default function ChatBox({
     setInput('');
     setSending(true);
 
-    // FIX #3 — timeout de sécurité : si message_sent n'arrive pas dans 12s, on débloque
-    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
-    sendingTimeoutRef.current = setTimeout(() => setSending(false), 12000);
+    // Timeout de sécurité MOBILE uniquement (voir commentaire sur sendTimer)
+    if (Platform.OS !== 'web') {
+      if (sendTimer.current) clearTimeout(sendTimer.current);
+      sendTimer.current = setTimeout(() => {
+        console.warn('[ChatBox] sendMessage timeout — relâchement forcé');
+        clearSending();
+      }, 10000);
+    }
 
     const reply = replyingTo;
     setReplyingTo(null);
@@ -412,21 +499,13 @@ export default function ChatBox({
     }
   };
 
-  // ── Upload media — Signed URL (userpro) ──────────────────────────────────────
-  //
-  // Flux en 3 étapes :
-  //   1. getUploadUrl  → le serveur génère une Signed URL + path
-  //   2. PUT direct    → le client uploade le fichier binaire vers Supabase
-  //   3. confirmUpload → le serveur vérifie et retourne l'URL publique
-  //
-  // FIX #6 — Web : fetch + blob (comportement actuel préservé)
-  //           Mobile : XMLHttpRequest natif (plus fiable pour les URI file://)
+  // ── Upload media ─────────────────────────────────────────────────────────────
 
   const pickAndUploadMedia = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
-        alert('Permission requise pour accéder à la galerie');
+        showAlert('Permission requise', "Autorisez l'accès à la galerie dans les réglages.");
         return;
       }
 
@@ -444,7 +523,7 @@ export default function ChatBox({
 
       setUploading(true);
 
-      // ── Étape 1 : obtenir la Signed Upload URL ─────────────────────────
+      // Étape 1 : Signed URL
       const urlRes = await fetch(`${WS_BASE}/media`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -462,52 +541,16 @@ export default function ChatBox({
 
       if (!urlData.success) {
         setUploading(false);
-        alert(urlData.error ?? 'Erreur génération URL upload');
+        showAlert(urlData.error ?? 'Erreur génération URL upload');
         return;
       }
 
       const { signed_url, path, bucket } = urlData;
 
-      // ── Étape 2 : upload binaire vers Supabase ─────────────────────────
-      // FIX #6 — comportement conditionnel Web / Mobile
-      let uploadOk = false;
+      // Étape 2 : upload — web=fetch/blob, mobile=XHR natif
+      await uploadToSignedUrl(signed_url, uri, mimeType, fileName);
 
-      if (Platform.OS === 'web') {
-        // Web : fetch + blob (comportement original préservé)
-        const fileBlob = await fetch(uri).then(r => r.blob());
-        const uploadRes = await fetch(signed_url, {
-          method:  'PUT',
-          headers: { 'Content-Type': mimeType },
-          body:    fileBlob,
-        });
-        uploadOk = uploadRes.ok;
-        if (!uploadOk) {
-          console.error('[ChatBox] PUT Supabase erreur:', uploadRes.status, await uploadRes.text());
-        }
-      } else {
-        // Mobile (iOS / Android) : XMLHttpRequest natif
-        // Plus fiable pour les URI file:// locales sur React Native
-        uploadOk = await new Promise<boolean>((resolve) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', signed_url);
-          xhr.setRequestHeader('Content-Type', mimeType);
-          xhr.onload  = () => resolve(xhr.status >= 200 && xhr.status < 300);
-          xhr.onerror = () => {
-            console.error('[ChatBox] XHR upload erreur');
-            resolve(false);
-          };
-          // React Native XHR accepte les objets { uri, type, name } natifs
-          xhr.send({ uri, type: mimeType, name: fileName } as any);
-        });
-      }
-
-      if (!uploadOk) {
-        setUploading(false);
-        alert("Erreur lors de l'upload vers le stockage");
-        return;
-      }
-
-      // ── Étape 3 : confirmer l'upload et récupérer l'URL publique ───────
+      // Étape 3 : confirmation
       const confirmRes = await fetch(`${WS_BASE}/media`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -524,18 +567,17 @@ export default function ChatBox({
       setUploading(false);
 
       if (!confirmData.success) {
-        alert(confirmData.error ?? 'Erreur confirmation upload');
+        showAlert(confirmData.error ?? 'Erreur confirmation upload');
         return;
       }
 
-      // ── Envoyer le message avec l'URL publique ─────────────────────────
       const mediaType = detectMediaType(mimeType, fileName);
       sendMessage(confirmData.url, mediaType);
 
     } catch (err) {
       setUploading(false);
       console.error('[ChatBox] upload erreur:', err);
-      alert("Erreur lors de l'upload");
+      showAlert("Erreur lors de l'upload", String(err));
     }
   };
 
@@ -568,11 +610,10 @@ export default function ChatBox({
 
   const isAuthor = (msg: Message) => msg.senderId === userId;
 
-  // ── Rendu media dans la bulle ────────────────────────────────────────────────
+  // ── Rendu media ──────────────────────────────────────────────────────────────
 
   const renderMediaContent = (msg: Message, fromMe: boolean) => {
     if (!msg.media_url) return null;
-
     const url  = msg.media_url;
     const type = (msg.mediaType && msg.mediaType !== 'text')
       ? msg.mediaType
@@ -598,7 +639,6 @@ export default function ChatBox({
         </TouchableOpacity>
       );
     }
-
     if (type === 'video') {
       return (
         <View style={S.mediaFileWrap}>
@@ -609,7 +649,6 @@ export default function ChatBox({
         </View>
       );
     }
-
     if (type === 'audio') {
       return (
         <View style={S.mediaFileWrap}>
@@ -620,7 +659,6 @@ export default function ChatBox({
         </View>
       );
     }
-
     if (type === 'document') {
       return (
         <View style={S.mediaFileWrap}>
@@ -631,7 +669,6 @@ export default function ChatBox({
         </View>
       );
     }
-
     return (
       <View style={S.mediaFileWrap}>
         <Ionicons name="attach-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
@@ -754,13 +791,11 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       >
         {hasMore && !loading && (
-          <TouchableOpacity
-            onPress={loadMore}
-            disabled={loadingMore}
-            style={S.loadMoreBtn}
-          >
+          <TouchableOpacity onPress={loadMore} disabled={loadingMore} style={S.loadMoreBtn}>
             {loadingMore
               ? <Text style={S.loadMoreTxt}>Chargement des données</Text>
               : <><Ionicons name="chevron-up" size={16} color="#8A2BE2" /><Text style={S.loadMoreTxt}>Voir les messages précédents</Text></>
@@ -812,8 +847,16 @@ export default function ChatBox({
       )}
 
       {/* ── Saisie ──────────────────────────────────────────────────────── */}
-      {/* FIX #4 — KeyboardAvoidingView : 'padding' iOS (inchangé), 'height' Android (au lieu de undefined) */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/*
+        KAV behavior :
+          iOS     → 'padding'   pousse le contenu au-dessus du clavier natif
+          Android → 'height'    réduit la hauteur (windowSoftInputMode gère le reste)
+          Web     → undefined   le navigateur gère seul
+      */}
+      <KeyboardAvoidingView
+        behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
         <View style={S.inputWrap}>
           {conversationType === 'group' && currentRole === 'userpro' && (
             <TouchableOpacity
@@ -837,15 +880,14 @@ export default function ChatBox({
             onChangeText={handleTyping}
             multiline
             maxLength={1000}
-            // FIX #2 — désactivé tant que loading (= joined pas encore reçu)
-            editable={!loading && !sending && !uploading}
+            editable={!sending && !uploading}
+            blurOnSubmit={false}
           />
 
           <TouchableOpacity
-            style={[S.sendBtn, (loading || !input.trim() || sending) && S.sendBtnDisabled]}
+            style={[S.sendBtn, (!input.trim() || sending) && S.sendBtnDisabled]}
             onPress={() => sendMessage()}
-            // FIX #2 — désactivé tant que loading (= joined pas encore reçu)
-            disabled={loading || !input.trim() || sending}
+            disabled={!input.trim() || sending}
             activeOpacity={0.7}
           >
             {sending
@@ -862,6 +904,7 @@ export default function ChatBox({
         transparent
         animationType="fade"
         onRequestClose={() => setShowActionSheet(false)}
+        statusBarTranslucent={Platform.OS === 'android'}
       >
         <TouchableOpacity
           style={S.modalOverlay}
@@ -875,11 +918,7 @@ export default function ChatBox({
                   <>
                     <TouchableOpacity
                       style={S.actionItem}
-                      onPress={() => {
-                        setReplyingTo(actionMsg);
-                        setReplyVisible(true);
-                        setShowActionSheet(false);
-                      }}
+                      onPress={() => { setReplyingTo(actionMsg); setReplyVisible(true); setShowActionSheet(false); }}
                     >
                       <Ionicons name="earth-outline" size={20} color="#8A2BE2" />
                       <View style={{ flex: 1 }}>
@@ -890,11 +929,7 @@ export default function ChatBox({
 
                     <TouchableOpacity
                       style={S.actionItem}
-                      onPress={() => {
-                        setReplyingTo(actionMsg);
-                        setReplyVisible(false);
-                        setShowActionSheet(false);
-                      }}
+                      onPress={() => { setReplyingTo(actionMsg); setReplyVisible(false); setShowActionSheet(false); }}
                     >
                       <Ionicons name="lock-closed-outline" size={20} color="#6B21A8" />
                       <View style={{ flex: 1 }}>
@@ -908,16 +943,9 @@ export default function ChatBox({
                 {conversationType === 'group' && isAuthor(actionMsg) && actionMsg.reply_to_id && !actionMsg.deletedAt && (
                   <TouchableOpacity
                     style={S.actionItem}
-                    onPress={() => {
-                      toggleVisibility(actionMsg);
-                      setShowActionSheet(false);
-                    }}
+                    onPress={() => { toggleVisibility(actionMsg); setShowActionSheet(false); }}
                   >
-                    <Ionicons
-                      name={actionMsg.is_visible ? 'eye-off-outline' : 'eye-outline'}
-                      size={20}
-                      color="#555"
-                    />
+                    <Ionicons name={actionMsg.is_visible ? 'eye-off-outline' : 'eye-outline'} size={20} color="#555" />
                     <Text style={S.actionTxt}>
                       {actionMsg.is_visible ? 'Rendre privé' : 'Rendre visible'}
                     </Text>
@@ -927,10 +955,7 @@ export default function ChatBox({
                 {isAuthor(actionMsg) && !actionMsg.deletedAt && (
                   <TouchableOpacity
                     style={S.actionItem}
-                    onPress={() => {
-                      deleteMessage(actionMsg);
-                      setShowActionSheet(false);
-                    }}
+                    onPress={() => { deleteMessage(actionMsg); setShowActionSheet(false); }}
                   >
                     <Ionicons name="trash-outline" size={20} color="#DC2626" />
                     <Text style={[S.actionTxt, { color: '#DC2626' }]}>Supprimer</Text>
@@ -953,16 +978,26 @@ export default function ChatBox({
         transparent
         animationType="fade"
         onRequestClose={() => setFullscreenUrl(null)}
+        statusBarTranslucent={Platform.OS === 'android'}
       >
         <TouchableOpacity
           style={S.fsOverlay}
           activeOpacity={1}
-          onPress={() => setFullscreenUrl(null)}
+          onPress={() => {
+            const now  = Date.now();
+            const last = imgTapRef.current;
+            if (last && last.url === fullscreenUrl && now - last.time < 350) {
+              imgTapRef.current = null;
+              setFullscreenUrl(null);
+            } else {
+              imgTapRef.current = { url: fullscreenUrl!, time: now };
+            }
+          }}
         >
-          {/* FIX #5 — dimensions dynamiques via useWindowDimensions */}
+          {/* WIN_W / WIN_H : réactif aux rotations via useWindowDimensions */}
           <Image
             source={{ uri: fullscreenUrl ?? '' }}
-            style={{ width: winWidth, height: winHeight * 0.82 }}
+            style={{ width: WIN_W, height: WIN_H * 0.82 }}
             resizeMode="contain"
           />
           <TouchableOpacity style={S.fsCloseBtn} onPress={() => setFullscreenUrl(null)}>
