@@ -225,7 +225,7 @@ export default function LikersModal({ visible, postId, onClose }: LikersModalPro
         <Image
           source={{ uri: liker.avatar_url }}
           style={styles.avatar}
-          defaultSource={require('app/assets/default-avatar.png')}
+          defaultSource={require('../app/assets/default-avatar.png')}
         />
       ) : (
         <View style={styles.avatarPlaceholder}>
