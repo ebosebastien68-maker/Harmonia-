@@ -1,4 +1,4 @@
-// ChatBox.tsx — v11 (optimistic UI + retries)
+// ChatBox.tsx — v9 (Optimisé Mobile & Web)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
@@ -11,16 +11,7 @@ import * as Haptics       from 'expo-haptics';
 import * as ImagePicker   from 'expo-image-picker';
 import { io, Socket }     from 'socket.io-client';
 
-// FIX: expo-file-system chargé uniquement sur mobile (pas de module web)
-const FileSystem: any = Platform.OS !== 'web'
-  ? require('expo-file-system')
-  : undefined;
-
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-
-// Délai entre chaque retry + durée max avant abandon (⏳ reste affiché)
-const RETRY_INTERVAL_MS = 5_000;
-const RETRY_MAX_MS      = 30_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,9 +39,6 @@ interface Message {
   is_private_reply?: boolean;
   replyTo?:         ReplyTo | null;
   mediaType?:       string | null;
-  // ── Optimistic UI ──────────────────────────────────────────────────────────
-  // 'sending' → ⏳  |  'sent' → ✔️  |  undefined → message historique confirmé
-  status?: 'sending' | 'sent';
 }
 
 interface ChatBoxProps {
@@ -70,6 +58,19 @@ interface ChatBoxProps {
   onNewMessage?:   () => void;
   onProfilePress?: (userId: string) => void;
 }
+
+// ─── Helpers Haptics Sécurisés (Anti-Crash Mobile) ─────────────────────────────
+const safeHapticImpact = (style: Haptics.ImpactFeedbackStyle) => {
+  if (Platform.OS !== 'web') {
+    try { Haptics.impactAsync(style); } catch (e) { console.warn('Haptics failed', e); }
+  }
+};
+
+const safeHapticNotification = (type: Haptics.NotificationFeedbackType) => {
+  if (Platform.OS !== 'web') {
+    try { Haptics.notificationAsync(type); } catch (e) { console.warn('Haptics failed', e); }
+  }
+};
 
 // ─── Helpers media ────────────────────────────────────────────────────────────
 
@@ -109,45 +110,6 @@ function resolveMimeType(uri: string, mimeType?: string | null): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
-// ─── Upload binaire conditionné web / mobile ──────────────────────────────────
-
-async function uploadBinaryFile(
-  signedUrl: string,
-  localUri:  string,
-  mimeType:  string,
-): Promise<{ ok: boolean; status: number; errorText?: string }> {
-
-  if (Platform.OS === 'web') {
-    try {
-      const fileBlob  = await fetch(localUri).then(r => r.blob());
-      const uploadRes = await fetch(signedUrl, {
-        method:  'PUT',
-        headers: { 'Content-Type': mimeType },
-        body:    fileBlob,
-      });
-      return {
-        ok:        uploadRes.ok,
-        status:    uploadRes.status,
-        errorText: uploadRes.ok ? undefined : await uploadRes.text(),
-      };
-    } catch (err: any) {
-      return { ok: false, status: 0, errorText: err?.message };
-    }
-  } else {
-    try {
-      const result = await FileSystem.uploadAsync(signedUrl, localUri, {
-        httpMethod:  'PUT',
-        headers:     { 'Content-Type': mimeType },
-        uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
-      });
-      const ok = result.status >= 200 && result.status < 300;
-      return { ok, status: result.status, errorText: ok ? undefined : result.body };
-    } catch (err: any) {
-      return { ok: false, status: 0, errorText: err?.message };
-    }
-  }
-}
-
 // ─── Composant ────────────────────────────────────────────────────────────────
 
 export default function ChatBox({
@@ -160,6 +122,7 @@ export default function ChatBox({
   const [messages,        setMessages]        = useState<Message[]>([]);
   const [input,           setInput]           = useState('');
   const [loading,         setLoading]         = useState(true);
+  const [sending,         setSending]         = useState(false);
   const [uploading,       setUploading]       = useState(false);
   const [otherTyping,     setOtherTyping]     = useState(false);
   const [otherOnline,     setOtherOnline]     = useState(otherUser?.isOnline ?? false);
@@ -173,35 +136,15 @@ export default function ChatBox({
   const [actionMsg,       setActionMsg]       = useState<Message | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
 
-  const scrollRef    = useRef<ScrollView>(null);
-  const socketRef    = useRef<Socket | null>(null);
-  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef  = useRef(false);
-
-  // ── Optimistic UI — file d'attente et timers de retry ─────────────────────
-  //
-  // pendingQueue : IDs temporaires dans l'ordre d'envoi.
-  //   Quand message_sent arrive, on dépile le premier pour remplacer le message
-  //   optimiste par le message confirmé par le serveur.
-  //
-  // retryTimers  : Map<tempId → intervalId>
-  //   Chaque message en ⏳ a un interval qui ré-émet le payload toutes les 5 s
-  //   pendant max 30 s. Après 30 s, l'interval s'arrête mais ⏳ reste affiché.
-
-  const pendingQueue = useRef<string[]>([]);
-  const retryTimers  = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-
-  const [fullscreenUrl,   setFullscreenUrl]   = useState<string | null>(null);
-  const imgTapRef    = useRef<{ url: string; time: number } | null>(null);
-  const lastTapRef   = useRef<{ id: string; time: number } | null>(null);
-
-  // ── Transports socket conditionné ─────────────────────────────────────────
-  // WEB    → ['websocket'] seul : connexion directe, instantanée
-  // MOBILE → ['websocket', 'polling'] : fallback si WS bloqué réseau 4G
-
-  const socketTransports = Platform.OS === 'web'
-    ? ['websocket']
-    : ['websocket', 'polling'];
+  const scrollRef     = useRef<ScrollView>(null);
+  const socketRef     = useRef<Socket | null>(null);
+  const typingTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timeoutRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef   = useRef(false);
+  
+  const [fullscreenUrl,    setFullscreenUrl]    = useState<string | null>(null);
+  const imgTapRef = useRef<{ url: string; time: number } | null>(null);
+  const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -211,107 +154,68 @@ export default function ChatBox({
       socket.removeAllListeners();
       socket.disconnect();
       if (typingTimer.current) clearTimeout(typingTimer.current);
-      retryTimers.current.forEach(t => clearInterval(t));
-      retryTimers.current.clear();
-      pendingQueue.current = [];
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [conversationId, accessToken]);
 
-  // ── Confirmation optimiste ─────────────────────────────────────────────────
-  //
-  // Appelé depuis les deux sockets sur 'message_sent'.
-  // Dépile le premier tempId en attente et remplace le message ⏳ par le vrai.
-
-  const confirmOptimistic = (raw: Message) => {
-    const confirmed = { ...normalizeMsg(raw), status: 'sent' as const };
-    const tempId    = pendingQueue.current.shift();
-
-    if (tempId) {
-      // Arrêter les retries pour ce message
-      const timer = retryTimers.current.get(tempId);
-      if (timer) { clearInterval(timer); retryTimers.current.delete(tempId); }
-
-      // Remplacer le message optimiste par le message confirmé
-      setMessages(prev => prev.map(m => m.id === tempId ? confirmed : m));
-    } else {
-      // Cas rare : pas de pending → ajouter sans doublon
-      setMessages(prev => prev.find(m => m.id === confirmed.id) ? prev : [...prev, confirmed]);
-    }
-  };
-
   // ── Socket privé ────────────────────────────────────────────────────────────
-
   const buildPrivateSocket = (): Socket => {
-    const socket = io(`${WS_BASE}/private-chat`, {
-      transports:        socketTransports,
-      reconnectionDelay: 2000,
-    });
+    const socket = io(`${WS_BASE}/private-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
 
     socket.on('connect', () => {
-      socket.emit('join_conversation', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        access_token:    accessToken,
-      });
+      socket.emit('join_conversation', { conversation_id: conversationId, user_id: userId, access_token: accessToken });
     });
-
     socket.on('joined', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
       setLoading(false);
       scrollToEnd();
     });
-
     socket.on('message_sent', (data: { message: Message }) => {
-      confirmOptimistic(data.message);
+      const msg = normalizeMsg(data.message);
+      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+      setSending(false);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       scrollToEnd();
     });
-
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
-      // Si c'est notre propre message et qu'on a des pending → message_sent s'en charge
-      if (msg.senderId === userId && pendingQueue.current.length > 0) return;
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
+      // Si c'est notre propre message qui nous revient en broadcast
+      if (msg.senderId === userId) {
+        setSending(false);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      } else {
+        safeHapticNotification(Haptics.NotificationFeedbackType.Success);
       }
+      
       onNewMessage?.();
       scrollToEnd();
     });
-
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false);
       setLoadingMore(false);
     });
-
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
       if (data.user_id !== userId) setOtherTyping(data.is_typing);
     });
-
-    socket.on('error', (err: { message: string }) => {
-      console.warn('[ChatBox] privé erreur:', err.message);
+    socket.on('error', (err: { message: string }) => { 
+      console.warn('[ChatBox] privé erreur:', err.message); 
+      setSending(false); 
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     });
-
     return socket;
   };
 
   // ── Socket groupe ────────────────────────────────────────────────────────────
-
   const buildGroupSocket = (): Socket => {
-    const socket = io(`${WS_BASE}/group-chat`, {
-      transports:        socketTransports,
-      reconnectionDelay: 2000,
-    });
+    const socket = io(`${WS_BASE}/group-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
 
     socket.on('connect', () => {
-      socket.emit('join_group', {
-        group_id:     conversationId,
-        user_id:      userId,
-        access_token: accessToken,
-      });
+      socket.emit('join_group', { group_id: conversationId, user_id: userId, access_token: accessToken });
     });
-
     socket.on('joined', (data: { messages: Message[]; group: any; members: any[] }) => {
       const msgs = data?.messages ?? [];
       setMessages(msgs.map(normalizeMsg));
@@ -321,33 +225,35 @@ export default function ChatBox({
       setLoading(false);
       scrollToEnd();
     });
-
     socket.on('message_sent', (data: { message: Message }) => {
-      confirmOptimistic(data.message);
+      const msg = normalizeMsg(data.message);
+      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+      setSending(false);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       scrollToEnd();
     });
-
     socket.on('new_message', (raw: any) => {
       const msg = normalizeMsg(raw?.message ?? raw);
-      if (msg.senderId === userId && pendingQueue.current.length > 0) return;
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      if (msg.senderId !== userId && Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
+      if (msg.senderId === userId) {
+        setSending(false);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      } else {
+        safeHapticNotification(Haptics.NotificationFeedbackType.Success);
       }
+
       onNewMessage?.();
       scrollToEnd();
     });
-
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false);
       setLoadingMore(false);
     });
-
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
       if (data.user_id !== userId) setOtherTyping(data.is_typing);
     });
-
     socket.on('message_deleted', (data: { message_id: string }) => {
       setMessages(prev => prev.map(m =>
         m.id === data.message_id
@@ -355,22 +261,20 @@ export default function ChatBox({
           : m
       ));
     });
-
     socket.on('visibility_changed', (data: { message_id: string; is_visible: boolean }) => {
       setMessages(prev => prev.map(m =>
         m.id === data.message_id ? { ...m, is_visible: data.is_visible } : m
       ));
     });
-
-    socket.on('error', (err: { message: string }) => {
-      console.warn('[ChatBox] groupe erreur:', err.message);
+    socket.on('error', (err: { message: string }) => { 
+      console.warn('[ChatBox] groupe erreur:', err.message); 
+      setSending(false); 
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     });
-
     return socket;
   };
 
   // ── Actions ──────────────────────────────────────────────────────────────────
-
   const scrollToEnd = () => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
@@ -387,21 +291,16 @@ export default function ChatBox({
     });
   };
 
-  // ── Envoi avec UI optimiste ───────────────────────────────────────────────
-  //
-  // 1. Crée un message temporaire avec id = 'tmp_xxx' et status = 'sending' (⏳)
-  // 2. L'ajoute immédiatement à la liste → affichage instantané
-  // 3. Émet le message au serveur
-  // 4. Lance des retries toutes les RETRY_INTERVAL_MS pendant RETRY_MAX_MS
-  //    Si message_sent arrive → confirmOptimistic() remplace ⏳ par ✔️
-  //    Si RETRY_MAX_MS s'écoule sans réponse → l'interval s'arrête, ⏳ reste
-
   const sendMessage = (mediaUrl?: string, mediaType?: string) => {
     const content = input.trim();
     if (!content && !mediaUrl) return;
+    if (sending) return;
 
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Utilisation sécurisée pour le Mobile
+    safeHapticImpact(Haptics.ImpactFeedbackStyle.Medium);
+
     setInput('');
+    setSending(true);
 
     const reply = replyingTo;
     setReplyingTo(null);
@@ -411,96 +310,40 @@ export default function ChatBox({
       emitTyping(false);
     }
 
-    // ── Message optimiste ────────────────────────────────────────────────
-    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    // Failsafe de 5 secondes au cas où le serveur/réseau mobile ne répond pas
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setSending(false);
+      console.warn("Délai d'envoi dépassé, déblocage de l'interface.");
+    }, 5000);
 
-    const optimisticMsg: Message = {
-      id:               tempId,
-      content:          content || null,
-      media_url:        mediaUrl  ?? null,
-      senderId:         userId,
-      isFromMe:         true,
-      senderName:       userName,
-      senderAvatar:     null,
-      createdAt:        new Date().toISOString(),
-      isRead:           false,
-      deletedAt:        null,
-      reply_to_id:      reply?.id    ?? null,
-      is_visible:       reply ? replyVisible : true,
-      is_private_reply: false,
-      replyTo:          reply ? {
-        id:            reply.id,
-        sender_id:     reply.senderId,
-        content:       reply.content,
-        sender_nom:    reply.senderName.split(' ').slice(1).join(' ') || reply.senderName,
-        sender_prenom: reply.senderName.split(' ')[0] ?? '',
-      } : null,
-      mediaType:        mediaType ?? null,
-      status:           'sending',
-    };
-
-    setMessages(prev => [...prev, optimisticMsg]);
-    pendingQueue.current.push(tempId);
+    if (conversationType === 'private') {
+      socketRef.current?.emit('send_message', {
+        conversation_id: conversationId,
+        user_id:         userId,
+        access_token:    accessToken,
+        content,
+      });
+    } else {
+      socketRef.current?.emit('send_message', {
+        group_id:     conversationId,
+        user_id:      userId,
+        access_token: accessToken,
+        content:      content || null,
+        type:         mediaType ?? 'text',
+        media_url:    mediaUrl  ?? null,
+        reply_to_id:  reply?.id ?? null,
+        is_visible:   reply ? replyVisible : true,
+      });
+    }
     scrollToEnd();
-
-    // ── Payload socket ────────────────────────────────────────────────────
-    const emitPayload = conversationType === 'private'
-      ? {
-          conversation_id: conversationId,
-          user_id:         userId,
-          access_token:    accessToken,
-          content,
-        }
-      : {
-          group_id:     conversationId,
-          user_id:      userId,
-          access_token: accessToken,
-          content:      content || null,
-          type:         mediaType ?? 'text',
-          media_url:    mediaUrl  ?? null,
-          reply_to_id:  reply?.id ?? null,
-          is_visible:   reply ? replyVisible : true,
-        };
-
-    // ── Émission initiale ─────────────────────────────────────────────────
-    socketRef.current?.emit('send_message', emitPayload);
-
-    // ── Retries silencieux toutes les RETRY_INTERVAL_MS ──────────────────
-    const startedAt = Date.now();
-    const interval  = setInterval(() => {
-      // Si le message a déjà été confirmé, l'interval a déjà été cleared
-      // Cette vérification est une sécurité supplémentaire
-      if (!pendingQueue.current.includes(tempId)) {
-        clearInterval(interval);
-        retryTimers.current.delete(tempId);
-        return;
-      }
-      if (Date.now() - startedAt >= RETRY_MAX_MS) {
-        // 30 s écoulées sans confirmation → abandon des retries, ⏳ reste affiché
-        clearInterval(interval);
-        retryTimers.current.delete(tempId);
-        return;
-      }
-      socketRef.current?.emit('send_message', emitPayload);
-    }, RETRY_INTERVAL_MS);
-
-    retryTimers.current.set(tempId, interval);
   };
 
   const emitTyping = (is_typing: boolean) => {
     if (conversationType === 'private') {
-      socketRef.current?.emit('typing', {
-        conversation_id: conversationId,
-        user_id:         userId,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { conversation_id: conversationId, user_id: userId, is_typing });
     } else {
-      socketRef.current?.emit('typing', {
-        group_id:  conversationId,
-        user_id:   userId,
-        user_name: userName,
-        is_typing,
-      });
+      socketRef.current?.emit('typing', { group_id: conversationId, user_id: userId, user_name: userName, is_typing });
     }
   };
 
@@ -532,13 +375,12 @@ export default function ChatBox({
       user_id:      userId,
       access_token: accessToken,
     });
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    safeHapticImpact(Haptics.ImpactFeedbackStyle.Light);
   };
 
   // ── Interactions sur les bulles ──────────────────────────────────────────────
-
   const handleLongPress = (msg: Message) => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    safeHapticImpact(Haptics.ImpactFeedbackStyle.Medium);
     setActionMsg(msg);
     setShowActionSheet(true);
   };
@@ -557,8 +399,7 @@ export default function ChatBox({
     }
   };
 
-  // ── Upload media — Signed URL ─────────────────────────────────────────────────
-
+  // ── Upload media ────────────────────────────────────────────────────────────
   const pickAndUploadMedia = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -581,7 +422,7 @@ export default function ChatBox({
 
       setUploading(true);
 
-      const urlRes  = await fetch(`${WS_BASE}/media`, {
+      const urlRes = await fetch(`${WS_BASE}/media`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -593,6 +434,7 @@ export default function ChatBox({
           context:      'media-premium',
         }),
       });
+
       const urlData = await urlRes.json();
 
       if (!urlData.success) {
@@ -603,18 +445,21 @@ export default function ChatBox({
 
       const { signed_url, path, bucket } = urlData;
 
-      const { ok: uploadOk, status: uploadStatus, errorText } = await uploadBinaryFile(
-        signed_url, uri, mimeType,
-      );
+      const fileBlob = await fetch(uri).then(r => r.blob());
 
-      if (!uploadOk) {
+      const uploadRes = await fetch(signed_url, {
+        method:  'PUT',
+        headers: { 'Content-Type': mimeType },
+        body:    fileBlob,
+      });
+
+      if (!uploadRes.ok) {
         setUploading(false);
         alert('Erreur lors de l\'upload vers le stockage');
-        console.error('[ChatBox] upload erreur:', uploadStatus, errorText);
         return;
       }
 
-      const confirmRes  = await fetch(`${WS_BASE}/media`, {
+      const confirmRes = await fetch(`${WS_BASE}/media`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -625,6 +470,7 @@ export default function ChatBox({
           bucket,
         }),
       });
+
       const confirmData = await confirmRes.json();
       setUploading(false);
 
@@ -633,8 +479,8 @@ export default function ChatBox({
         return;
       }
 
-      const mediaType = detectMediaType(mimeType, fileName);
-      sendMessage(confirmData.url, mediaType);
+      const mediaTypeDetected = detectMediaType(mimeType, fileName);
+      sendMessage(confirmData.url, mediaTypeDetected);
 
     } catch (err) {
       setUploading(false);
@@ -644,7 +490,6 @@ export default function ChatBox({
   };
 
   // ── Normalisation message ────────────────────────────────────────────────────
-
   const normalizeMsg = (msg: any): Message => ({
     id:               msg.id,
     content:          msg.content      ?? msg.text       ?? null,
@@ -661,7 +506,6 @@ export default function ChatBox({
     is_private_reply: msg.is_private_reply ?? false,
     replyTo:          msg.reply_to     ?? msg.replyTo    ?? null,
     mediaType:        msg.mediaType    ?? msg.type       ?? null,
-    // status non présent dans les messages serveur → undefined (historique confirmé)
   });
 
   const fmtTime = (value: string | null | undefined): string => {
@@ -673,28 +517,7 @@ export default function ChatBox({
 
   const isAuthor = (msg: Message) => msg.senderId === userId;
 
-  // ── Icône de statut ───────────────────────────────────────────────────────────
-  //
-  // Uniquement sur les messages envoyés par moi :
-  //   status === 'sending'   → ⏳  (en attente de confirmation serveur)
-  //   status === 'sent'      → ✔️  (confirmé)
-  //   status === undefined   → ✔️  (message historique, forcément confirmé)
-  //   isRead === true        → ✔✔  (lu, surpasse le statut)
-
-  const renderStatusIcon = (msg: Message) => {
-    if (!msg.isFromMe) return null;
-    if (msg.status === 'sending') {
-      return <Text style={S.msgTimeMe}> ⏳</Text>;
-    }
-    return (
-      <Text style={S.msgTimeMe}>
-        {msg.isRead ? ' ✓✓' : ' ✓'}
-      </Text>
-    );
-  };
-
   // ── Rendu media dans la bulle ────────────────────────────────────────────────
-
   const renderMediaContent = (msg: Message, fromMe: boolean) => {
     if (!msg.media_url) return null;
 
@@ -708,11 +531,11 @@ export default function ChatBox({
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() => {
-            const now  = Date.now();
+            const now = Date.now();
             const last = imgTapRef.current;
             if (last && last.url === url && now - last.time < 350) {
               imgTapRef.current = null;
-              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              safeHapticImpact(Haptics.ImpactFeedbackStyle.Light);
               setFullscreenUrl(url);
             } else {
               imgTapRef.current = { url, time: now };
@@ -723,6 +546,7 @@ export default function ChatBox({
         </TouchableOpacity>
       );
     }
+
     if (type === 'video') {
       return (
         <View style={S.mediaFileWrap}>
@@ -733,6 +557,7 @@ export default function ChatBox({
         </View>
       );
     }
+
     if (type === 'audio') {
       return (
         <View style={S.mediaFileWrap}>
@@ -743,6 +568,7 @@ export default function ChatBox({
         </View>
       );
     }
+
     if (type === 'document') {
       return (
         <View style={S.mediaFileWrap}>
@@ -753,6 +579,7 @@ export default function ChatBox({
         </View>
       );
     }
+
     return (
       <View style={S.mediaFileWrap}>
         <Ionicons name="attach-outline" size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
@@ -764,7 +591,6 @@ export default function ChatBox({
   };
 
   // ── Rendu bulle ──────────────────────────────────────────────────────────────
-
   const renderBubble = (msg: Message) => {
     const fromMe  = msg.isFromMe;
     const deleted = !!msg.deletedAt;
@@ -810,7 +636,6 @@ export default function ChatBox({
           </Text>
         )}
 
-        {/* Footer : heure + badge visibilité + statut ⏳/✔️ */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
           {isGroup && isAuthor(msg) && msg.reply_to_id && !deleted && (
             <Ionicons
@@ -820,16 +645,14 @@ export default function ChatBox({
             />
           )}
           <Text style={[S.msgTime, fromMe ? S.msgTimeMe : S.msgTimeThem]}>
-            {fmtTime(msg.createdAt)}
+            {fmtTime(msg.createdAt)}{fromMe && msg.isRead ? ' ✓✓' : ''}
           </Text>
-          {renderStatusIcon(msg)}
         </View>
       </TouchableOpacity>
     );
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
-
   return (
     <SafeAreaView style={S.container}>
 
@@ -877,7 +700,7 @@ export default function ChatBox({
         ref={scrollRef}
         style={S.msgs}
         contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="handled" // Ajout CLÉ pour le mobile : Ne vole pas le clic du bouton d'envoi !
       >
         {hasMore && !loading && (
           <TouchableOpacity
@@ -936,15 +759,13 @@ export default function ChatBox({
       )}
 
       {/* ── Saisie ──────────────────────────────────────────────────────── */}
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: 'padding', android: 'height', default: undefined })}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={S.inputWrap}>
           {conversationType === 'group' && currentRole === 'userpro' && (
             <TouchableOpacity
               style={S.mediaBtn}
               onPress={pickAndUploadMedia}
-              disabled={uploading}
+              disabled={uploading || sending}
               activeOpacity={0.7}
             >
               {uploading
@@ -962,19 +783,19 @@ export default function ChatBox({
             onChangeText={handleTyping}
             multiline
             maxLength={1000}
-            editable={!uploading}
-            returnKeyType="default"
-            blurOnSubmit={false}
+            editable={!sending && !uploading}
           />
 
-          {/* Bouton Send : jamais désactivé par sending → envoi instantané */}
           <TouchableOpacity
-            style={[S.sendBtn, !input.trim() && S.sendBtnDisabled]}
+            style={[S.sendBtn, (!input.trim() || sending) && S.sendBtnDisabled]}
             onPress={() => sendMessage()}
-            disabled={!input.trim() || uploading}
+            disabled={!input.trim() || sending}
             activeOpacity={0.7}
           >
-            <Ionicons name="send" size={20} color="#fff" />
+            {sending
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Ionicons name="send" size={20} color="#fff" />
+            }
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1070,7 +891,7 @@ export default function ChatBox({
         </TouchableOpacity>
       </Modal>
 
-      {/* ── Visionneuse plein écran ──────────────────────────────────────── */}
+      {/* ── Visionneuse plein écran ───────────── */}
       <Modal
         visible={!!fullscreenUrl}
         transparent
@@ -1081,7 +902,7 @@ export default function ChatBox({
           style={S.fsOverlay}
           activeOpacity={1}
           onPress={() => {
-            const now  = Date.now();
+            const now = Date.now();
             const last = imgTapRef.current;
             if (last && last.url === fullscreenUrl && now - last.time < 350) {
               imgTapRef.current = null;
@@ -1107,7 +928,6 @@ export default function ChatBox({
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-
 const S = StyleSheet.create({
   container:        { flex: 1, backgroundColor: '#F5F5F5' },
   header:           { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 10 : 20, paddingBottom: 15, paddingHorizontal: 15 },
