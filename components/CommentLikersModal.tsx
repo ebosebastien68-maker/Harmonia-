@@ -1,3 +1,4 @@
+// CommentLikersModal.tsx — v2 (fix backdrop mobile intercepting touches)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -14,9 +15,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ─── Remplace par l'URL de ton service Render ────────────────────────────────
 const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/comments';
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Liker {
   id: string;
@@ -56,12 +55,10 @@ export default function CommentLikersModal({
 
   const loadLikers = async () => {
     if (!commentId) return;
-
     setLoading(true);
     try {
       const sessionStr = await AsyncStorage.getItem('harmonia_session');
       if (!sessionStr) throw new Error('Session introuvable');
-
       const session = JSON.parse(sessionStr);
       const access_token: string = session.access_token;
 
@@ -76,10 +73,7 @@ export default function CommentLikersModal({
       });
 
       const data = await response.json();
-
-      if (data.success && data.likers) {
-        setLikers(data.likers);
-      }
+      if (data.success && data.likers) setLikers(data.likers);
     } catch (error) {
       console.error('[CommentLikersModal] Erreur:', error);
     } finally {
@@ -92,12 +86,24 @@ export default function CommentLikersModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.modalContainer}>
-        {/* Backdrop dans le flux */}
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+      {/*
+        FIX MOBILE — même pattern que CommentsModal v3 :
+        - modalRoot : flex:1 + backgroundColor (pas de justifyContent)
+        - backdrop  : TouchableOpacity flex:1 dans le flux
+        - sheet     : positionné naturellement sous le backdrop, sans chevauchement
+      */}
+      <View style={styles.modalRoot}>
+
+        {/* Backdrop dans le flux — flex:1 remplit tout l'espace au-dessus du sheet */}
+        <TouchableOpacity
+          style={{ flex: 1 }}
+          activeOpacity={1}
+          onPress={onClose}
+        />
 
         {/* Sheet */}
         <Animated.View style={[styles.modalContent, { opacity: fadeAnim }]}>
+
           {/* Handle */}
           <View style={styles.handle} />
 
@@ -114,7 +120,11 @@ export default function CommentLikersModal({
                 </Text>
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <MaterialIcons name="close" size={22} color="#9E9E9E" />
             </TouchableOpacity>
           </View>
@@ -152,6 +162,7 @@ export default function CommentLikersModal({
               ))
             )}
           </ScrollView>
+
         </Animated.View>
       </View>
     </Modal>
@@ -167,7 +178,7 @@ interface LikerRowProps {
 }
 
 function LikerRow({ liker, index, getInitials }: LikerRowProps) {
-  const slideAnim = useRef(new Animated.Value(24)).current;
+  const slideAnim   = useRef(new Animated.Value(24)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -194,7 +205,6 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
         { transform: [{ translateY: slideAnim }], opacity: opacityAnim },
       ]}
     >
-      {/* Avatar */}
       {liker.avatar_url ? (
         <Image source={{ uri: liker.avatar_url }} style={styles.avatar} />
       ) : (
@@ -205,14 +215,12 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
         </View>
       )}
 
-      {/* Nom */}
       <View style={styles.likerInfo}>
         <Text style={styles.likerName} numberOfLines={1}>
           {liker.prenom} {liker.nom}
         </Text>
       </View>
 
-      {/* Icône like */}
       <View style={styles.likeIconWrapper}>
         <MaterialIcons name="favorite" size={18} color="#7B1FA2" />
       </View>
@@ -223,19 +231,19 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  modalContainer: {
+
+  // FIX — flex:1 + backgroundColor sur le root (pas de justifyContent).
+  // C'est le backdrop flex:1 dans le flux qui pousse naturellement le sheet en bas.
+  modalRoot: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
-  backdrop: {
-    flex: 1,
-  },
+
   modalContent: {
     backgroundColor: '#FAFAFA',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '72%',
-    flexShrink: 1,
     paddingBottom: Platform.OS === 'ios' ? 36 : 24,
     ...Platform.select({
       ios: {
@@ -244,11 +252,10 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.12,
         shadowRadius: 12,
       },
-      android: {
-        elevation: 10,
-      },
+      android: { elevation: 10 },
     }),
   },
+
   handle: {
     width: 36,
     height: 4,
