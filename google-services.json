@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "492467723054",
+    "project_id": "harmonia-ef7b2",
+    "storage_bucket": "harmonia-ef7b2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:492467723054:android:a879248bfcda2b4db838bf",
+        "android_client_info": {
+          "package_name": "com.harmonia.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCl26BwH2zkiaenqSuJTdDqwm71zWP7mZg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
