@@ -1,4 +1,4 @@
-// CommentsModal.tsx — v3 (fix backdrop mobile intercepting touches)
+// CommentsModal.tsx — v4 (fix scroll mobile)
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -306,27 +306,24 @@ export default function CommentsModal({
         transparent
         onRequestClose={onClose}
       >
-        {/*
-          FIX MOBILE — le KAV est à la racine du Modal (flex:1).
-          Le backdrop est un TouchableOpacity flex:1 dans le flux,
-          au-dessus du sheet → il ne chevauche plus le contenu
-          et ne capte plus les touches destinées aux boutons.
-        */}
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <View style={styles.modalRoot}>
 
-            {/* Backdrop dans le flux — flex:1 remplit tout l'espace au-dessus du sheet */}
+            {/* Backdrop */}
             <TouchableOpacity
               style={{ flex: 1 }}
               activeOpacity={1}
               onPress={onClose}
             />
 
-            {/* Sheet — positionné naturellement sous le backdrop, sans chevauchement */}
+            {/* Sheet */}
             <View style={styles.modalContent}>
+
+              {/* Handle bar */}
+              <View style={styles.handleBar} />
 
               {/* Header */}
               <View style={styles.header}>
@@ -336,7 +333,7 @@ export default function CommentsModal({
                 </TouchableOpacity>
               </View>
 
-              {/* Liste */}
+              {/* Liste — FIX: flex:1 au lieu de flexShrink/flexGrow */}
               <ScrollView
                 style={styles.commentsList}
                 contentContainerStyle={styles.commentsListContent}
@@ -416,7 +413,7 @@ export default function CommentsModal({
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* CommentLikersModal hors du Modal principal — évite les conflits de couches */}
+      {/* CommentLikersModal hors du Modal principal */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -433,19 +430,19 @@ export default function CommentsModal({
 
 const styles = StyleSheet.create({
 
-  // flex:1 + backgroundColor → le fond semi-transparent couvre tout l'écran.
-  // Pas de justifyContent ici — c'est le flex:1 du backdrop qui pousse le sheet en bas.
   modalRoot: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
 
+  // FIX: overflow:'hidden' + sans flexShrink pour que le ScrollView
+  // puisse calculer sa hauteur correctement sur mobile
   modalContent: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '85%',
-    flexShrink: 1,
+    overflow: 'hidden',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -457,12 +454,22 @@ const styles = StyleSheet.create({
     }),
   },
 
+  handleBar: {
+    width: 36,
+    height: 4,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
@@ -475,14 +482,15 @@ const styles = StyleSheet.create({
     padding: 4,
   },
 
+  // FIX: flex:1 remplace flexShrink/flexGrow — le ScrollView connaît
+  // maintenant sa hauteur et peut scroller vers le haut correctement
   commentsList: {
-    flexShrink: 1,
-    flexGrow: 1,
+    flex: 1,
     paddingHorizontal: 16,
   },
+  // FIX: plus de flexGrow:1 dans le contentContainerStyle
   commentsListContent: {
     paddingVertical: 8,
-    flexGrow: 1,
   },
 
   loadingContainer: {
