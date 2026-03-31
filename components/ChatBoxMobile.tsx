@@ -1,22 +1,23 @@
-// ChatBoxMobile.tsx — Mobile (UI optimiste complète) — v5
+// ChatBoxMobile.tsx — Mobile (UI optimiste complète) — v4
 //
-// v5 — Correction envoi multiple :
-//   Le retry automatique (scheduleNextAttempt) est remplacé par un simple
-//   timeout vers _failed. Plus aucun emit() automatique → zéro doublon serveur.
-//   Le réenvoi n'a lieu QUE sur action explicite de l'utilisateur (bouton ⟳).
+// Corrections v4 :
+//   [Fix 5] Guard isSendingRef → empêche le double-tap / envoi multiple
+//   [Fix 6] new_message : déduplication par contenu/media pour l'expéditeur
+//           plutôt que par pendingQueue.length → évite les doublons si le
+//           serveur envoie à la fois message_sent ET new_message
 //
-// Statuts visuels :
-//   ⏳  message en attente de confirmation (jusqu'à 10s)
-//   ✓   confirmé, non lu
-//   ✓✓  confirmé, lu
-//   ❌  bouton Réessayer (après 10s sans réponse)
+// Logique de retry (inchangée depuis v3) :
+//   • Envoi initial → démarre un timeout de 10s
+//   • Succès reçu   → clearTimeout immédiat → ✓ affiché instantanément
+//   • 10s sans réponse → nouvelle tentative (setTimeout chaîné, pas setInterval)
+//   • 60s total sans succès → _failed → bouton Réessayer
+//   • Chaque tentative attend son propre échec avant d'en lancer une autre
 //
-// [Fix 5] isSendingRef         → guard anti double-tap
-// [Fix 6] handleNewMessage     → déduplication par contenu/media (message_sent + new_message)
-// [Fix 1] confirmOptimistic    → matching contenu/media, pas shift FIFO
-// [Fix 2] long press           → désactivé sur _pending / _failed
-// [Fix 3] _failed + Réessayer  → réenvoi manuel uniquement
-// [Fix 4] indexOf avant splice → évite de dépiler un tempId déjà confirmé
+// Corrections maintenues depuis v2 :
+//   [Fix 1] Race condition → matching contenu/media (pas shift FIFO)
+//   [Fix 2] Long press désactivé sur _pending / _failed
+//   [Fix 3] État _failed + bouton Réessayer
+//   [Fix 4] Double confirmation → vérif indexOf avant dépilage
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -32,7 +33,8 @@ import { io, Socket }     from 'socket.io-client';
 import type { ChatBoxProps } from './ChatBoxTypes';
 
 const WS_BASE         = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-const ATTEMPT_TIMEOUT = 10_000;  // 10s sans réponse → _failed
+const ATTEMPT_TIMEOUT = 10_000;  // 10s : délai d'attente par tentative
+const RETRY_MAX       = 60_000;  // 60s : durée totale avant abandon
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,9 +49,9 @@ interface Message {
   deletedAt?: string | null; reply_to_id?: string | null;
   is_visible?: boolean; is_private_reply?: boolean;
   replyTo?: ReplyTo | null; mediaType?: string | null;
-  _tempId?:  string;
-  _pending?: boolean;
-  _failed?:  boolean;
+  _tempId?:  string;   // présent uniquement sur les messages optimistes
+  _pending?: boolean;  // true = ⏳
+  _failed?:  boolean;  // true = ❌ (60s sans réponse)
 }
 
 // ─── Safe haptics ─────────────────────────────────────────────────────────────
@@ -92,7 +94,7 @@ function resolveMimeType(uri: string, mimeType?: string | null): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
-// ─── Composant ────────────────────────────────────────────────────────────────
+// ─── Composant Mobile ─────────────────────────────────────────────────────────
 
 export default function ChatBoxMobile({
   conversationId, conversationType, userId, userName = 'Moi',
@@ -123,12 +125,12 @@ export default function ChatBoxMobile({
   const imgTapRef   = useRef<{ url: string; time: number } | null>(null);
   const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
-  // tempId → payload (conservé pour le réenvoi manuel)
+  // tempId → payload pour retries et matching [Fix 1]
   const pendingPayloads = useRef<Map<string, any>>(new Map());
   // tempId dans l'ordre d'envoi [Fix 4]
   const pendingQueue    = useRef<string[]>([]);
-  // tempId → timeout _failed (un seul par message, PAS de réémission auto)
-  const failureTimers   = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // tempId → setTimeout actif (un seul par message à la fois)
+  const retryTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // [Fix 5] Guard anti double-tap
   const isSendingRef    = useRef(false);
 
@@ -139,42 +141,17 @@ export default function ChatBoxMobile({
     return () => {
       socket.removeAllListeners(); socket.disconnect();
       if (typingTimer.current) clearTimeout(typingTimer.current);
-      failureTimers.current.forEach(t => clearTimeout(t));
-      failureTimers.current.clear();
+      retryTimers.current.forEach(t => clearTimeout(t));
+      retryTimers.current.clear();
       pendingQueue.current = [];
       pendingPayloads.current.clear();
     };
   }, [conversationId, accessToken]);
 
-  // ─── Timeout → _failed ───────────────────────────────────────────────────────
-  //
-  // Un seul setTimeout par message.
-  // S'il expire → marque _failed, nettoie le pending.
-  // Si message_sent/new_message arrive avant → clearTimeout dans confirmOptimistic.
-
-  const scheduleFailure = (tempId: string) => {
-    const t = setTimeout(() => {
-      // Déjà confirmé entre-temps → rien à faire
-      if (!pendingQueue.current.includes(tempId)) return;
-
-      failureTimers.current.delete(tempId);
-
-      // Retire du suivi pending (le payload reste pour le réenvoi manuel)
-      const idx = pendingQueue.current.indexOf(tempId);
-      if (idx !== -1) pendingQueue.current.splice(idx, 1);
-
-      setMessages(prev => prev.map(m =>
-        m._tempId === tempId ? { ...m, _pending: false, _failed: true } : m
-      ));
-    }, ATTEMPT_TIMEOUT);
-
-    failureTimers.current.set(tempId, t);
-  };
-
-  // ─── Confirmation optimiste ──────────────────────────────────────────────────
-  // [Fix 1 + Fix 4]
-  // Appelée dès que message_sent ou new_message (propre) arrive.
-  // → clearTimeout immédiat → ✓ affiché instantanément
+  // ─── [Fix 1 + Fix 4] Confirmation optimiste ──────────────────────────────────
+  // Dès que message_sent ou new_message (propre) arrive :
+  //   → clearTimeout immédiat du timer en cours → ✓ affiché instantanément
+  //   → matching par contenu/media pour identifier le bon tempId
 
   const confirmOptimistic = (raw: any) => {
     const confirmed: Message = { ...normalizeMsg(raw), _pending: false, _failed: false };
@@ -196,9 +173,9 @@ export default function ChatBoxMobile({
         return;
       }
 
-      // Annuler le timeout _failed immédiatement
-      const t = failureTimers.current.get(matchedTempId);
-      if (t) { clearTimeout(t); failureTimers.current.delete(matchedTempId); }
+      // Annuler le timeout immédiatement → confirmation instantanée, pas d'attente des 10s
+      const t = retryTimers.current.get(matchedTempId);
+      if (t) { clearTimeout(t); retryTimers.current.delete(matchedTempId); }
 
       pendingQueue.current.splice(idx, 1);
       pendingPayloads.current.delete(matchedTempId);
@@ -210,13 +187,16 @@ export default function ChatBoxMobile({
   };
 
   // ─── [Fix 6] Handler new_message partagé ────────────────────────────────────
-  // Pour l'expéditeur : tente de matcher un pending avant d'ajouter.
-  // Évite les doublons quand le serveur envoie à la fois message_sent ET new_message.
+  // Pour l'expéditeur courant : tente d'abord de matcher un pending par
+  // contenu/media. Si aucun pending ne correspond → doublon serveur → déduplique
+  // par id uniquement. Cela couvre le cas où le serveur envoie à la fois
+  // message_sent ET new_message pour le même envoi.
 
   const handleNewMessage = (raw: any) => {
     const msg = normalizeMsg(raw?.message ?? raw);
 
     if (msg.senderId === userId) {
+      // Cherche si un pending correspond (même contenu/media)
       let matched = false;
       for (const [, payload] of pendingPayloads.current.entries()) {
         const contentMatch = (payload.content ?? null) === (msg.content ?? null);
@@ -226,6 +206,7 @@ export default function ChatBoxMobile({
       if (matched) {
         confirmOptimistic(raw?.message ?? raw);
       } else {
+        // Aucun pending : doublon serveur, on déduplique par id
         setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
       }
       scrollToEnd();
@@ -252,6 +233,7 @@ export default function ChatBoxMobile({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
+    // [Fix 6]
     socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
@@ -282,6 +264,7 @@ export default function ChatBoxMobile({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
+    // [Fix 6]
     socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
@@ -325,10 +308,44 @@ export default function ChatBoxMobile({
         media_url: mediaUrl ?? null, reply_to_id: replyId ?? null,
         is_visible: isVisible ?? true };
 
+  // ─── Retry séquentiel : setTimeout chaîné ────────────────────────────────────
+  //
+  // Un seul timer actif par message à la fois.
+  // À l'expiration des 10s :
+  //   - si déjà confirmé  → stop
+  //   - si >= 60s totales → _failed
+  //   - sinon             → émet + repose un nouveau setTimeout de 10s
+  //
+  // Si succès arrive → confirmOptimistic() clearTimeout immédiatement
+  // → le callback de ce setTimeout ne s'exécutera jamais.
+
+  const scheduleNextAttempt = (tempId: string, payload: any, startedAt: number) => {
+    const t = setTimeout(() => {
+      // Déjà confirmé entre-temps
+      if (!pendingQueue.current.includes(tempId)) return;
+
+      // 60s dépassées → marquer échoué
+      if (Date.now() - startedAt >= RETRY_MAX) {
+        retryTimers.current.delete(tempId);
+        setMessages(prev => prev.map(m =>
+          m._tempId === tempId ? { ...m, _pending: false, _failed: true } : m
+        ));
+        return;
+      }
+
+      // Nouvelle tentative puis replanifier un autre timeout de 10s
+      socketRef.current?.emit('send_message', payload);
+      scheduleNextAttempt(tempId, payload, startedAt);
+
+    }, ATTEMPT_TIMEOUT);
+
+    retryTimers.current.set(tempId, t);
+  };
+
   // ─── Envoi optimiste ─────────────────────────────────────────────────────────
 
   const sendMessage = (mediaUrl?: string, mediaType?: string) => {
-    // [Fix 5] Guard anti double-tap
+    // [Fix 5] Guard anti double-tap : on bloque si un envoi est déjà en cours
     if (isSendingRef.current) return;
 
     const content = input.trim();
@@ -378,38 +395,34 @@ export default function ChatBoxMobile({
     const payload = buildPayload(content || null, mediaUrl, mediaType, reply?.id, reply ? replyVisible : true);
     pendingPayloads.current.set(tempId, payload);
 
-    // Un seul envoi — pas de retry automatique
+    // Tentative initiale immédiate
     socketRef.current?.emit('send_message', payload);
-    // Timeout → _failed si pas de réponse dans 10s
-    scheduleFailure(tempId);
+    // Démarrer la chaîne : 1er retry possible dans 10s si pas de réponse
+    scheduleNextAttempt(tempId, payload, Date.now());
 
-    // [Fix 5] Libère le guard après 300ms
+    // [Fix 5] Libère le guard après 300ms (largement suffisant pour le re-render)
     setTimeout(() => { isSendingRef.current = false; }, 300);
   };
 
-  // ─── [Fix 3] Réenvoi manuel d'un message échoué ──────────────────────────────
-  // Appelé uniquement sur action explicite de l'utilisateur.
-  // Un seul emit → un seul timeout → pas de doublon possible.
+  // ─── [Fix 3] Réessayer un message échoué ─────────────────────────────────────
 
   const retrySend = (msg: Message) => {
     if (!msg._tempId) return;
     hapticImpact(Haptics.ImpactFeedbackStyle.Light);
 
-    // Réutilise le payload stocké, ou le reconstruit si absent
-    const payload = pendingPayloads.current.get(msg._tempId)
-      ?? buildPayload(msg.content, msg.media_url ?? undefined, msg.mediaType ?? undefined, msg.reply_to_id, msg.is_visible);
+    const payload = buildPayload(
+      msg.content, msg.media_url ?? undefined,
+      msg.mediaType ?? undefined, msg.reply_to_id, msg.is_visible
+    );
 
     setMessages(prev => prev.map(m =>
       m._tempId === msg._tempId ? { ...m, _pending: true, _failed: false } : m
     ));
-
-    // Remet dans le suivi
-    if (!pendingQueue.current.includes(msg._tempId))
-      pendingQueue.current.push(msg._tempId);
+    pendingQueue.current.push(msg._tempId);
     pendingPayloads.current.set(msg._tempId, payload);
 
     socketRef.current?.emit('send_message', payload);
-    scheduleFailure(msg._tempId);
+    scheduleNextAttempt(msg._tempId, payload, Date.now());
   };
 
   // ─── Typing ───────────────────────────────────────────────────────────────────
@@ -439,7 +452,7 @@ export default function ChatBoxMobile({
     hapticImpact(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  // [Fix 2] Pas de long press sur _pending / _failed
+  // [Fix 2] Pas de long press tant que le message n'est pas confirmé
   const handleLongPress = (msg: Message) => {
     if (msg._pending || msg._failed) return;
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
