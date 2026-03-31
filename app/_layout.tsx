@@ -1,29 +1,59 @@
-import { Stack }               from 'expo-router';
-import { useEffect }            from 'react';
-import { Animated, Platform }   from 'react-native';
-import * as Notifications       from 'expo-notifications';
+import { Stack }             from 'expo-router';
+import { useEffect }          from 'react';
+import { Animated, Platform } from 'react-native';
+import * as Notifications     from 'expo-notifications';
+import AsyncStorage           from '@react-native-async-storage/async-storage';
 
-// ── Patch fetch global — mobile uniquement ────────────────────────────────────
-// Ajoute automatiquement x-api-key sur toutes les requêtes fetch
-// quand l'app tourne sur iOS ou Android (pas sur web).
-// Aucune modification nécessaire dans les autres fichiers.
-if (Platform.OS !== 'web') {
+// ══════════════════════════════════════════════════════════════════════════════
+// PATCH FETCH GLOBAL — iOS · Android · Web
+//
+// Injecte automatiquement sur chaque requête fetch :
+//   • x-api-key     : clé API du backend (variable d'env EXPO_PUBLIC_API_KEY)
+//   • Authorization : Bearer <access_token> lu dans AsyncStorage (harmonia_session)
+//
+// Règles :
+//   • Le token est lu à chaque appel → toujours à jour après login / logout
+//   • Si pas de session → Authorization omis, aucun crash
+//   • Les headers explicites passés dans fetch() ont toujours la priorité
+//   • Sur web : AsyncStorage est émulé via localStorage par Expo → même API
+// ══════════════════════════════════════════════════════════════════════════════
+(() => {
   const originalFetch = global.fetch;
-  global.fetch = (input: any, init: any = {}) => {
+
+  global.fetch = async (input: any, init: any = {}) => {
+    let authHeader: Record<string, string> = {};
+
+    try {
+      const raw = await AsyncStorage.getItem('harmonia_session');
+      if (raw) {
+        const session = JSON.parse(raw);
+        if (session?.access_token) {
+          authHeader = { Authorization: `Bearer ${session.access_token}` };
+        }
+      }
+    } catch {
+      // Session illisible ou AsyncStorage indisponible → on continue sans token
+    }
+
     init.headers = {
-      ...init.headers,
-      'x-api-key': process.env.EXPO_PUBLIC_API_KEY || '',
+      ...authHeader,        // 1. token de session (si disponible)
+      ...init.headers,      // 2. headers explicites de l'appelant (priorité sur authHeader)
+      'x-api-key': process.env.EXPO_PUBLIC_API_KEY || '',  // 3. toujours présent
     };
+
     return originalFetch(input, init);
   };
-}
-// ─────────────────────────────────────────────────────────────────────────────
+})();
+// ══════════════════════════════════════════════════════════════════════════════
 
-// ── Patch Animated sur web ────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// PATCH ANIMATED — Web uniquement
+//
 // Certaines libs tierces (LinearGradient, RefreshControl…) passent
-// useNativeDriver:true sur web → warning + blocage JS.
-// Ce bloc intercepte tous les appels Animated et force useNativeDriver:false
-// uniquement sur web. Sur mobile : aucun effet.
+// useNativeDriver: true sur web → warning + blocage JS.
+// Ce bloc force useNativeDriver: false uniquement sur web.
+// Sur iOS / Android : aucun effet.
+// ══════════════════════════════════════════════════════════════════════════════
 if (Platform.OS === 'web') {
   const patch = (config: any) =>
     config && typeof config === 'object'
@@ -39,7 +69,7 @@ if (Platform.OS === 'web') {
   const _decay = Animated.decay;
   (Animated as any).decay  = (v: any, c: any) => _decay(v, patch(c));
 }
-// ─────────────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
 
 export default function RootLayout() {
   useEffect(() => {
@@ -52,11 +82,5 @@ export default function RootLayout() {
     });
   }, []);
 
-  return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    />
-  );
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
