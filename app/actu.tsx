@@ -41,8 +41,8 @@ const FEED_FIRST_LIMIT    = 5;
 const FEED_NEXT_LIMIT     = 10;
 const LOAD_MORE_THRESHOLD = 0.85;
 
-// Violet Facebook-like
-const LIKE_ACTIVE_COLOR = '#7C3AED';
+// Violet moderne Material Purple
+const LIKE_ACTIVE_COLOR = '#7B1FA2';
 
 type FilterMode  = 'all' | 'posts' | 'images' | 'videos' | 'music';
 type GameType    = 'arts' | 'performance' | 'music' | 'artisanat';
@@ -344,25 +344,23 @@ const PostCard = React.memo(({
 
         <View style={styles.actionsBar}>
 
-          {/* ── Like (style Facebook violet) ──────────────────────────── */}
+          {/* ── Like — style Facebook violet moderne ───────────────────── */}
           <TouchableOpacity
-            style={[styles.actionBtn, liked && styles.actionBtnActive]}
+            style={[styles.actionBtn, liked && styles.actionBtnLiked]}
             onPress={handleLike}
             disabled={isAnim}
+            activeOpacity={0.75}
           >
-            <LinearGradient
-              colors={liked ? [LIKE_ACTIVE_COLOR, LIKE_ACTIVE_COLOR] : ['transparent', 'transparent']}
-              style={styles.actionGrad}
-            >
+            <View style={[styles.actionGrad, liked && styles.actionGradLiked]}>
               <Ionicons
                 name={liked ? 'thumbs-up' : 'thumbs-up-outline'}
-                size={20}
-                color={liked ? '#FFF' : '#666'}
+                size={19}
+                color={liked ? '#FFF' : LIKE_ACTIVE_COLOR}
               />
-              <Text style={[styles.actionText, liked && styles.actionTextActive]}>
+              <Text style={[styles.actionText, liked ? styles.actionTextLiked : styles.actionTextLike]}>
                 {liked ? 'Liké' : 'Liker'}
               </Text>
-            </LinearGradient>
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.actionBtn} onPress={() => { if (NATIVE) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onOpenComments(post.id); }}>
@@ -858,12 +856,24 @@ export default function ActuScreen() {
   };
 
   // ─── Feed affiché selon le filtre ─────────────────────────────────────────
+  // Déduplication : élimine les doublons côté client (appels concurrents,
+  // données serveur dupliquées) → résout le warning "two children with same key".
+  const dedup = (items: FeedItem[]): FeedItem[] => {
+    const seen = new Map<string, FeedItem>();
+    for (const item of items) {
+      const k = `${item.item_type}-${item.id}`;
+      if (!seen.has(k)) seen.set(k, item);
+    }
+    return Array.from(seen.values());
+  };
+
   const displayedItems: FeedItem[] = (() => {
-    if (filterMode === 'posts')  return posts;
-    if (filterMode === 'images') return submissions.filter(s => s.game_type === 'arts');
-    if (filterMode === 'videos') return submissions.filter(s => s.game_type === 'performance' || s.game_type === 'artisanat');
-    if (filterMode === 'music')  return submissions.filter(s => s.game_type === 'music');
-    return [...posts, ...submissions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    if (filterMode === 'posts')  return dedup(posts);
+    if (filterMode === 'images') return dedup(submissions.filter(s => s.game_type === 'arts'));
+    if (filterMode === 'videos') return dedup(submissions.filter(s => s.game_type === 'performance' || s.game_type === 'artisanat'));
+    if (filterMode === 'music')  return dedup(submissions.filter(s => s.game_type === 'music'));
+    const merged = [...posts, ...submissions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return dedup(merged);
   })();
 
   const allVideoItems: VideoFeedItem[] = displayedItems
@@ -1528,11 +1538,15 @@ const styles = StyleSheet.create({
   statsRight:        { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statsSep:          { color: '#CCC' },
   actionsBar:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingTop: 6, gap: 3 },
-  actionBtn:         { flex: 1, borderRadius: 8, overflow: 'hidden' },
+  actionBtn:         { flex: 1, borderRadius: 20, overflow: 'hidden' },
   actionBtnActive:   {},
-  actionGrad:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5 },
-  actionText:        { fontSize: 12, fontWeight: '600', color: '#666' },
+  actionBtnLiked:    { borderRadius: 20 },
+  actionGrad:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 10, gap: 5, borderRadius: 20 },
+  actionGradLiked:   { backgroundColor: '#7B1FA2', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 12 },
+  actionText:        { fontSize: 12, fontWeight: '700', color: '#666' },
   actionTextActive:  { color: '#FFF' },
+  actionTextLike:    { fontSize: 12, fontWeight: '700', color: '#7B1FA2' },
+  actionTextLiked:   { fontSize: 12, fontWeight: '700', color: '#FFF' },
   saveBtn:           { padding: 8 },
 
   subCard:          { backgroundColor: '#fff', marginHorizontal: 12, marginVertical: 6, borderRadius: 14, overflow: 'hidden' },
