@@ -12,7 +12,7 @@ import {
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { io, Socket }     from 'socket.io-client';
-import type { ChatBoxProps } from './ChatBox';
+import type { ChatBoxProps } from './ChatBoxTypes';
 
 const WS_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 
