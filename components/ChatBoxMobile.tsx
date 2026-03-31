@@ -20,7 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
 import * as ImagePicker   from 'expo-image-picker';
 import { io, Socket }     from 'socket.io-client';
-import type { ChatBoxProps } from './ChatBox';
+import type { ChatBoxProps } from './ChatBoxTypes';
 
 const WS_BASE          = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const RETRY_INTERVAL   = 5_000;   // retry toutes les 5s
@@ -116,8 +116,8 @@ export default function ChatBoxMobile({
   const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
 
   // File FIFO des tempIds en attente de confirmation + leurs timers retry
-  const pendingQueue  = useRef<string[]>([]);
-  const retryTimers   = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const pendingQueue    = useRef<string[]>([]);
+  const retryTimers     = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   // Payloads conservés pour les retries
   const pendingPayloads = useRef<Map<string, any>>(new Map());
 
@@ -130,7 +130,7 @@ export default function ChatBoxMobile({
       if (typingTimer.current) clearTimeout(typingTimer.current);
       retryTimers.current.forEach(t => clearInterval(t));
       retryTimers.current.clear();
-      pendingQueue.current   = [];
+      pendingQueue.current = [];
       pendingPayloads.current.clear();
     };
   }, [conversationId, accessToken]);
