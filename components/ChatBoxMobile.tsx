@@ -1,6 +1,12 @@
-// ChatBoxMobile.tsx — Mobile (UI optimiste complète) — v3
+// ChatBoxMobile.tsx — Mobile (UI optimiste complète) — v4
 //
-// Logique de retry v3 :
+// Corrections v4 :
+//   [Fix 5] Guard isSendingRef → empêche le double-tap / envoi multiple
+//   [Fix 6] new_message : déduplication par contenu/media pour l'expéditeur
+//           plutôt que par pendingQueue.length → évite les doublons si le
+//           serveur envoie à la fois message_sent ET new_message
+//
+// Logique de retry (inchangée depuis v3) :
 //   • Envoi initial → démarre un timeout de 10s
 //   • Succès reçu   → clearTimeout immédiat → ✓ affiché instantanément
 //   • 10s sans réponse → nouvelle tentative (setTimeout chaîné, pas setInterval)
@@ -125,6 +131,8 @@ export default function ChatBoxMobile({
   const pendingQueue    = useRef<string[]>([]);
   // tempId → setTimeout actif (un seul par message à la fois)
   const retryTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // [Fix 5] Guard anti double-tap
+  const isSendingRef    = useRef(false);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -178,6 +186,39 @@ export default function ChatBoxMobile({
     }
   };
 
+  // ─── [Fix 6] Handler new_message partagé ────────────────────────────────────
+  // Pour l'expéditeur courant : tente d'abord de matcher un pending par
+  // contenu/media. Si aucun pending ne correspond → doublon serveur → déduplique
+  // par id uniquement. Cela couvre le cas où le serveur envoie à la fois
+  // message_sent ET new_message pour le même envoi.
+
+  const handleNewMessage = (raw: any) => {
+    const msg = normalizeMsg(raw?.message ?? raw);
+
+    if (msg.senderId === userId) {
+      // Cherche si un pending correspond (même contenu/media)
+      let matched = false;
+      for (const [, payload] of pendingPayloads.current.entries()) {
+        const contentMatch = (payload.content ?? null) === (msg.content ?? null);
+        const mediaMatch   = (payload.media_url ?? null) === (msg.media_url ?? null);
+        if (contentMatch && mediaMatch) { matched = true; break; }
+      }
+      if (matched) {
+        confirmOptimistic(raw?.message ?? raw);
+      } else {
+        // Aucun pending : doublon serveur, on déduplique par id
+        setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+      }
+      scrollToEnd();
+      return;
+    }
+
+    setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+    hapticNotif(Haptics.NotificationFeedbackType.Success);
+    onNewMessage?.();
+    scrollToEnd();
+  };
+
   // ─── Socket privé ────────────────────────────────────────────────────────────
 
   const buildPrivateSocket = (): Socket => {
@@ -192,15 +233,8 @@ export default function ChatBoxMobile({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
-    socket.on('new_message', (raw: any) => {
-      const msg = normalizeMsg(raw?.message ?? raw);
-      if (msg.senderId === userId && pendingQueue.current.length > 0) {
-        confirmOptimistic(raw?.message ?? raw); scrollToEnd(); return;
-      }
-      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      hapticNotif(Haptics.NotificationFeedbackType.Success);
-      onNewMessage?.(); scrollToEnd();
-    });
+    // [Fix 6]
+    socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false); setLoadingMore(false);
@@ -230,15 +264,8 @@ export default function ChatBoxMobile({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
-    socket.on('new_message', (raw: any) => {
-      const msg = normalizeMsg(raw?.message ?? raw);
-      if (msg.senderId === userId && pendingQueue.current.length > 0) {
-        confirmOptimistic(raw?.message ?? raw); scrollToEnd(); return;
-      }
-      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      hapticNotif(Haptics.NotificationFeedbackType.Success);
-      onNewMessage?.(); scrollToEnd();
-    });
+    // [Fix 6]
+    socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
       setHasMore(data.has_more ?? false); setLoadingMore(false);
@@ -318,9 +345,13 @@ export default function ChatBoxMobile({
   // ─── Envoi optimiste ─────────────────────────────────────────────────────────
 
   const sendMessage = (mediaUrl?: string, mediaType?: string) => {
+    // [Fix 5] Guard anti double-tap : on bloque si un envoi est déjà en cours
+    if (isSendingRef.current) return;
+
     const content = input.trim();
     if (!content && !mediaUrl) return;
 
+    isSendingRef.current = true;
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
     setInput('');
 
@@ -368,6 +399,9 @@ export default function ChatBoxMobile({
     socketRef.current?.emit('send_message', payload);
     // Démarrer la chaîne : 1er retry possible dans 10s si pas de réponse
     scheduleNextAttempt(tempId, payload, Date.now());
+
+    // [Fix 5] Libère le guard après 300ms (largement suffisant pour le re-render)
+    setTimeout(() => { isSendingRef.current = false; }, 300);
   };
 
   // ─── [Fix 3] Réessayer un message échoué ─────────────────────────────────────
