@@ -299,11 +299,13 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
 
     // Récupérer le token Expo
     // iOS → APNs, Android → FCM — Expo gère la différence en interne
+        // Récupérer le token Expo
     console.log(`[Push.native] Plateforme ${Platform.OS} — récupération token`);
     let expoPushToken: string;
     try {
       const tokenData = await Notifications.getExpoPushTokenAsync({
-        projectId: Constants?.expoConfig?.extra?.eas?.projectId,
+        // On utilise l'ID en dur pour le test
+        projectId: "368b5ff5-c77c-4e3d-96b5-8dcf94696e7b", 
       });
       expoPushToken = tokenData.data;
       console.log(`[Push.native] Token (${Platform.OS}) :`, expoPushToken);
@@ -311,6 +313,7 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       console.warn('[Push.native] Impossible de récupérer le token :', err);
       return;
     }
+    
 
     // Enregistrer en DB
     const res = await fetch(`${BACKEND_URL}/push`, {
