@@ -1,10 +1,9 @@
-// CommentLikersModal.tsx — v2 (fix backdrop mobile intercepting touches)
+// CommentLikersModal.tsx — v3 (overlay, pas de Modal — rendu dans CommentsModal)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  Modal,
   TouchableOpacity,
   ScrollView,
   Image,
@@ -35,21 +34,31 @@ export default function CommentLikersModal({
   commentId,
   onClose,
 }: CommentLikersModalProps) {
-  const [likers, setLikers] = useState<Liker[]>([]);
+  const [likers, setLikers]   = useState<Liker[]>([]);
   const [loading, setLoading] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim              = useRef(new Animated.Value(0)).current;
+  const slideAnim             = useRef(new Animated.Value(80)).current;
 
   useEffect(() => {
     if (visible && commentId) {
       loadLikers();
-      Animated.spring(fadeAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        tension: 65,
-        friction: 11,
-      }).start();
+      Animated.parallel([
+        Animated.spring(fadeAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 65,
+          friction: 11,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 65,
+          friction: 11,
+        }),
+      ]).start();
     } else {
       fadeAnim.setValue(0);
+      slideAnim.setValue(80);
     }
   }, [visible, commentId]);
 
@@ -63,10 +72,10 @@ export default function CommentLikersModal({
       const access_token: string = session.access_token;
 
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'get-comment-likers',
+          action:     'get-comment-likers',
           comment_id: commentId,
           access_token,
         }),
@@ -84,88 +93,83 @@ export default function CommentLikersModal({
   const getInitials = (nom: string, prenom: string) =>
     `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      {/*
-        FIX MOBILE — même pattern que CommentsModal v3 :
-        - modalRoot : flex:1 + backgroundColor (pas de justifyContent)
-        - backdrop  : TouchableOpacity flex:1 dans le flux
-        - sheet     : positionné naturellement sous le backdrop, sans chevauchement
-      */}
-      <View style={styles.modalRoot}>
+    // absoluteFill — couvre tout le Modal parent sans créer un second Modal
+    <View style={StyleSheet.absoluteFill}>
 
-        {/* Backdrop dans le flux — flex:1 remplit tout l'espace au-dessus du sheet */}
-        <TouchableOpacity
-          style={{ flex: 1 }}
-          activeOpacity={1}
-          onPress={onClose}
-        />
+      {/* Backdrop dans le flux → flex:1 pousse le sheet en bas sans le chevaucher */}
+      <TouchableOpacity
+        style={styles.backdrop}
+        activeOpacity={1}
+        onPress={onClose}
+      />
 
-        {/* Sheet */}
-        <Animated.View style={[styles.modalContent, { opacity: fadeAnim }]}>
+      {/* Sheet animé */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+        ]}
+      >
+        <View style={styles.handle} />
 
-          {/* Handle */}
-          <View style={styles.handle} />
-
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.heartBadge}>
-                <MaterialIcons name="favorite" size={16} color="#fff" />
-              </View>
-              <Text style={styles.headerTitle}>
-                {likers.length}{' '}
-                <Text style={styles.headerSub}>
-                  {likers.length === 1 ? 'personne aime' : 'personnes aiment'}
-                </Text>
-              </Text>
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <View style={styles.heartBadge}>
+              <MaterialIcons name="favorite" size={16} color="#fff" />
             </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeButton}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <MaterialIcons name="close" size={22} color="#9E9E9E" />
-            </TouchableOpacity>
+            <Text style={styles.headerTitle}>
+              {likers.length}{' '}
+              <Text style={styles.headerSub}>
+                {likers.length === 1 ? 'personne aime' : 'personnes aiment'}
+              </Text>
+            </Text>
           </View>
-
-          {/* Séparateur */}
-          <View style={styles.divider} />
-
-          {/* Contenu */}
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.closeButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            {loading ? (
-              <View style={styles.centerContainer}>
-                <ActivityIndicator size="large" color="#7B1FA2" />
-                <Text style={styles.loadingText}>Chargement…</Text>
-              </View>
-            ) : likers.length === 0 ? (
-              <View style={styles.centerContainer}>
-                <View style={styles.emptyIconWrapper}>
-                  <MaterialIcons name="favorite-border" size={40} color="#CE93D8" />
-                </View>
-                <Text style={styles.emptyTitle}>Aucun like pour l'instant</Text>
-                <Text style={styles.emptySubtitle}>Sois le premier à réagir !</Text>
-              </View>
-            ) : (
-              likers.map((liker, index) => (
-                <LikerRow
-                  key={liker.id}
-                  liker={liker}
-                  index={index}
-                  getInitials={getInitials}
-                />
-              ))
-            )}
-          </ScrollView>
+            <MaterialIcons name="close" size={22} color="#9E9E9E" />
+          </TouchableOpacity>
+        </View>
 
-        </Animated.View>
-      </View>
-    </Modal>
+        <View style={styles.divider} />
+
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {loading ? (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color="#7B1FA2" />
+              <Text style={styles.loadingText}>Chargement…</Text>
+            </View>
+          ) : likers.length === 0 ? (
+            <View style={styles.centerContainer}>
+              <View style={styles.emptyIconWrapper}>
+                <MaterialIcons name="favorite-border" size={40} color="#CE93D8" />
+              </View>
+              <Text style={styles.emptyTitle}>Aucun like pour l'instant</Text>
+              <Text style={styles.emptySubtitle}>Sois le premier à réagir !</Text>
+            </View>
+          ) : (
+            likers.map((liker, index) => (
+              <LikerRow
+                key={liker.id}
+                liker={liker}
+                index={index}
+                getInitials={getInitials}
+              />
+            ))
+          )}
+        </ScrollView>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -231,15 +235,12 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-
-  // FIX — flex:1 + backgroundColor sur le root (pas de justifyContent).
-  // C'est le backdrop flex:1 dans le flux qui pousse naturellement le sheet en bas.
-  modalRoot: {
+  backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
 
-  modalContent: {
+  sheet: {
     backgroundColor: '#FAFAFA',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
