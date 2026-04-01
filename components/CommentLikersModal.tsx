@@ -1,20 +1,23 @@
-// CommentLikersModal.tsx — v3 (overlay, pas de Modal — rendu dans CommentsModal)
+// CommentLikersModal.tsx — v3 (popup centré, bouton retour, cross-platform)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
+  Modal,
   TouchableOpacity,
-  ScrollView,
+  FlatList,
   Image,
   Platform,
   ActivityIndicator,
   Animated,
+  Dimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_BASE = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com/comments';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface Liker {
   id: string;
@@ -34,31 +37,42 @@ export default function CommentLikersModal({
   commentId,
   onClose,
 }: CommentLikersModalProps) {
-  const [likers, setLikers]   = useState<Liker[]>([]);
+  const [likers, setLikers] = useState<Liker[]>([]);
   const [loading, setLoading] = useState(false);
-  const fadeAnim              = useRef(new Animated.Value(0)).current;
-  const slideAnim             = useRef(new Animated.Value(80)).current;
+
+  const scaleAnim   = useRef(new Animated.Value(0.88)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (visible && commentId) {
       loadLikers();
       Animated.parallel([
-        Animated.spring(fadeAnim, {
+        Animated.spring(scaleAnim, {
           toValue: 1,
           useNativeDriver: true,
-          tension: 65,
-          friction: 11,
+          tension: 80,
+          friction: 10,
         }),
-        Animated.spring(slideAnim, {
-          toValue: 0,
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 200,
           useNativeDriver: true,
-          tension: 65,
-          friction: 11,
         }),
       ]).start();
     } else {
-      fadeAnim.setValue(0);
-      slideAnim.setValue(80);
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 0.88,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setLikers([]);
     }
   }, [visible, commentId]);
 
@@ -72,10 +86,10 @@ export default function CommentLikersModal({
       const access_token: string = session.access_token;
 
       const response = await fetch(API_BASE, {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action:     'get-comment-likers',
+          action: 'get-comment-likers',
           comment_id: commentId,
           access_token,
         }),
@@ -93,109 +107,116 @@ export default function CommentLikersModal({
   const getInitials = (nom: string, prenom: string) =>
     `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase();
 
-  if (!visible) return null;
+  const renderItem = ({ item, index }: { item: Liker; index: number }) => (
+    <LikerRow
+      liker={item}
+      index={index}
+      getInitials={getInitials}
+      isLast={index === likers.length - 1}
+    />
+  );
 
   return (
-    // absoluteFill — couvre tout le Modal parent sans créer un second Modal
-    <View style={StyleSheet.absoluteFill}>
-
-      {/* Backdrop dans le flux → flex:1 pousse le sheet en bas sans le chevaucher */}
+    <Modal visible={visible} animationType="none" transparent onRequestClose={onClose}>
+      {/* Backdrop — tap pour fermer */}
       <TouchableOpacity
         style={styles.backdrop}
         activeOpacity={1}
         onPress={onClose}
       />
 
-      {/* Sheet animé */}
+      {/* Popup centré à dimensions fixes — aucune ambiguïté de layout */}
       <Animated.View
         style={[
-          styles.sheet,
-          { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+          styles.popup,
+          {
+            opacity: opacityAnim,
+            transform: [{ scale: scaleAnim }],
+          },
         ]}
       >
-        <View style={styles.handle} />
-
+        {/* ── Header ── */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
+          {/* Bouton retour */}
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.backButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <MaterialIcons name="arrow-back" size={20} color="#7B1FA2" />
+          </TouchableOpacity>
+
+          {/* Titre centré */}
+          <View style={styles.headerCenter}>
             <View style={styles.heartBadge}>
-              <MaterialIcons name="favorite" size={16} color="#fff" />
+              <MaterialIcons name="favorite" size={13} color="#fff" />
             </View>
             <Text style={styles.headerTitle}>
-              {likers.length}{' '}
+              {loading ? '…' : likers.length}{' '}
               <Text style={styles.headerSub}>
-                {likers.length === 1 ? 'personne aime' : 'personnes aiment'}
+                {likers.length === 1 ? 'like' : 'likes'}
               </Text>
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={onClose}
-            style={styles.closeButton}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <MaterialIcons name="close" size={22} color="#9E9E9E" />
-          </TouchableOpacity>
+
+          {/* Spacer miroir pour centrer */}
+          <View style={styles.backButtonSpacer} />
         </View>
 
         <View style={styles.divider} />
 
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {loading ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator size="large" color="#7B1FA2" />
-              <Text style={styles.loadingText}>Chargement…</Text>
+        {/* ── Contenu : FlatList à hauteur fixe, scroll natif sans ambiguïté ── */}
+        {loading ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#7B1FA2" />
+            <Text style={styles.loadingText}>Chargement…</Text>
+          </View>
+        ) : likers.length === 0 ? (
+          <View style={styles.centerContainer}>
+            <View style={styles.emptyIconWrapper}>
+              <MaterialIcons name="favorite-border" size={36} color="#CE93D8" />
             </View>
-          ) : likers.length === 0 ? (
-            <View style={styles.centerContainer}>
-              <View style={styles.emptyIconWrapper}>
-                <MaterialIcons name="favorite-border" size={40} color="#CE93D8" />
-              </View>
-              <Text style={styles.emptyTitle}>Aucun like pour l'instant</Text>
-              <Text style={styles.emptySubtitle}>Sois le premier à réagir !</Text>
-            </View>
-          ) : (
-            likers.map((liker, index) => (
-              <LikerRow
-                key={liker.id}
-                liker={liker}
-                index={index}
-                getInitials={getInitials}
-              />
-            ))
-          )}
-        </ScrollView>
+            <Text style={styles.emptyTitle}>Aucun like pour l'instant</Text>
+            <Text style={styles.emptySubtitle}>Sois le premier à réagir !</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={likers}
+            keyExtractor={item => item.id}
+            renderItem={renderItem}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
+          />
+        )}
       </Animated.View>
-    </View>
+    </Modal>
   );
 }
 
-// ─── LikerRow avec animation décalée ─────────────────────────────────────────
+// ─── LikerRow ─────────────────────────────────────────────────────────────────
 
 interface LikerRowProps {
   liker: Liker;
   index: number;
+  isLast: boolean;
   getInitials: (nom: string, prenom: string) => string;
 }
 
-function LikerRow({ liker, index, getInitials }: LikerRowProps) {
-  const slideAnim   = useRef(new Animated.Value(24)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
+function LikerRow({ liker, index, isLast, getInitials }: LikerRowProps) {
+  const translateX = useRef(new Animated.Value(-16)).current;
+  const opacity    = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(slideAnim, {
+      Animated.timing(translateX, {
         toValue: 0,
-        duration: 250,
+        duration: 240,
         delay: index * 40,
         useNativeDriver: true,
       }),
-      Animated.timing(opacityAnim, {
+      Animated.timing(opacity, {
         toValue: 1,
-        duration: 250,
+        duration: 240,
         delay: index * 40,
         useNativeDriver: true,
       }),
@@ -206,27 +227,38 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
     <Animated.View
       style={[
         styles.likerItem,
-        { transform: [{ translateY: slideAnim }], opacity: opacityAnim },
+        !isLast && styles.likerItemBorder,
+        { transform: [{ translateX }], opacity },
       ]}
     >
-      {liker.avatar_url ? (
-        <Image source={{ uri: liker.avatar_url }} style={styles.avatar} />
-      ) : (
-        <View style={styles.avatarPlaceholder}>
-          <Text style={styles.avatarText}>
-            {getInitials(liker.nom, liker.prenom)}
-          </Text>
+      {/* Avatar + badge cœur */}
+      <View style={styles.avatarWrapper}>
+        {liker.avatar_url ? (
+          <Image source={{ uri: liker.avatar_url }} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatarPlaceholder}>
+            <Text style={styles.avatarText}>
+              {getInitials(liker.nom, liker.prenom)}
+            </Text>
+          </View>
+        )}
+        <View style={styles.avatarHeartBadge}>
+          <MaterialIcons name="favorite" size={8} color="#fff" />
         </View>
-      )}
+      </View>
 
+      {/* Nom + sous-titre */}
       <View style={styles.likerInfo}>
         <Text style={styles.likerName} numberOfLines={1}>
           {liker.prenom} {liker.nom}
         </Text>
+        <Text style={styles.likerSub}>A aimé ce commentaire</Text>
       </View>
 
-      <View style={styles.likeIconWrapper}>
-        <MaterialIcons name="favorite" size={18} color="#7B1FA2" />
+      {/* Pill */}
+      <View style={styles.likePill}>
+        <MaterialIcons name="favorite" size={11} color="#7B1FA2" />
+        <Text style={styles.likePillText}>Like</Text>
       </View>
     </Animated.View>
   );
@@ -234,92 +266,106 @@ function LikerRow({ liker, index, getInitials }: LikerRowProps) {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
+// Dimensions fixes → le layout natif n'a jamais à deviner les hauteurs
+const POPUP_WIDTH  = Math.min(SCREEN_WIDTH  * 0.88, 380);
+const POPUP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.55, 480);
+
 const styles = StyleSheet.create({
+
   backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
 
-  sheet: {
+  popup: {
+    position: 'absolute',
+    top:  (SCREEN_HEIGHT - POPUP_HEIGHT) / 2,
+    left: (SCREEN_WIDTH  - POPUP_WIDTH)  / 2,
+    width:  POPUP_WIDTH,
+    height: POPUP_HEIGHT,
     backgroundColor: '#FAFAFA',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '72%',
-    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    borderRadius: 22,
+    overflow: 'hidden',
     ...Platform.select({
       ios: {
-        shadowColor: '#7B1FA2',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 20,
       },
-      android: { elevation: 10 },
+      android: { elevation: 16 },
     }),
   },
 
-  handle: {
-    width: 36,
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 18,
-  },
   header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     paddingBottom: 14,
+    backgroundColor: '#FAFAFA',
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  heartBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#7B1FA2',
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3E5F5',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  backButtonSpacer: {
+    width: 36,
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heartBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#7B1FA2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#7B1FA2',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.4,
+        shadowRadius: 5,
+      },
+      android: { elevation: 4 },
+    }),
+  },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1A1A1A',
   },
   headerSub: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '400',
-    color: '#555',
+    color: '#666',
   },
-  closeButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#EEEEEE',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+
   divider: {
     height: 1,
     backgroundColor: '#EEEEEE',
-    marginHorizontal: 20,
-    marginBottom: 4,
   },
-  scrollView: {
-    flex: 1,
+
+  listContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
-  scrollContent: {
-    paddingVertical: 8,
-  },
+
   centerContainer: {
-    paddingVertical: 56,
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
     gap: 10,
+    paddingBottom: 20,
   },
   loadingText: {
     fontSize: 14,
@@ -327,16 +373,16 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   emptyIconWrapper: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: '#F3E5F5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 4,
   },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#424242',
   },
@@ -344,52 +390,82 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#9E9E9E',
   },
+
   likerItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 11,
-    paddingHorizontal: 20,
+  },
+  likerItemBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
-    backgroundColor: '#FAFAFA',
+    borderBottomColor: '#F0F0F0',
+  },
+
+  avatarWrapper: {
+    position: 'relative',
+    marginRight: 12,
   },
   avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    marginRight: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 2,
     borderColor: '#E1BEE7',
   },
   avatarPlaceholder: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#7B1FA2',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 14,
   },
   avatarText: {
     color: '#FFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
+  avatarHeartBadge: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#7B1FA2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FAFAFA',
+  },
+
   likerInfo: {
     flex: 1,
   },
   likerName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#212121',
+    marginBottom: 2,
   },
-  likeIconWrapper: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#F3E5F5',
-    justifyContent: 'center',
+  likerSub: {
+    fontSize: 11,
+    color: '#AAAAAA',
+  },
+
+  likePill: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F3E5F5',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  likePillText: {
+    fontSize: 11,
+    color: '#7B1FA2',
+    fontWeight: '600',
   },
 });
