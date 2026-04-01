@@ -1,21 +1,14 @@
-// ChatBoxWeb.tsx — v9 (web)
+// ChatBoxWeb.tsx — v10 (web)
 // Version web de ChatBox — sans Haptics, sans ImagePicker natif.
 // Sélection de fichier via <input type="file"> natif navigateur.
 //
-// UI optimiste alignée sur ChatBoxMobile v4 :
-//   ⏳  message en attente de confirmation serveur
-//   ✓   message confirmé non lu
-//   ✓✓  message confirmé lu
-//   ❌  bouton Réessayer après 60s sans réponse
-//
-// [Fix 5] Guard isSendingRef       → empêche le double-clic / envoi multiple
-// [Fix 6] handleNewMessage partagé → déduplication par contenu/media
-//
-// Logique de retry (identique mobile v4) :
-//   • Envoi initial → démarre un timeout de 10s
-//   • Succès reçu   → clearTimeout immédiat → ✓ affiché instantanément
-//   • 10s sans réponse → nouvelle tentative (setTimeout chaîné)
-//   • 60s total sans succès → _failed → bouton Réessayer
+// Logique de retry v5 (sans timer, alignée sur mobile v5) :
+//   • Envoi initial → message affiché ⏳ immédiatement
+//   • Succès serveur (message_sent / new_message) → ✓ instantané
+//   • Erreur serveur → retry automatique en arrière-plan jusqu'à 3 fois
+//   • 3 échecs → ❌ + bouton Réessayer manuel
+//   • Déconnexion → bannière "Pas de connexion" immédiate
+//   • Reconnexion → bannière disparaît + tous les ⏳ sont renvoyés
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -28,9 +21,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { io, Socket }     from 'socket.io-client';
 import type { ChatBoxProps } from './ChatBoxTypes';
 
-const WS_BASE         = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
-const ATTEMPT_TIMEOUT = 10_000;  // 10s par tentative
-const RETRY_MAX       = 60_000;  // 60s avant abandon
+const WS_BASE   = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
+const MAX_RETRY = 3;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +33,6 @@ interface ReplyTo {
   sender_nom:    string;
   sender_prenom: string;
 }
-
 interface Message {
   id:                string;
   content:           string | null;
@@ -58,9 +49,9 @@ interface Message {
   is_private_reply?: boolean;
   replyTo?:          ReplyTo | null;
   mediaType?:        string | null;
-  _tempId?:          string;   // présent uniquement sur les messages optimistes
-  _pending?:         boolean;  // true = ⏳
-  _failed?:          boolean;  // true = ❌
+  _tempId?:          string;
+  _pending?:         boolean;
+  _failed?:          boolean;
 }
 
 // ─── Helpers media ────────────────────────────────────────────────────────────
@@ -70,13 +61,9 @@ function detectMediaType(mimeType: string, fileName: string): string {
   if (mime.startsWith('image/'))  return 'image';
   if (mime.startsWith('video/'))  return 'video';
   if (mime.startsWith('audio/'))  return 'audio';
-  if (
-    mime === 'application/pdf' ||
-    mime.includes('word') || mime.includes('excel') ||
-    mime.includes('powerpoint') || mime.includes('spreadsheet') ||
-    mime.includes('presentation') || mime === 'text/plain' ||
-    mime === 'text/csv'
-  ) return 'document';
+  if (mime === 'application/pdf' || mime.includes('word') || mime.includes('excel') ||
+      mime.includes('powerpoint') || mime.includes('spreadsheet') ||
+      mime.includes('presentation') || mime === 'text/plain' || mime === 'text/csv') return 'document';
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (['jpg','jpeg','png','webp','gif','bmp','tiff','svg','heic','heif'].includes(ext)) return 'image';
   if (['mp4','mov','webm','avi','mkv','m4v','3gp'].includes(ext))                        return 'video';
@@ -84,18 +71,16 @@ function detectMediaType(mimeType: string, fileName: string): string {
   if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv'].includes(ext))          return 'document';
   return 'file';
 }
-
 function resolveMimeType(uri: string, mimeType?: string | null): string {
   if (mimeType) return mimeType;
   const ext = uri.split('.').pop()?.toLowerCase() ?? '';
-  const map: Record<string, string> = {
-    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
-    gif: 'image/gif', heic: 'image/heic', heif: 'image/heif',
-    mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
-    avi: 'video/x-msvideo', mkv: 'video/x-matroska',
-    mp3: 'audio/mpeg', aac: 'audio/aac', wav: 'audio/wav',
-    ogg: 'audio/ogg', m4a: 'audio/x-m4a', flac: 'audio/flac',
-    pdf: 'application/pdf',
+  const map: Record<string,string> = {
+    jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp',
+    gif:'image/gif', heic:'image/heic', heif:'image/heif',
+    mp4:'video/mp4', mov:'video/quicktime', webm:'video/webm',
+    avi:'video/x-msvideo', mkv:'video/x-matroska',
+    mp3:'audio/mpeg', aac:'audio/aac', wav:'audio/wav',
+    ogg:'audio/ogg', m4a:'audio/x-m4a', flac:'audio/flac', pdf:'application/pdf',
   };
   return map[ext] ?? 'application/octet-stream';
 }
@@ -123,22 +108,24 @@ export default function ChatBoxWeb({
   const [actionMsg,       setActionMsg]       = useState<Message | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [fullscreenUrl,   setFullscreenUrl]   = useState<string | null>(null);
+  // Bannière de connexion
+  const [isOffline,       setIsOffline]       = useState(false);
 
-  const scrollRef   = useRef<ScrollView>(null);
-  const socketRef   = useRef<Socket | null>(null);
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef = useRef(false);
-  const imgTapRef   = useRef<{ url: string; time: number } | null>(null);
-  const lastTapRef  = useRef<{ id: string; time: number } | null>(null);
+  const scrollRef    = useRef<ScrollView>(null);
+  const socketRef    = useRef<Socket | null>(null);
+  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef  = useRef(false);
+  const imgTapRef    = useRef<{ url: string; time: number } | null>(null);
+  const lastTapRef   = useRef<{ id: string; time: number } | null>(null);
   const fileInputRef = useRef<any>(null);
 
-  // tempId → payload pour retries et matching
+  // tempId → payload (pour retries)
   const pendingPayloads = useRef<Map<string, any>>(new Map());
   // tempId dans l'ordre d'envoi
   const pendingQueue    = useRef<string[]>([]);
-  // tempId → setTimeout actif (un seul par message à la fois)
-  const retryTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  // [Fix 5] Guard anti double-clic
+  // tempId → nombre de tentatives effectuées
+  const retryCounts     = useRef<Map<string, number>>(new Map());
+  // Guard anti double-clic
   const isSendingRef    = useRef(false);
 
   useEffect(() => {
@@ -149,10 +136,9 @@ export default function ChatBoxWeb({
       socket.removeAllListeners();
       socket.disconnect();
       if (typingTimer.current) clearTimeout(typingTimer.current);
-      retryTimers.current.forEach(t => clearTimeout(t));
-      retryTimers.current.clear();
       pendingQueue.current = [];
       pendingPayloads.current.clear();
+      retryCounts.current.clear();
     };
   }, [conversationId, accessToken]);
 
@@ -174,20 +160,48 @@ export default function ChatBoxWeb({
         setMessages(prev => prev.find(m => m.id === confirmed.id) ? prev : [...prev, confirmed]);
         return;
       }
-
-      const t = retryTimers.current.get(matchedTempId);
-      if (t) { clearTimeout(t); retryTimers.current.delete(matchedTempId); }
-
       pendingQueue.current.splice(idx, 1);
       pendingPayloads.current.delete(matchedTempId);
-
+      retryCounts.current.delete(matchedTempId);
       setMessages(prev => prev.map(m => m._tempId === matchedTempId ? confirmed : m));
     } else {
       setMessages(prev => prev.find(m => m.id === confirmed.id) ? prev : [...prev, confirmed]);
     }
   };
 
-  // ─── [Fix 6] Handler new_message partagé ─────────────────────────────────
+  // ─── Gestion erreur serveur → retry ou échec ─────────────────────────────
+
+  const handleServerError = () => {
+    const tempId = pendingQueue.current[0];
+    if (!tempId) return;
+
+    const count = (retryCounts.current.get(tempId) ?? 0) + 1;
+    retryCounts.current.set(tempId, count);
+
+    if (count >= MAX_RETRY) {
+      pendingQueue.current.shift();
+      pendingPayloads.current.delete(tempId);
+      retryCounts.current.delete(tempId);
+      setMessages(prev => prev.map(m =>
+        m._tempId === tempId ? { ...m, _pending: false, _failed: true } : m
+      ));
+    } else {
+      const payload = pendingPayloads.current.get(tempId);
+      if (payload) socketRef.current?.emit('send_message', payload);
+    }
+  };
+
+  // ─── Reconnexion → renvoyer tous les messages en attente ─────────────────
+
+  const flushPendingOnReconnect = (socket: Socket) => {
+    setIsOffline(false);
+    for (const tempId of pendingQueue.current) {
+      const payload = pendingPayloads.current.get(tempId);
+      if (payload) socket.emit('send_message', payload);
+    }
+  };
+
+  // ─── Handler new_message partagé ─────────────────────────────────────────
 
   const handleNewMessage = (raw: any) => {
     const msg = normalizeMsg(raw?.message ?? raw);
@@ -195,15 +209,13 @@ export default function ChatBoxWeb({
     if (msg.senderId === userId) {
       let matched = false;
       for (const [, payload] of pendingPayloads.current.entries()) {
-        const contentMatch = (payload.content ?? null) === (msg.content ?? null);
-        const mediaMatch   = (payload.media_url ?? null) === (msg.media_url ?? null);
-        if (contentMatch && mediaMatch) { matched = true; break; }
+        if ((payload.content ?? null) === (msg.content ?? null) &&
+            (payload.media_url ?? null) === (msg.media_url ?? null)) {
+          matched = true; break;
+        }
       }
-      if (matched) {
-        confirmOptimistic(raw?.message ?? raw);
-      } else {
-        setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
-      }
+      if (matched) { confirmOptimistic(raw?.message ?? raw); }
+      else { setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]); }
       scrollToEnd();
       return;
     }
@@ -217,9 +229,13 @@ export default function ChatBoxWeb({
 
   const buildPrivateSocket = (): Socket => {
     const socket = io(`${WS_BASE}/private-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
-    socket.on('connect', () =>
-      socket.emit('join_conversation', { conversation_id: conversationId, user_id: userId, access_token: accessToken })
-    );
+
+    socket.on('connect', () => {
+      socket.emit('join_conversation', { conversation_id: conversationId, user_id: userId, access_token: accessToken });
+      flushPendingOnReconnect(socket);
+    });
+    socket.on('disconnect', () => setIsOffline(true));
+
     socket.on('joined', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages((data.messages ?? []).map(normalizeMsg));
       setHasMore(data.has_more ?? false);
@@ -229,7 +245,6 @@ export default function ChatBoxWeb({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
-    // [Fix 6]
     socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
@@ -239,7 +254,7 @@ export default function ChatBoxWeb({
     socket.on('typing_status', (data: { user_id: string; is_typing: boolean }) => {
       if (data.user_id !== userId) setOtherTyping(data.is_typing);
     });
-    socket.on('error', (err: { message: string }) => console.warn('[ChatBoxWeb] privé:', err.message));
+    socket.on('error', () => handleServerError());
     return socket;
   };
 
@@ -247,9 +262,13 @@ export default function ChatBoxWeb({
 
   const buildGroupSocket = (): Socket => {
     const socket = io(`${WS_BASE}/group-chat`, { transports: ['websocket'], reconnectionDelay: 2000 });
-    socket.on('connect', () =>
-      socket.emit('join_group', { group_id: conversationId, user_id: userId, access_token: accessToken })
-    );
+
+    socket.on('connect', () => {
+      socket.emit('join_group', { group_id: conversationId, user_id: userId, access_token: accessToken });
+      flushPendingOnReconnect(socket);
+    });
+    socket.on('disconnect', () => setIsOffline(true));
+
     socket.on('joined', (data: { messages: Message[]; group: any; members: any[] }) => {
       const msgs = data?.messages ?? [];
       setMessages(msgs.map(normalizeMsg));
@@ -262,7 +281,6 @@ export default function ChatBoxWeb({
     socket.on('message_sent', (data: { message: Message }) => {
       confirmOptimistic(data.message); scrollToEnd();
     });
-    // [Fix 6]
     socket.on('new_message', handleNewMessage);
     socket.on('more_messages', (data: { messages: Message[]; has_more: boolean }) => {
       setMessages(prev => [...(data.messages ?? []).map(normalizeMsg), ...prev]);
@@ -284,13 +302,14 @@ export default function ChatBoxWeb({
         m.id === data.message_id ? { ...m, is_visible: data.is_visible } : m
       ))
     );
-    socket.on('error', (err: { message: string }) => console.warn('[ChatBoxWeb] groupe:', err.message));
+    socket.on('error', () => handleServerError());
     return socket;
   };
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  const scrollToEnd = () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  const scrollToEnd = () =>
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
   const loadMore = () => {
     if (loadingMore || !hasMore || messages.length === 0) return;
@@ -311,31 +330,9 @@ export default function ChatBoxWeb({
         media_url: mediaUrl ?? null, reply_to_id: replyId ?? null,
         is_visible: isVisible ?? true };
 
-  // ─── Retry séquentiel : setTimeout chaîné ────────────────────────────────
-
-  const scheduleNextAttempt = (tempId: string, payload: any, startedAt: number) => {
-    const t = setTimeout(() => {
-      if (!pendingQueue.current.includes(tempId)) return;
-
-      if (Date.now() - startedAt >= RETRY_MAX) {
-        retryTimers.current.delete(tempId);
-        setMessages(prev => prev.map(m =>
-          m._tempId === tempId ? { ...m, _pending: false, _failed: true } : m
-        ));
-        return;
-      }
-
-      socketRef.current?.emit('send_message', payload);
-      scheduleNextAttempt(tempId, payload, startedAt);
-    }, ATTEMPT_TIMEOUT);
-
-    retryTimers.current.set(tempId, t);
-  };
-
   // ─── Envoi optimiste ──────────────────────────────────────────────────────
 
   const sendMessage = (mediaUrl?: string, mediaType?: string) => {
-    // [Fix 5] Guard anti double-clic
     if (isSendingRef.current) return;
 
     const content = input.trim();
@@ -379,19 +376,18 @@ export default function ChatBoxWeb({
 
     setMessages(prev => [...prev, optimistic]);
     pendingQueue.current.push(tempId);
+    retryCounts.current.set(tempId, 0);
     scrollToEnd();
 
     const payload = buildPayload(content || null, mediaUrl, mediaType, reply?.id, reply ? replyVisible : true);
     pendingPayloads.current.set(tempId, payload);
 
     socketRef.current?.emit('send_message', payload);
-    scheduleNextAttempt(tempId, payload, Date.now());
 
-    // [Fix 5] Libère le guard après 300ms
     setTimeout(() => { isSendingRef.current = false; }, 300);
   };
 
-  // ─── Réessayer un message échoué ─────────────────────────────────────────
+  // ─── Réessayer un message échoué (manuel) ─────────────────────────────────
 
   const retrySend = (msg: Message) => {
     if (!msg._tempId) return;
@@ -406,9 +402,9 @@ export default function ChatBoxWeb({
     ));
     pendingQueue.current.push(msg._tempId);
     pendingPayloads.current.set(msg._tempId, payload);
+    retryCounts.current.set(msg._tempId, 0);
 
     socketRef.current?.emit('send_message', payload);
-    scheduleNextAttempt(msg._tempId, payload, Date.now());
   };
 
   // ─── Typing ───────────────────────────────────────────────────────────────
@@ -519,7 +515,6 @@ export default function ChatBoxWeb({
     const d = new Date(v);
     return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
-
   const isAuthor = (msg: Message) => msg.senderId === userId;
 
   // ─── Statut de la bulle ───────────────────────────────────────────────────
@@ -556,8 +551,8 @@ export default function ChatBoxWeb({
       </TouchableOpacity>
     );
 
-    const icons:  Record<string, string> = { video: 'videocam-outline', audio: 'musical-notes-outline', document: 'document-text-outline' };
-    const labels: Record<string, string> = { video: 'Vidéo', audio: 'Audio', document: 'Document' };
+    const icons:  Record<string,string> = { video:'videocam-outline', audio:'musical-notes-outline', document:'document-text-outline' };
+    const labels: Record<string,string> = { video:'Vidéo', audio:'Audio', document:'Document' };
     return (
       <View style={S.mediaFileWrap}>
         <Ionicons name={(icons[type] ?? 'attach-outline') as any} size={22} color={fromMe ? '#fff' : '#8A2BE2'} />
@@ -574,7 +569,6 @@ export default function ChatBoxWeb({
     const fromMe  = msg.isFromMe;
     const deleted = !!msg.deletedAt;
     const isGroup = conversationType === 'group';
-
     return (
       <TouchableOpacity
         key={msg._tempId ?? msg.id}
@@ -584,28 +578,24 @@ export default function ChatBoxWeb({
         style={[S.bubble, fromMe ? S.bubbleMe : S.bubbleThem, msg._failed ? S.bubbleFailed : undefined]}
       >
         {!fromMe && isGroup && !deleted && <Text style={S.senderName}>{msg.senderName}</Text>}
-
         {msg.replyTo && !deleted && (
           <View style={[S.replyBlock, fromMe ? S.replyBlockMe : S.replyBlockThem]}>
             <Text style={S.replyAuthor} numberOfLines={1}>{msg.replyTo.sender_prenom} {msg.replyTo.sender_nom}</Text>
             <Text style={S.replyContent} numberOfLines={2}>{msg.replyTo.content ?? 'Message supprimé'}</Text>
           </View>
         )}
-
-        {deleted ? (
-          <Text style={[S.msgText, S.msgDeleted]}>Message supprimé</Text>
-        ) : msg.is_private_reply ? (
-          <View style={S.privateReplyWrap}>
-            <Ionicons name="lock-closed" size={12} color={fromMe ? '#E0D0FF' : '#999'} />
-            <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem, { fontStyle: 'italic', marginLeft: 4 }]}>Réponse privée</Text>
-          </View>
-        ) : msg.media_url ? (
-          renderMediaContent(msg, fromMe)
-        ) : (
-          <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
-        )}
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
+        {deleted
+          ? <Text style={[S.msgText, S.msgDeleted]}>Message supprimé</Text>
+          : msg.is_private_reply
+            ? <View style={S.privateReplyWrap}>
+                <Ionicons name="lock-closed" size={12} color={fromMe ? '#E0D0FF' : '#999'} />
+                <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem, { fontStyle:'italic', marginLeft:4 }]}>Réponse privée</Text>
+              </View>
+            : msg.media_url
+              ? renderMediaContent(msg, fromMe)
+              : <Text style={[S.msgText, fromMe ? S.msgTextMe : S.msgTextThem]}>{msg.content}</Text>
+        }
+        <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'flex-end', marginTop:4, gap:4 }}>
           {isGroup && isAuthor(msg) && msg.reply_to_id && !deleted && (
             <Ionicons name={msg.is_visible ? 'eye-outline' : 'eye-off-outline'} size={11} color={fromMe ? '#E0D0FF' : '#aaa'} />
           )}
@@ -626,10 +616,9 @@ export default function ChatBoxWeb({
         <TouchableOpacity onPress={onBack} style={S.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-
         {conversationType === 'private' ? (
           <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+            style={{ flexDirection:'row', alignItems:'center', flex:1 }}
             onPress={() => otherUser && onProfilePress?.(otherUser.id)}
             activeOpacity={onProfilePress ? 0.75 : 1}
           >
@@ -639,28 +628,40 @@ export default function ChatBoxWeb({
             </View>
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{otherUser?.prenom} {otherUser?.nom}</Text>
-              <Text style={S.headerStatus}>{otherTyping ? "En train d'écrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}</Text>
+              <Text style={S.headerStatus}>
+                {otherTyping ? "En train d'écrire..." : otherOnline ? 'En ligne' : 'Hors ligne'}
+              </Text>
             </View>
             {onProfilePress && <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.5)" />}
           </TouchableOpacity>
         ) : (
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-            <View style={[S.avatar, { backgroundColor: '#FF8C00' }]}>
+          <View style={{ flexDirection:'row', alignItems:'center', flex:1 }}>
+            <View style={[S.avatar, { backgroundColor:'#FF8C00' }]}>
               <Ionicons name="people" size={20} color="#fff" />
             </View>
             <View style={S.headerInfo}>
               <Text style={S.headerName}>{groupName}</Text>
-              <Text style={S.headerStatus}>{otherTyping ? "Quelqu'un écrit..." : `${memberCount} membres`}</Text>
+              <Text style={S.headerStatus}>
+                {otherTyping ? "Quelqu'un écrit..." : `${memberCount} membres`}
+              </Text>
             </View>
           </View>
         )}
       </LinearGradient>
 
+      {/* ── Bannière hors-ligne ───────────────────────────────────────────── */}
+      {isOffline && (
+        <View style={S.offlineBanner}>
+          <Ionicons name="cloud-offline-outline" size={15} color="#fff" />
+          <Text style={S.offlineTxt}>Pas de connexion — les messages seront renvoyés automatiquement</Text>
+        </View>
+      )}
+
       {/* ── Messages ─────────────────────────────────────────────────────── */}
       <ScrollView
         ref={scrollRef}
         style={S.msgs}
-        contentContainerStyle={{ padding: 15, paddingBottom: 20 }}
+        contentContainerStyle={{ padding:15, paddingBottom:20 }}
       >
         {hasMore && !loading && (
           <TouchableOpacity onPress={loadMore} disabled={loadingMore} style={S.loadMoreBtn}>
@@ -670,16 +671,15 @@ export default function ChatBoxWeb({
             }
           </TouchableOpacity>
         )}
-
         {loading ? (
-          <View style={{ alignItems: 'center', paddingVertical: 80 }}>
-            <Text style={{ fontSize: 14, color: '#999' }}>Chargement des données</Text>
+          <View style={{ alignItems:'center', paddingVertical:80 }}>
+            <Text style={{ fontSize:14, color:'#999' }}>Chargement des données</Text>
           </View>
         ) : messages.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+          <View style={{ alignItems:'center', paddingVertical:80 }}>
             <Ionicons name="chatbubble-outline" size={60} color="#ccc" />
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#888', marginTop: 15 }}>Vous n'avez aucun message</Text>
-            <Text style={{ fontSize: 14, color: '#aaa', marginTop: 6, textAlign: 'center' }}>Démarrez la discussion avec vos amis</Text>
+            <Text style={{ fontSize:18, fontWeight:'bold', color:'#888', marginTop:15 }}>Vous n'avez aucun message</Text>
+            <Text style={{ fontSize:14, color:'#aaa', marginTop:6, textAlign:'center' }}>Démarrez la discussion avec vos amis</Text>
           </View>
         ) : messages.map(msg => renderBubble(msg))}
       </ScrollView>
@@ -692,16 +692,16 @@ export default function ChatBoxWeb({
               name={replyVisible ? 'earth-outline' : 'lock-closed-outline'}
               size={14}
               color={replyVisible ? '#8A2BE2' : '#6B21A8'}
-              style={{ marginRight: 6 }}
+              style={{ marginRight:6 }}
             />
-            <View style={{ flex: 1 }}>
-              <Text style={[S.replyBarAuthor, { color: replyVisible ? '#8A2BE2' : '#6B21A8' }]} numberOfLines={1}>
+            <View style={{ flex:1 }}>
+              <Text style={[S.replyBarAuthor, { color:replyVisible ? '#8A2BE2' : '#6B21A8' }]} numberOfLines={1}>
                 {replyVisible ? 'Réponse publique à ' : 'Réponse privée à '}{replyingTo.senderName}
               </Text>
               <Text style={S.replyBarText} numberOfLines={1}>{replyingTo.content ?? 'Message supprimé'}</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => { setReplyingTo(null); setReplyVisible(true); }} style={{ padding: 6 }}>
+          <TouchableOpacity onPress={() => { setReplyingTo(null); setReplyVisible(true); }} style={{ padding:6 }}>
             <Ionicons name="close" size={18} color="#999" />
           </TouchableOpacity>
         </View>
@@ -718,7 +718,6 @@ export default function ChatBoxWeb({
               }
             </TouchableOpacity>
           )}
-
           <TextInput
             style={S.input}
             placeholder="Écrivez un message..."
@@ -729,7 +728,6 @@ export default function ChatBoxWeb({
             maxLength={1000}
             editable={!uploading}
           />
-
           <TouchableOpacity
             style={[S.sendBtn, !input.trim() && S.sendBtnDisabled]}
             onPress={() => sendMessage()}
@@ -741,7 +739,7 @@ export default function ChatBoxWeb({
         </View>
       </KeyboardAvoidingView>
 
-      {/* ── Input fichier natif navigateur (invisible) ───────────────────── */}
+      {/* ── Input fichier natif (invisible) ──────────────────────────────── */}
       <input
         ref={fileInputRef}
         type="file"
@@ -758,15 +756,15 @@ export default function ChatBoxWeb({
               {conversationType === 'group' && !actionMsg.deletedAt && !actionMsg.is_private_reply && (<>
                 <TouchableOpacity style={S.actionItem} onPress={() => { setReplyingTo(actionMsg); setReplyVisible(true); setShowActionSheet(false); }}>
                   <Ionicons name="earth-outline" size={20} color="#8A2BE2" />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[S.actionTxt, { color: '#8A2BE2' }]}>Répondre en public</Text>
+                  <View style={{ flex:1 }}>
+                    <Text style={[S.actionTxt,{color:'#8A2BE2'}]}>Répondre en public</Text>
                     <Text style={S.actionSubTxt}>Tout le groupe voit la réponse</Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity style={S.actionItem} onPress={() => { setReplyingTo(actionMsg); setReplyVisible(false); setShowActionSheet(false); }}>
                   <Ionicons name="lock-closed-outline" size={20} color="#6B21A8" />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[S.actionTxt, { color: '#6B21A8' }]}>Répondre en privé</Text>
+                  <View style={{ flex:1 }}>
+                    <Text style={[S.actionTxt,{color:'#6B21A8'}]}>Répondre en privé</Text>
                     <Text style={S.actionSubTxt}>Visible uniquement par vous et le destinataire</Text>
                   </View>
                 </TouchableOpacity>
@@ -780,12 +778,12 @@ export default function ChatBoxWeb({
               {isAuthor(actionMsg) && !actionMsg.deletedAt && !actionMsg._pending && !actionMsg._failed && (
                 <TouchableOpacity style={S.actionItem} onPress={() => { deleteMessage(actionMsg); setShowActionSheet(false); }}>
                   <Ionicons name="trash-outline" size={20} color="#DC2626" />
-                  <Text style={[S.actionTxt, { color: '#DC2626' }]}>Supprimer</Text>
+                  <Text style={[S.actionTxt,{color:'#DC2626'}]}>Supprimer</Text>
                 </TouchableOpacity>
               )}
               <View style={S.actionDivider} />
               <TouchableOpacity style={S.actionItem} onPress={() => setShowActionSheet(false)}>
-                <Text style={[S.actionTxt, { textAlign: 'center', color: '#999' }]}>Annuler</Text>
+                <Text style={[S.actionTxt,{textAlign:'center',color:'#999'}]}>Annuler</Text>
               </TouchableOpacity>
             </>)}
           </View>
@@ -813,57 +811,59 @@ export default function ChatBoxWeb({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: '#F5F5F5' },
-  header:           { flexDirection: 'row', alignItems: 'center', paddingTop: 20, paddingBottom: 15, paddingHorizontal: 15 },
-  backBtn:          { marginRight: 12, padding: 5 },
-  avatar:           { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center', position: 'relative' },
-  avatarTxt:        { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  onlineDot:        { position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#fff', bottom: 2, right: 2 },
-  headerInfo:       { flex: 1, marginLeft: 10 },
-  headerName:       { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  headerStatus:     { fontSize: 12, color: '#E0D0FF', marginTop: 2 },
-  msgs:             { flex: 1 },
-  loadMoreBtn:      { alignSelf: 'center', marginBottom: 12, marginTop: 4, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#F0E8FF', borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  loadMoreTxt:      { fontSize: 13, color: '#8A2BE2', fontWeight: '600' },
-  bubble:           { maxWidth: '78%', padding: 12, borderRadius: 18, marginBottom: 8 },
-  bubbleMe:         { alignSelf: 'flex-end', backgroundColor: '#8A2BE2', borderBottomRightRadius: 4 },
-  bubbleThem:       { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
-  bubbleFailed:     { borderWidth: 1, borderColor: '#FF6B6B' },
-  senderName:       { fontSize: 11, fontWeight: '600', color: '#8A2BE2', marginBottom: 4 },
-  replyBlock:       { borderRadius: 8, padding: 8, marginBottom: 6 },
-  replyBlockMe:     { backgroundColor: 'rgba(255,255,255,0.15)' },
-  replyBlockThem:   { backgroundColor: '#F0E8FF' },
-  replyAuthor:      { fontSize: 11, fontWeight: '700', color: '#8A2BE2', marginBottom: 2 },
-  replyContent:     { fontSize: 12, color: '#555' },
-  msgText:          { fontSize: 15, lineHeight: 20 },
-  msgTextMe:        { color: '#fff' },
-  msgTextThem:      { color: '#333' },
-  msgDeleted:       { color: '#aaa', fontStyle: 'italic' },
-  msgTime:          { fontSize: 10 },
-  msgTimeMe:        { color: '#E0D0FF', textAlign: 'right' },
-  msgTimeThem:      { color: '#999' },
-  retryBtn:         { flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 4 },
-  retryTxt:         { fontSize: 10, color: '#FF6B6B', fontWeight: '600' },
-  privateReplyWrap: { flexDirection: 'row', alignItems: 'center' },
-  mediaImage:       { width: 200, height: 150, borderRadius: 8 },
-  mediaFileWrap:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
-  mediaFileName:    { fontSize: 13, flex: 1 },
-  replyBar:         { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0E8FF', paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  replyBarContent:  { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  replyBarAuthor:   { fontSize: 12, fontWeight: '700', color: '#8A2BE2' },
-  replyBarText:     { fontSize: 12, color: '#666', marginTop: 1 },
-  inputWrap:        { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 10, paddingBottom: 10, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  mediaBtn:         { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
-  input:            { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, marginRight: 8 },
-  sendBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: '#8A2BE2', justifyContent: 'center', alignItems: 'center' },
-  sendBtnDisabled:  { backgroundColor: '#ccc' },
-  modalOverlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  actionSheet:      { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 16, paddingTop: 8 },
-  actionItem:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 },
-  actionTxt:        { fontSize: 16, color: '#333', fontWeight: '500' },
-  actionSubTxt:     { fontSize: 12, color: '#999', marginTop: 1 },
-  actionDivider:    { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 16, marginVertical: 4 },
-  fsOverlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
-  fsImage:          { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.82 },
-  fsCloseBtn:       { position: 'absolute', top: 36, right: 20 },
+  container:        { flex:1, backgroundColor:'#F5F5F5' },
+  header:           { flexDirection:'row', alignItems:'center', paddingTop:20, paddingBottom:15, paddingHorizontal:15 },
+  backBtn:          { marginRight:12, padding:5 },
+  avatar:           { width:40, height:40, borderRadius:20, backgroundColor:'#8A2BE2', justifyContent:'center', alignItems:'center', position:'relative' },
+  avatarTxt:        { color:'#fff', fontSize:16, fontWeight:'bold' },
+  onlineDot:        { position:'absolute', width:10, height:10, borderRadius:5, backgroundColor:'#10B981', borderWidth:2, borderColor:'#fff', bottom:2, right:2 },
+  headerInfo:       { flex:1, marginLeft:10 },
+  headerName:       { fontSize:18, fontWeight:'bold', color:'#fff' },
+  headerStatus:     { fontSize:12, color:'#E0D0FF', marginTop:2 },
+  offlineBanner:    { flexDirection:'row', alignItems:'center', gap:8, backgroundColor:'#EF4444', paddingHorizontal:14, paddingVertical:8 },
+  offlineTxt:       { flex:1, fontSize:12, color:'#fff', fontWeight:'500' },
+  msgs:             { flex:1 },
+  loadMoreBtn:      { alignSelf:'center', marginBottom:12, marginTop:4, paddingHorizontal:16, paddingVertical:8, backgroundColor:'#F0E8FF', borderRadius:20, flexDirection:'row', alignItems:'center', gap:6 },
+  loadMoreTxt:      { fontSize:13, color:'#8A2BE2', fontWeight:'600' },
+  bubble:           { maxWidth:'78%', padding:12, borderRadius:18, marginBottom:8 },
+  bubbleMe:         { alignSelf:'flex-end', backgroundColor:'#8A2BE2', borderBottomRightRadius:4 },
+  bubbleThem:       { alignSelf:'flex-start', backgroundColor:'#fff', borderBottomLeftRadius:4, shadowColor:'#000', shadowOffset:{width:0,height:1}, shadowOpacity:0.1, shadowRadius:2, elevation:1 },
+  bubbleFailed:     { borderWidth:1, borderColor:'#FF6B6B' },
+  senderName:       { fontSize:11, fontWeight:'600', color:'#8A2BE2', marginBottom:4 },
+  replyBlock:       { borderRadius:8, padding:8, marginBottom:6 },
+  replyBlockMe:     { backgroundColor:'rgba(255,255,255,0.15)' },
+  replyBlockThem:   { backgroundColor:'#F0E8FF' },
+  replyAuthor:      { fontSize:11, fontWeight:'700', color:'#8A2BE2', marginBottom:2 },
+  replyContent:     { fontSize:12, color:'#555' },
+  msgText:          { fontSize:15, lineHeight:20 },
+  msgTextMe:        { color:'#fff' },
+  msgTextThem:      { color:'#333' },
+  msgDeleted:       { color:'#aaa', fontStyle:'italic' },
+  msgTime:          { fontSize:10 },
+  msgTimeMe:        { color:'#E0D0FF', textAlign:'right' },
+  msgTimeThem:      { color:'#999' },
+  retryBtn:         { flexDirection:'row', alignItems:'center', gap:3, marginLeft:4 },
+  retryTxt:         { fontSize:10, color:'#FF6B6B', fontWeight:'600' },
+  privateReplyWrap: { flexDirection:'row', alignItems:'center' },
+  mediaImage:       { width:200, height:150, borderRadius:8 },
+  mediaFileWrap:    { flexDirection:'row', alignItems:'center', gap:8, paddingVertical:4 },
+  mediaFileName:    { fontSize:13, flex:1 },
+  replyBar:         { flexDirection:'row', alignItems:'center', backgroundColor:'#F0E8FF', paddingHorizontal:14, paddingVertical:8, borderTopWidth:1, borderTopColor:'#E0E0E0' },
+  replyBarContent:  { flex:1, flexDirection:'row', alignItems:'center' },
+  replyBarAuthor:   { fontSize:12, fontWeight:'700', color:'#8A2BE2' },
+  replyBarText:     { fontSize:12, color:'#666', marginTop:1 },
+  inputWrap:        { flexDirection:'row', alignItems:'flex-end', backgroundColor:'#fff', paddingHorizontal:10, paddingVertical:10, paddingBottom:10, borderTopWidth:1, borderTopColor:'#E0E0E0' },
+  mediaBtn:         { width:40, height:40, justifyContent:'center', alignItems:'center', marginRight:4 },
+  input:            { flex:1, backgroundColor:'#F5F5F5', borderRadius:20, paddingHorizontal:16, paddingVertical:10, fontSize:15, maxHeight:100, marginRight:8 },
+  sendBtn:          { width:44, height:44, borderRadius:22, backgroundColor:'#8A2BE2', justifyContent:'center', alignItems:'center' },
+  sendBtnDisabled:  { backgroundColor:'#ccc' },
+  modalOverlay:     { flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'flex-end' },
+  actionSheet:      { backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, paddingBottom:16, paddingTop:8 },
+  actionItem:       { flexDirection:'row', alignItems:'center', paddingHorizontal:20, paddingVertical:14, gap:12 },
+  actionTxt:        { fontSize:16, color:'#333', fontWeight:'500' },
+  actionSubTxt:     { fontSize:12, color:'#999', marginTop:1 },
+  actionDivider:    { height:1, backgroundColor:'#F0F0F0', marginHorizontal:16, marginVertical:4 },
+  fsOverlay:        { flex:1, backgroundColor:'rgba(0,0,0,0.92)', justifyContent:'center', alignItems:'center' },
+  fsImage:          { width:Dimensions.get('window').width, height:Dimensions.get('window').height * 0.82 },
+  fsCloseBtn:       { position:'absolute', top:36, right:20 },
 });
