@@ -1,4 +1,4 @@
-// CommentsModal.tsx — v3 (fix backdrop mobile intercepting touches)
+// CommentsModal.tsx — v4 (CommentLikersModal rendu dans le même Modal)
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -299,124 +299,121 @@ export default function CommentsModal({
   // ─── Rendu ────────────────────────────────────────────────────────────────
 
   return (
-    <>
-      <Modal
-        visible={visible}
-        animationType="slide"
-        transparent
-        onRequestClose={onClose}
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      {/*
+        KAV à la racine du Modal (flex:1).
+        Backdrop = TouchableOpacity flex:1 dans le flux.
+        CommentLikersModal = overlay absoluteFill DANS ce même Modal
+        → un seul Modal, zéro conflit de couches Android.
+      */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        {/*
-          FIX MOBILE — le KAV est à la racine du Modal (flex:1).
-          Le backdrop est un TouchableOpacity flex:1 dans le flux,
-          au-dessus du sheet → il ne chevauche plus le contenu
-          et ne capte plus les touches destinées aux boutons.
-        */}
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={styles.modalRoot}>
+        <View style={styles.modalRoot}>
 
-            {/* Backdrop dans le flux — flex:1 remplit tout l'espace au-dessus du sheet */}
-            <TouchableOpacity
-              style={{ flex: 1 }}
-              activeOpacity={1}
-              onPress={onClose}
-            />
+          {/* Backdrop dans le flux */}
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={onClose}
+          />
 
-            {/* Sheet — positionné naturellement sous le backdrop, sans chevauchement */}
-            <View style={styles.modalContent}>
+          {/* Sheet */}
+          <View style={styles.modalContent}>
 
-              {/* Header */}
-              <View style={styles.header}>
-                <Text style={styles.headerTitle}>Commentaires</Text>
-                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                  <Ionicons name="close" size={28} color="#333" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Liste */}
-              <ScrollView
-                style={styles.commentsList}
-                contentContainerStyle={styles.commentsListContent}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-              >
-                {loading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#7B1FA2" />
-                  </View>
-                ) : comments.length === 0 ? (
-                  <View style={styles.emptyContainer}>
-                    <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
-                    <Text style={styles.emptyText}>Aucun commentaire</Text>
-                    <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
-                  </View>
-                ) : (
-                  comments.map(comment => (
-                    <CommentItem
-                      key={comment.id}
-                      comment={comment}
-                      isReply={false}
-                      onLike={handleLikeComment}
-                      onReply={setReplyingTo}
-                      onShowLikers={handleShowLikers}
-                    />
-                  ))
-                )}
-              </ScrollView>
-
-              {/* Barre "Répondre à" */}
-              {replyingTo && (
-                <View style={styles.replyingToBar}>
-                  <Text style={styles.replyingToText}>
-                    Répondre à {replyingTo.author.prenom}
-                  </Text>
-                  <TouchableOpacity onPress={() => setReplyingTo(null)}>
-                    <Ionicons name="close-circle" size={20} color="#666" />
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Input */}
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.input}
-                  placeholder={
-                    replyingTo
-                      ? `Répondre à ${replyingTo.author.prenom}...`
-                      : 'Ajouter un commentaire...'
-                  }
-                  placeholderTextColor="#999"
-                  value={commentText}
-                  onChangeText={setCommentText}
-                  multiline
-                  maxLength={500}
-                  blurOnSubmit={false}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (!commentText.trim() || submitting) && styles.sendButtonDisabled,
-                  ]}
-                  onPress={handleAddComment}
-                  disabled={!commentText.trim() || submitting}
-                >
-                  {submitting ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Ionicons name="send" size={20} color="#FFF" />
-                  )}
-                </TouchableOpacity>
-              </View>
-
+            <View style={styles.header}>
+              <Text style={styles.headerTitle}>Commentaires</Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Ionicons name="close" size={28} color="#333" />
+              </TouchableOpacity>
             </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
 
-      {/* CommentLikersModal hors du Modal principal — évite les conflits de couches */}
+            <ScrollView
+              style={styles.commentsList}
+              contentContainerStyle={styles.commentsListContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#7B1FA2" />
+                </View>
+              ) : comments.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="chatbubbles-outline" size={60} color="#CCC" />
+                  <Text style={styles.emptyText}>Aucun commentaire</Text>
+                  <Text style={styles.emptySubtext}>Soyez le premier à commenter !</Text>
+                </View>
+              ) : (
+                comments.map(comment => (
+                  <CommentItem
+                    key={comment.id}
+                    comment={comment}
+                    isReply={false}
+                    onLike={handleLikeComment}
+                    onReply={setReplyingTo}
+                    onShowLikers={handleShowLikers}
+                  />
+                ))
+              )}
+            </ScrollView>
+
+            {replyingTo && (
+              <View style={styles.replyingToBar}>
+                <Text style={styles.replyingToText}>
+                  Répondre à {replyingTo.author.prenom}
+                </Text>
+                <TouchableOpacity onPress={() => setReplyingTo(null)}>
+                  <Ionicons name="close-circle" size={20} color="#666" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder={
+                  replyingTo
+                    ? `Répondre à ${replyingTo.author.prenom}...`
+                    : 'Ajouter un commentaire...'
+                }
+                placeholderTextColor="#999"
+                value={commentText}
+                onChangeText={setCommentText}
+                multiline
+                maxLength={500}
+                blurOnSubmit={false}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  (!commentText.trim() || submitting) && styles.sendButtonDisabled,
+                ]}
+                onPress={handleAddComment}
+                disabled={!commentText.trim() || submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Ionicons name="send" size={20} color="#FFF" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+
+      {/*
+        CommentLikersModal rendu ICI, dans le même Modal, comme overlay absoluteFill.
+        Il n'a plus son propre <Modal> — zéro conflit de couches sur Android/iOS.
+      */}
       <CommentLikersModal
         visible={showLikersModal}
         commentId={selectedCommentForLikers}
@@ -425,7 +422,7 @@ export default function CommentsModal({
           setSelectedCommentForLikers(null);
         }}
       />
-    </>
+    </Modal>
   );
 }
 
@@ -433,8 +430,6 @@ export default function CommentsModal({
 
 const styles = StyleSheet.create({
 
-  // flex:1 + backgroundColor → le fond semi-transparent couvre tout l'écran.
-  // Pas de justifyContent ici — c'est le flex:1 du backdrop qui pousse le sheet en bas.
   modalRoot: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
