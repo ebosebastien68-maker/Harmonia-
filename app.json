@@ -11,6 +11,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#F5F5F5"
     },
+    "scheme": "harmonia",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.harmonia.app",
