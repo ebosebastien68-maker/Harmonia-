@@ -267,18 +267,7 @@ export default function LandingPage() {
           {/* Image 3 affichée en grand */}
           <Image source={require('../assets/3.png')} style={styles.sectionImg} resizeMode="cover" />
 
-          <View style={{ gap: 12, marginTop: 6 }}>
-            <PrizeCard emoji="🎮" title="World Gaming Championship" prize="🥳"
-              tags={['Mondial','2 048 joueurs']} color={P.blue}   bg={P.blueSoft} />
-            <PrizeCard emoji="🎨" title="Digital Arts Grand Prix"   prize="😍"
-              tags={['International','834 artistes']} color={P.purple} bg={P.purpleSoft} />
-            <PrizeCard emoji="💻" title="AI Innovation Hackathon"   prize="🤩"
-              tags={['Open','1 200 devs']}    color={P.green}  bg={P.greenSoft} />
-            <PrizeCard emoji="🎤" title="Talent Show Africa"        prize="🥰"
-              tags={['Continental','600 talents']} color={P.gold}  bg={P.goldSoft} />
-          </View>
-
-          <TouchableOpacity onPress={go} activeOpacity={0.88} style={{ marginTop: 22 }}>
+          <TouchableOpacity onPress={go} activeOpacity={0.88} style={{ marginTop: 6 }}>
             <LinearGradient colors={[P.purple, P.purpleL]} style={styles.sectionCta}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
               <Text style={styles.sectionCtaTxt}>Participer aux concours</Text>
