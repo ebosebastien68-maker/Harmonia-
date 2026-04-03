@@ -20,7 +20,7 @@ import SavedPostsModal   from '../components/SavedPostsModal';
 import SearchModal       from '../components/SearchModal';
 import LogoutModal       from '../components/LogoutModal';
 import UserProfileView   from '../components/UserProfileView';
-import { initPush }      from './push';
+import { initPush }      from '../lib/push';
 import PushPromptModal   from '../components/PushPromptModal';
 
 const { width, height } = Dimensions.get('window');
