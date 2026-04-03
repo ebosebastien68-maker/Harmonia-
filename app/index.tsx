@@ -198,7 +198,7 @@ export default function LandingPage() {
             {/* Badge */}
             <View style={styles.heroBadge}>
               <View style={[styles.heroBadgeDot, { backgroundColor: '#4ADE80' }]} />
-              <Text style={styles.heroBadgeTxt}>+50 000 membres actifs dans 120 pays</Text>
+              <Text style={styles.heroBadgeTxt}>+50 000 membres actifs dans 180 pays</Text>
             </View>
 
             <Text style={styles.heroTitle}>
@@ -227,9 +227,9 @@ export default function LandingPage() {
             STATS RAPIDES
         ══════════════════════════════════════════ */}
         <View style={styles.statsRow}>
-          <StatCard value="😍"  label="Membres"     icon="👥" color={P.purple} bg={P.purpleSoft} />
-          <StatCard value="🥰"   label="Pays"        icon="🌍" color={P.blue}   bg={P.blueSoft}   />
-          <StatCard value="🤩" label="Distribués"  icon="🏆" color={P.green}  bg={P.greenSoft}  />
+          <StatCard value="100M+"  label="Membres"     icon="👥" color={P.purple} bg={P.purpleSoft} />
+          <StatCard value="180"   label="Pays"        icon="🌍" color={P.blue}   bg={P.blueSoft}   />
+          <StatCard value="500M€" label="Distribués"  icon="🏆" color={P.green}  bg={P.greenSoft}  />
           <StatCard value="4.9★"  label="Note"        icon="⭐" color={P.gold}   bg={P.goldSoft}   />
         </View>
 
@@ -250,7 +250,7 @@ export default function LandingPage() {
             <FeatureRow icon="🎯" title="Compétitions internationales" desc="Des concours ouverts à tous les niveaux, partout dans le monde."   color={P.purple} bg={P.purpleSoft} />
             <FeatureRow icon="💬" title="Chat temps réel"              desc="Groupes, messages privés et fils de discussion enrichis."           color={P.blue}   bg={P.blueSoft}   />
             <FeatureRow icon="📣" title="Feed social"                  desc="Partagez vos créations et suivez l'actualité de votre communauté."  color={P.green}  bg={P.greenSoft}  />
-            <FeatureRow icon="🔔" title="Notifications push"           desc="Pour que chaque jour compte, chaque jour mérite une 🥳Suprise."    color={P.gold}   bg={P.goldSoft}   />
+            <FeatureRow icon="🔔" title="Nouveau Trophée"           desc="Chaque jour à une bonne nouvelle."    color={P.gold}   bg={P.goldSoft}   />
           </View>
         </View>
 
@@ -268,13 +268,13 @@ export default function LandingPage() {
           <Image source={require('../assets/3.png')} style={styles.sectionImg} resizeMode="cover" />
 
           <View style={{ gap: 12, marginTop: 6 }}>
-            <PrizeCard emoji="🎮" title="World Gaming Championship" prize="50 000€"
+            <PrizeCard emoji="🎮" title="World Gaming Championship" prize="🥳"
               tags={['Mondial','2 048 joueurs']} color={P.blue}   bg={P.blueSoft} />
-            <PrizeCard emoji="🎨" title="Digital Arts Grand Prix"   prize="20 000€"
+            <PrizeCard emoji="🎨" title="Digital Arts Grand Prix"   prize="😍"
               tags={['International','834 artistes']} color={P.purple} bg={P.purpleSoft} />
-            <PrizeCard emoji="💻" title="AI Innovation Hackathon"   prize="30 000€"
+            <PrizeCard emoji="💻" title="AI Innovation Hackathon"   prize="🤩"
               tags={['Open','1 200 devs']}    color={P.green}  bg={P.greenSoft} />
-            <PrizeCard emoji="🎤" title="Talent Show Africa"        prize="15 000€"
+            <PrizeCard emoji="🎤" title="Talent Show Africa"        prize="🥰"
               tags={['Continental','600 talents']} color={P.gold}  bg={P.goldSoft} />
           </View>
 
@@ -304,7 +304,7 @@ export default function LandingPage() {
           <View style={{ gap: 14, marginTop: 4 }}>
             <TestCard
               text="Harmonia a changé ma vie. J'ai gagné ma première compétition internationale et trouvé ma communauté."
-              name="Kofi Mensah" role="Champion Gaming · Ghana" flag="🇬🇭"
+              name="Mathieu Lemoine" role="Champion Gaming · France" flag="🇲🇫"
             />
             <TestCard
               text="En 3 mois, mon audience a été multipliée par 10. Un réseau d'une qualité exceptionnelle."
