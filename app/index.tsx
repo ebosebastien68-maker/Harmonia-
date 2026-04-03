@@ -37,14 +37,13 @@ export default function LandingPage() {
     if (Platform.OS !== 'web') return;
 
     const handler = (e: BeforeInstallPromptEvent) => {
-      e.preventDefault(); // Empêche le mini-infobar automatique du navigateur
+      e.preventDefault();
       setInstallPrompt(e);
       setShowInstallBtn(true);
     };
 
     window.addEventListener('beforeinstallprompt', handler as EventListener);
 
-    // Si déjà installé → ne pas montrer le bouton
     window.addEventListener('appinstalled', () => {
       setShowInstallBtn(false);
       setInstallPrompt(null);
@@ -114,10 +113,9 @@ export default function LandingPage() {
         <ImageBackground 
           source={require('../assets/1.png')} 
           style={styles.heroBackground}
-          imageStyle={{ opacity: 0.15 }}
+          imageStyle={{ opacity: 0.5 }}  // ✅ était 0.15 → quasi invisible
         >
           <View style={styles.heroContent}>
-            {/* LOGO AVEC COMPOSANT */}
             <View style={styles.logoContainer}>
               <HarmoniaLogo size={80} showText={true} theme="light" />
             </View>
@@ -283,8 +281,23 @@ const styles = StyleSheet.create({
   },
   installBannerBtnTxt: { color: '#FFF', fontWeight: '700', fontSize: 13 },
 
-  heroBackground: { width: width, height: 500, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-  heroContent: { alignItems: 'center', paddingHorizontal: 20, marginTop: 60 },
+  // ✅ FIX 1 : width: '100%' au lieu de width (Dimensions) → corrige le débordement web
+  heroBackground: {
+    width: '100%',
+    height: 500,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+
+  // ✅ FIX 2 : width: '100%' → le texte se centre correctement dans le hero
+  heroContent: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginTop: 60,
+    width: '100%',
+  },
+
   logoContainer: { alignItems: 'center', marginBottom: 30 },
   heroTitle: { fontSize: 36, fontWeight: '800', textAlign: 'center', color: '#333', lineHeight: 44, marginBottom: 10 },
   heroSubtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 30, fontStyle: 'italic' },
