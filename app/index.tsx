@@ -227,9 +227,9 @@ export default function LandingPage() {
             STATS RAPIDES
         ══════════════════════════════════════════ */}
         <View style={styles.statsRow}>
-          <StatCard value="50K+"  label="Membres"     icon="👥" color={P.purple} bg={P.purpleSoft} />
-          <StatCard value="120"   label="Pays"        icon="🌍" color={P.blue}   bg={P.blueSoft}   />
-          <StatCard value="500K€" label="Distribués"  icon="🏆" color={P.green}  bg={P.greenSoft}  />
+          <StatCard value="😍"  label="Membres"     icon="👥" color={P.purple} bg={P.purpleSoft} />
+          <StatCard value="🥰"   label="Pays"        icon="🌍" color={P.blue}   bg={P.blueSoft}   />
+          <StatCard value="🤩" label="Distribués"  icon="🏆" color={P.green}  bg={P.greenSoft}  />
           <StatCard value="4.9★"  label="Note"        icon="⭐" color={P.gold}   bg={P.goldSoft}   />
         </View>
 
@@ -250,7 +250,7 @@ export default function LandingPage() {
             <FeatureRow icon="🎯" title="Compétitions internationales" desc="Des concours ouverts à tous les niveaux, partout dans le monde."   color={P.purple} bg={P.purpleSoft} />
             <FeatureRow icon="💬" title="Chat temps réel"              desc="Groupes, messages privés et fils de discussion enrichis."           color={P.blue}   bg={P.blueSoft}   />
             <FeatureRow icon="📣" title="Feed social"                  desc="Partagez vos créations et suivez l'actualité de votre communauté."  color={P.green}  bg={P.greenSoft}  />
-            <FeatureRow icon="🔔" title="Notifications push"           desc="Restez informé des concours, résultats et messages importants."    color={P.gold}   bg={P.goldSoft}   />
+            <FeatureRow icon="🔔" title="Notifications push"           desc="Pour que chaque jour compte, chaque jour mérite une 🥳Suprise."    color={P.gold}   bg={P.goldSoft}   />
           </View>
         </View>
 
