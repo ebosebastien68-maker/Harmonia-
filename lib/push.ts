@@ -18,7 +18,6 @@ import AsyncStorage  from '@react-native-async-storage/async-storage';
 const BACKEND_URL  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const VAPID_PUBLIC = 'BD-yXPlob5T761yCIPiWx6nnQWCis6Yp-r8Rb_SzxYYljYKKoibxs059ze9vsqFimBtmGXPVpw_mqOJCd9cGnUM';
 const MOBILE_KEY   = 'harmonia_push_mobile_registered';
-const PROJECT_ID   = '368b5ff5-c77c-4e3d-96b5-8dcf94696e7b';
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
@@ -276,12 +275,30 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       return;
     }
 
+    // Récupérer projectId + accessToken depuis le backend
+    // (EXPO_ACCESS_TOKEN reste uniquement sur Render, jamais dans l'app)
+    const configRes = await fetch(`${BACKEND_URL}/push`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        action:       'getExpoConfig',
+        user_id:      auth.user_id,
+        access_token: auth.access_token,
+      }),
+    });
+    if (!configRes.ok) {
+      console.warn('[Push.native] Impossible de récupérer la config Expo');
+      return;
+    }
+    const { projectId, accessToken } = await configRes.json();
+
     // Récupérer le token Expo
     console.log(`[Push.native] Plateforme ${Platform.OS} — récupération token`);
     let expoPushToken: string;
     try {
       const tokenData = await Notifications.getExpoPushTokenAsync({
-        projectId: PROJECT_ID,
+        projectId,
+        accessToken,
       });
       expoPushToken = tokenData.data;
       console.log(`[Push.native] Token (${Platform.OS}) :`, expoPushToken);
@@ -321,11 +338,29 @@ async function removePushNative(getAuth: GetAuth): Promise<void> {
     const Notifications = require('expo-notifications');
 
     const auth = await getAuth();
-    const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: PROJECT_ID, // ← même projectId hardcodé que initPushNative
+    if (!auth) {
+      await AsyncStorage.removeItem(MOBILE_KEY);
+      return;
+    }
+
+    // Récupérer la config depuis le backend (même logique que initPushNative)
+    const configRes = await fetch(`${BACKEND_URL}/push`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        action:       'getExpoConfig',
+        user_id:      auth.user_id,
+        access_token: auth.access_token,
+      }),
     }).catch(() => null);
 
-    if (auth && tokenData) {
+    const tokenData = configRes?.ok
+      ? await configRes.json().then(({ projectId, accessToken }) =>
+          Notifications.getExpoPushTokenAsync({ projectId, accessToken }).catch(() => null)
+        )
+      : null;
+
+    if (tokenData) {
       await fetch(`${BACKEND_URL}/push`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
