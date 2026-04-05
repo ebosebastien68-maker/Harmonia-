@@ -225,9 +225,10 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
     // Configurer le handler de notifications reçues
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge:  true,
+        shouldShowBanner: true,  // SDK 52+ — remplace shouldShowAlert
+        shouldShowList:   true,  // SDK 52+ — affichage centre de notifs
+        shouldPlaySound:  true,
+        shouldSetBadge:   true,
       }),
     });
 
