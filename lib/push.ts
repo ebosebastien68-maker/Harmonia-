@@ -18,6 +18,7 @@ import AsyncStorage  from '@react-native-async-storage/async-storage';
 const BACKEND_URL  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const VAPID_PUBLIC = 'BD-yXPlob5T761yCIPiWx6nnQWCis6Yp-r8Rb_SzxYYljYKKoibxs059ze9vsqFimBtmGXPVpw_mqOJCd9cGnUM';
 const MOBILE_KEY   = 'harmonia_push_mobile_registered';
+const PROJECT_ID   = '368b5ff5-c77c-4e3d-96b5-8dcf94696e7b';
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
@@ -112,32 +113,19 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
       return;
     }
 
-    // ── Pas d'abonnement local → deux cas possibles :
-    //    a) Premier abonnement → demander la permission (appelé depuis clic)
-    //    b) Nouveau navigateur → user déjà abonné ailleurs en DB
-    //       → créer silencieusement l'abonnement sans redemander la permission
-    //          si le navigateur l'accorde automatiquement (permission déjà
-    //          accordée sur cet appareil pour ce domaine)
     const alreadyInDB = await checkDB(auth, 'web');
 
-    // Vérifier l'état de permission actuel du navigateur
     const permState = typeof Notification !== 'undefined'
       ? Notification.permission
       : 'default';
 
     if (alreadyInDB && permState === 'default') {
-      // Nouveau navigateur, pas encore de permission ici →
-      // on laisse le flux normal (demande permission via clic)
       console.log('[Push.web] Nouveau navigateur — permission requise');
     } else if (alreadyInDB && permState === 'denied') {
-      // L'user a explicitement refusé sur ce navigateur → silence
       console.log('[Push.web] Permission refusée sur ce navigateur');
       return;
     }
-    // Si permState === 'granted' et alreadyInDB → on continue pour créer
-    // l'abonnement sur ce nouveau navigateur silencieusement
 
-    // Demander la permission si pas encore accordée
     if (permState !== 'granted') {
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
@@ -146,7 +134,6 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
       }
     }
 
-    // ── Créer la subscription VAPID (nouveau navigateur ou premier abonnement)
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly:      true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
@@ -157,13 +144,8 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
     const p256dh   = sub.keys?.p256dh ?? '';
     const authKey  = sub.keys?.auth   ?? '';
 
-    // ── Enregistrer ou mettre à jour en DB ───────────────────────────────
-    // • Premier abonnement → action 'subscribe'
-    // • Nouveau navigateur (déjà en DB ailleurs) → action 'update'
-    //   On récupère l'ancien endpoint pour le désactiver proprement
     let oldEndpoint: string | null = null;
     if (alreadyInDB) {
-      // Récupérer l'endpoint actif en DB pour cet user
       const epRes = await fetch(`${BACKEND_URL}/push`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -239,11 +221,8 @@ async function removePushWeb(getAuth: GetAuth): Promise<void> {
 // ══════════════════════════════════════════════════════════════════════════════
 async function initPushNative(getAuth: GetAuth): Promise<void> {
   try {
-    // require() dynamique — invisible pour le bundler web
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Notifications = require('expo-notifications');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const Constants = require('expo-constants').default;
 
     // Configurer le handler de notifications reçues
     Notifications.setNotificationHandler({
@@ -252,10 +231,10 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
         shouldPlaySound: true,
         shouldSetBadge:  true,
       }),
-    })
+    });
 
     // Enregistrer les catégories (boutons d'action par type)
-    const { registerNotificationCategories } = require('./notificationCategories')
+    const { registerNotificationCategories } = require('./notificationCategories');
     await registerNotificationCategories();
 
     // Canal Android obligatoire
@@ -285,7 +264,7 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       return;
     }
 
-    // Demander la permission (iOS / Android — autorisé programmatiquement)
+    // Demander la permission
     const { status: existing } = await Notifications.getPermissionsAsync();
     let finalStatus = existing;
     if (existing !== 'granted') {
@@ -298,14 +277,11 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
     }
 
     // Récupérer le token Expo
-    // iOS → APNs, Android → FCM — Expo gère la différence en interne
-        // Récupérer le token Expo
     console.log(`[Push.native] Plateforme ${Platform.OS} — récupération token`);
     let expoPushToken: string;
     try {
       const tokenData = await Notifications.getExpoPushTokenAsync({
-        // On utilise l'ID en dur pour le test
-        projectId: "368b5ff5-c77c-4e3d-96b5-8dcf94696e7b", 
+        projectId: PROJECT_ID,
       });
       expoPushToken = tokenData.data;
       console.log(`[Push.native] Token (${Platform.OS}) :`, expoPushToken);
@@ -313,7 +289,6 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       console.warn('[Push.native] Impossible de récupérer le token :', err);
       return;
     }
-    
 
     // Enregistrer en DB
     const res = await fetch(`${BACKEND_URL}/push`, {
@@ -344,12 +319,10 @@ async function removePushNative(getAuth: GetAuth): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Notifications = require('expo-notifications');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const Constants = require('expo-constants').default;
 
-    const auth      = await getAuth();
+    const auth = await getAuth();
     const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: Constants?.expoConfig?.extra?.eas?.projectId,
+      projectId: PROJECT_ID, // ← même projectId hardcodé que initPushNative
     }).catch(() => null);
 
     if (auth && tokenData) {
