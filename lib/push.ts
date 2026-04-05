@@ -8,8 +8,9 @@
 // Solution : require() dynamique à l'intérieur des branches
 // conditionnelles → Metro ne traverse pas le code mort.
 //
-// expo-device n'est pas dans package.json → remplacé par
-// une vérification Platform.OS simple.
+// Mobile : getDevicePushTokenAsync() → token FCM natif Android
+//          envoyé au backend → Firebase Admin SDK → FCM → appareil
+// Web    : VAPID → navigateur (inchangé)
 // =====================================================
 
 import { Platform }  from 'react-native';
@@ -69,8 +70,7 @@ export async function removePush(getAuth: GetAuth): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WEB — Browser Push API + VAPID
-// Appelé depuis handleEnablePush() après un clic utilisateur
+// WEB — Browser Push API + VAPID (inchangé)
 // ══════════════════════════════════════════════════════════════════════════════
 async function initPushWeb(getAuth: GetAuth): Promise<void> {
   if (typeof window === 'undefined') return;
@@ -83,7 +83,6 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
     const auth = await getAuth();
     if (!auth) return;
 
-    // Enregistrer le service worker
     let registration: ServiceWorkerRegistration;
     try {
       registration = await navigator.serviceWorker.register('/service-worker.js');
@@ -93,10 +92,8 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
       return;
     }
 
-    // ── Déjà abonné dans CE navigateur ? ─────────────────────────────────
     const existing = await registration.pushManager.getSubscription();
     if (existing) {
-      // Mettre à jour last_seen_at → indique que ce navigateur est toujours actif
       fetch(`${BACKEND_URL}/push`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -113,14 +110,9 @@ async function initPushWeb(getAuth: GetAuth): Promise<void> {
     }
 
     const alreadyInDB = await checkDB(auth, 'web');
+    const permState = typeof Notification !== 'undefined' ? Notification.permission : 'default';
 
-    const permState = typeof Notification !== 'undefined'
-      ? Notification.permission
-      : 'default';
-
-    if (alreadyInDB && permState === 'default') {
-      console.log('[Push.web] Nouveau navigateur — permission requise');
-    } else if (alreadyInDB && permState === 'denied') {
+    if (alreadyInDB && permState === 'denied') {
       console.log('[Push.web] Permission refusée sur ce navigateur');
       return;
     }
@@ -215,8 +207,15 @@ async function removePushWeb(getAuth: GetAuth): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// NATIVE — Expo Push Notifications (iOS + Android)
-// require() dynamique → Metro ne bundle pas ces imports pour le web
+// NATIVE — FCM Android via getDevicePushTokenAsync
+//
+// Différence clé avec l'ancienne version :
+//   Avant : getExpoPushTokenAsync({ projectId, accessToken })
+//           → token Expo (ExponentPushToken[xxx]) → serveurs Expo → FCM
+//   Maintenant : getDevicePushTokenAsync()
+//           → token FCM natif → ton backend → Firebase Admin → FCM directement
+//
+// Plus besoin de projectId ni d'accessToken côté app.
 // ══════════════════════════════════════════════════════════════════════════════
 async function initPushNative(getAuth: GetAuth): Promise<void> {
   try {
@@ -246,7 +245,7 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       });
     }
 
-    // Cache local
+    // Cache local — évite les requêtes inutiles au démarrage
     const cached = await AsyncStorage.getItem(MOBILE_KEY);
     if (cached === 'true') {
       console.log('[Push.native] Cache — déjà abonné');
@@ -256,14 +255,14 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
     const auth = await getAuth();
     if (!auth) return;
 
-    // Vérifier en DB
+    // Vérifier en DB si un token est déjà enregistré pour cet user
     if (await checkDB(auth, 'mobile')) {
       await AsyncStorage.setItem(MOBILE_KEY, 'true');
       console.log('[Push.native] DB — déjà abonné');
       return;
     }
 
-    // Demander la permission
+    // Demander la permission à l'OS
     const { status: existing } = await Notifications.getPermissionsAsync();
     let finalStatus = existing;
     if (existing !== 'granted') {
@@ -275,46 +274,30 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
       return;
     }
 
-    // Récupérer projectId + accessToken depuis le backend
-    // (EXPO_ACCESS_TOKEN reste uniquement sur Render, jamais dans l'app)
-    const configRes = await fetch(`${BACKEND_URL}/push`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        action:       'getExpoConfig',
-        user_id:      auth.user_id,
-        access_token: auth.access_token,
-      }),
-    });
-    if (!configRes.ok) {
-      console.warn('[Push.native] Impossible de récupérer la config Expo');
-      return;
-    }
-    const { projectId, accessToken } = await configRes.json();
-
-    // Récupérer le token Expo
-    console.log(`[Push.native] Plateforme ${Platform.OS} — récupération token`);
-    let expoPushToken: string;
+    // ── Récupérer le token FCM natif ───────────────────────────────────────
+    // getDevicePushTokenAsync() retourne le vrai token FCM de l'appareil
+    // sans passer par les serveurs Expo — pas de projectId, pas d'accessToken
+    console.log(`[Push.native] Plateforme ${Platform.OS} — récupération token FCM`);
+    let fcmToken: string;
     try {
-      const tokenData = await Notifications.getExpoPushTokenAsync({
-        projectId,
-        accessToken,
-      });
-      expoPushToken = tokenData.data;
-      console.log(`[Push.native] Token (${Platform.OS}) :`, expoPushToken);
+      const tokenData = await Notifications.getDevicePushTokenAsync();
+      // tokenData = { type: 'android', data: 'fcm-token-xxx' }
+      fcmToken = tokenData.data;
+      console.log(`[Push.native] Token FCM (${Platform.OS}) :`, fcmToken);
     } catch (err) {
-      console.warn('[Push.native] Impossible de récupérer le token :', err);
+      console.warn('[Push.native] Impossible de récupérer le token FCM :', err);
       return;
     }
 
-    // Enregistrer en DB
+    // Enregistrer le token FCM en DB via le backend
+    // Le champ s'appelle encore expo_push_token en DB — il stocke maintenant le token FCM
     const res = await fetch(`${BACKEND_URL}/push`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         action:          'subscribe',
         platform:        'mobile',
-        expo_push_token: expoPushToken,
+        expo_push_token: fcmToken,   // champ DB inchangé, contient le token FCM
         user_id:         auth.user_id,
         access_token:    auth.access_token,
       }),
@@ -322,7 +305,7 @@ async function initPushNative(getAuth: GetAuth): Promise<void> {
 
     if (res.ok) {
       await AsyncStorage.setItem(MOBILE_KEY, 'true');
-      console.log('[Push.native] ✅ Abonnement enregistré');
+      console.log('[Push.native] ✅ Token FCM enregistré');
     } else {
       console.warn('[Push.native] ❌ Erreur enregistrement');
     }
@@ -343,22 +326,8 @@ async function removePushNative(getAuth: GetAuth): Promise<void> {
       return;
     }
 
-    // Récupérer la config depuis le backend (même logique que initPushNative)
-    const configRes = await fetch(`${BACKEND_URL}/push`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        action:       'getExpoConfig',
-        user_id:      auth.user_id,
-        access_token: auth.access_token,
-      }),
-    }).catch(() => null);
-
-    const tokenData = configRes?.ok
-      ? await configRes.json().then(({ projectId, accessToken }) =>
-          Notifications.getExpoPushTokenAsync({ projectId, accessToken }).catch(() => null)
-        )
-      : null;
+    // Récupérer le token FCM natif pour le désabonnement
+    const tokenData = await Notifications.getDevicePushTokenAsync().catch(() => null);
 
     if (tokenData) {
       await fetch(`${BACKEND_URL}/push`, {
