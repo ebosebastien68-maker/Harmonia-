@@ -111,7 +111,6 @@ const TestCard = ({ text, name, role, flag }: {
 // ─── Page principale ──────────────────────────────────────────────────────────
 export default function LandingPage() {
   const router  = useRouter();
-  const lastTap = useRef<number>(0);
 
   const fadeIn  = useRef(new Animated.Value(0)).current;
   const slideUp = useRef(new Animated.Value(24)).current;
@@ -142,12 +141,6 @@ export default function LandingPage() {
   };
 
   const go = useCallback(() => router.push('/login'), []);
-
-  const doubleTap = () => {
-    const now = Date.now();
-    if (lastTap.current && now - lastTap.current < 300) { router.push('/auth-admin'); lastTap.current = 0; }
-    else lastTap.current = now;
-  };
 
   return (
     <View style={styles.root}>
@@ -198,7 +191,7 @@ export default function LandingPage() {
             {/* Badge */}
             <View style={styles.heroBadge}>
               <View style={[styles.heroBadgeDot, { backgroundColor: '#4ADE80' }]} />
-              <Text style={styles.heroBadgeTxt}>+50 000 membres actifs dans 180 pays</Text>
+              <Text style={styles.heroBadgeTxt}>+520 000 membres actifs dans 180 pays</Text>
             </View>
 
             <Text style={styles.heroTitle}>
@@ -250,7 +243,7 @@ export default function LandingPage() {
             <FeatureRow icon="🎯" title="Compétitions internationales" desc="Des concours ouverts à tous les niveaux, partout dans le monde."   color={P.purple} bg={P.purpleSoft} />
             <FeatureRow icon="💬" title="Chat temps réel"              desc="Groupes, messages privés et fils de discussion enrichis."           color={P.blue}   bg={P.blueSoft}   />
             <FeatureRow icon="📣" title="Feed social"                  desc="Partagez vos créations et suivez l'actualité de votre communauté."  color={P.green}  bg={P.greenSoft}  />
-            <FeatureRow icon="🔔" title="Nouveau Trophée"           desc="Chaque jour à une bonne nouvelle."    color={P.gold}   bg={P.goldSoft}   />
+            <FeatureRow icon="🔔" title="Nouveau Trophée"              desc="Chaque jour à une bonne nouvelle."                                  color={P.gold}   bg={P.goldSoft}   />
           </View>
         </View>
 
@@ -357,7 +350,7 @@ export default function LandingPage() {
           <View style={styles.footerSep} />
           <Text style={styles.footerCopy}>© 2024 Harmonia · Tous droits réservés</Text>
           <Text style={styles.footerTag}>
-            Propulsant <Text onPress={doubleTap} style={{ color: P.purple }}>les</Text> talents vers l'infini.
+            Propulsant les talents vers l'infini.
           </Text>
         </View>
 
