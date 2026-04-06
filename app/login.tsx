@@ -19,16 +19,16 @@ import { Ionicons }       from '@expo/vector-icons';
 import DateTimePicker     from '@react-native-community/datetimepicker';
 import * as Haptics       from 'expo-haptics';
 import * as WebBrowser    from 'expo-web-browser';
+import * as AuthSession   from 'expo-auth-session';
 import HarmoniaLogo       from '../components/HarmoniaLogo';
 
-// Necessaire pour que le modal se ferme correctement sur mobile
+// Nécessaire pour que le modal Google se ferme correctement sur mobile
 WebBrowser.maybeCompleteAuthSession();
 
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-const REDIRECT_WEB    = 'https://www.harmoniaworld.world/login';
-const REDIRECT_MOBILE = 'harmoniaworld://login';
+const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -37,37 +37,6 @@ interface StatusMessage {
   type:    MessageType;
   text:    string;
   visible: boolean;
-}
-
-// =====================================================
-// UTILITAIRES
-// =====================================================
-
-function generateSid(): string {
-  const random   = Math.random().toString(36).substring(2, 10);
-  const timePart = Date.now().toString(36);
-  return `${random}${timePart}`;
-}
-
-function parseOAuthReturn(url: string): {
-  sid:          string | null;
-  accessToken:  string | null;
-  refreshToken: string | null;
-  expiresAt:    string | null;
-  tokenType:    string | null;
-} {
-  const queryPart      = url.split('?')[1]?.split('#')[0] ?? '';
-  const queryParams    = new URLSearchParams(queryPart);
-  const fragment       = url.split('#')[1] ?? '';
-  const fragmentParams = new URLSearchParams(fragment);
-
-  return {
-    sid:          queryParams.get('sid'),
-    accessToken:  fragmentParams.get('access_token'),
-    refreshToken: fragmentParams.get('refresh_token'),
-    expiresAt:    fragmentParams.get('expires_at'),
-    tokenType:    fragmentParams.get('token_type'),
-  };
 }
 
 // =====================================================
@@ -94,8 +63,28 @@ export default function LoginPage() {
   const [showPassword,     setShowPassword]     = useState(false);
   const [pendingEmail,     setPendingEmail]     = useState('');
 
-  // sid en memoire — reste intact car WebBrowser ne quitte pas l app
-  const sidRef = useRef<string | null>(null);
+  // =====================================================
+  // EXPO AUTH SESSION — PKCE Google
+  // Génère automatiquement redirect_uri et code_verifier
+  // =====================================================
+
+  const redirectUri = AuthSession.makeRedirectUri({
+    scheme: 'harmoniaworld',
+    path:   'login',
+  });
+
+  const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
+
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId:            GOOGLE_CLIENT_ID,
+      redirectUri,
+      scopes:              ['openid', 'profile', 'email'],
+      usePKCE:             true,
+      responseType:        AuthSession.ResponseType.Code,
+    },
+    discovery
+  );
 
   // =====================================================
   // INITIALISATION
@@ -113,6 +102,35 @@ export default function LoginPage() {
       return () => clearTimeout(timer);
     }
   }, [statusMessage.visible]);
+
+  // =====================================================
+  // TRAITEMENT DE LA RÉPONSE GOOGLE
+  // Déclenché automatiquement quand Google redirige vers l'app
+  // =====================================================
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { code } = response.params;
+      const codeVerifier = request?.codeVerifier;
+
+      if (!code || !codeVerifier) {
+        showMessage('error', 'Code ou verifier manquant — réessayez');
+        setLoading(false);
+        return;
+      }
+
+      // Envoyer le code au backend pour échange
+      exchangeGoogleCode(code, codeVerifier);
+
+    } else if (response?.type === 'error') {
+      showMessage('error', 'Erreur Google — réessayez');
+      setLoading(false);
+
+    } else if (response?.type === 'cancel' || response?.type === 'dismiss') {
+      showMessage('warning', 'Connexion Google annulée');
+      setLoading(false);
+    }
+  }, [response]);
 
   const checkExistingSession = async () => {
     try {
@@ -182,9 +200,9 @@ export default function LoginPage() {
 
     try {
       const chkRes = await fetch(`${WS_BASE}/check-registrations`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body:    JSON.stringify({}),
       });
       if (chkRes.ok) {
         const chk = await chkRes.json();
@@ -203,7 +221,7 @@ export default function LoginPage() {
     showMessage('info', 'Creation du compte en cours...');
     try {
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action:         'signup',
@@ -235,14 +253,13 @@ export default function LoginPage() {
     showMessage('info', 'Verification en cours...');
     try {
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify-email', email: pendingEmail, password }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erreur de verification');
       if (data.verified) {
-        // Enregistrer directement dans AsyncStorage
         await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
         showMessage('success', 'Email verifie ! Bienvenue sur Harmonia !');
         setTimeout(() => router.replace('/home'), 1500);
@@ -268,7 +285,7 @@ export default function LoginPage() {
     showMessage('info', 'Connexion en cours...');
     try {
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', email: email.trim().toLowerCase(), password }),
       });
@@ -279,7 +296,6 @@ export default function LoginPage() {
         }
         throw new Error(data.error || 'Identifiants incorrects');
       }
-      // Enregistrer directement dans AsyncStorage
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
       showMessage('success', 'Connexion reussie ! Bienvenue !');
       setTimeout(() => router.replace('/home'), 1500);
@@ -302,7 +318,7 @@ export default function LoginPage() {
     showMessage('info', "Envoi de l'email en cours...");
     try {
       const response = await fetch(API_BASE, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'request-reset', email: email.trim().toLowerCase() }),
       });
@@ -322,105 +338,57 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // CONNEXION GOOGLE — WebBrowser modal
+  // GOOGLE SIGNIN — Nouveau flux PKCE
   //
-  // openAuthSessionAsync ouvre un modal integre :
-  // iOS     : SFSafariViewController
-  // Android : Chrome Custom Tab
-  // Web     : popup
-  //
-  // L app ne quitte JAMAIS → sidRef.current reste intact
-  // Une fois termine, on enregistre dans AsyncStorage
-  // home.tsx lit AsyncStorage comme profile.tsx ✅
+  // 1. promptAsync() ouvre Google dans un Chrome Custom Tab (Android)
+  //    ou SFSafariViewController (iOS) — l'app ne quitte jamais
+  // 2. Google redirige vers harmoniaworld://login avec ?code=xxx
+  // 3. expo-auth-session intercepte automatiquement le deep link
+  // 4. Le useEffect sur [response] se déclenche avec le code
+  // 5. On envoie le code au backend via exchangeGoogleCode()
   // =====================================================
 
   const handleGoogleSignin = async () => {
+    if (!request) {
+      showMessage('error', 'Google Auth non prêt — réessayez dans un instant');
+      return;
+    }
     setLoading(true);
     showMessage('info', 'Ouverture de Google...');
+    await promptAsync();
+    // La suite est gérée dans useEffect [response]
+  };
 
-    // Generer le sid et le garder en memoire
-    const sid      = generateSid();
-    sidRef.current = sid;
+  // =====================================================
+  // ÉCHANGE CODE → SESSION (étapes 4 à 11 du flux)
+  // =====================================================
 
-    const redirectUrl = Platform.OS === 'web' ? REDIRECT_WEB : REDIRECT_MOBILE;
-
+  const exchangeGoogleCode = async (code: string, codeVerifier: string) => {
+    showMessage('info', 'Vérification en cours...');
     try {
-      // 1. Demander l URL OAuth au backend
       const response = await fetch(API_BASE, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          action:   'google-signin',
-          sid,
-          platform: Platform.OS,
+        body: JSON.stringify({
+          action:        'google-exchange',
+          code,
+          code_verifier: codeVerifier,
+          redirect_uri:  redirectUri,
         }),
       });
+
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Erreur Google');
 
-      // 2. Ouvrir le modal — l app reste active, sidRef.current intact
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-
-      if (result.type !== 'success') {
-        showMessage('warning', 'Connexion Google annulee');
-        sidRef.current = null;
-        setLoading(false);
-        return;
+      if (!response.ok) {
+        throw new Error(data.error || 'Échec de la connexion Google');
       }
 
-      // 3. Parser l URL de retour
-      const { sid: returnedSid, accessToken, refreshToken, expiresAt, tokenType } = parseOAuthReturn(result.url);
-
-      // 4. Verifier le sid — securite anti-injection
-      if (!returnedSid || returnedSid !== sidRef.current) {
-        showMessage('error', 'Identifiant de session invalide — reessayez');
-        sidRef.current = null;
-        setLoading(false);
-        return;
-      }
-
-      // 5. Verifier le token
-      if (!accessToken || tokenType !== 'bearer') {
-        showMessage('error', 'Token manquant — reessayez');
-        sidRef.current = null;
-        setLoading(false);
-        return;
-      }
-
-      // 6. Decoder le JWT pour extraire user.id et user.email
-      let userId    = '';
-      let userEmail = '';
-      try {
-        const payload = JSON.parse(atob(accessToken.split('.')[1]));
-        userId    = payload.sub   || '';
-        userEmail = payload.email || '';
-      } catch {
-        console.warn('Impossible de decoder le JWT');
-      }
-
-      // 7. Construire la session — meme format que login classique
-      const session = {
-        access_token:  accessToken,
-        refresh_token: refreshToken ?? '',
-        expires_at:    expiresAt ? parseInt(expiresAt) : null,
-        user: {
-          id:    userId,
-          email: userEmail,
-        },
-      };
-
-      // 8. Enregistrer dans AsyncStorage — meme methode que login classique
-      await AsyncStorage.setItem('harmonia_session', JSON.stringify(session));
-
-      sidRef.current = null;
-      showMessage('success', 'Connexion Google reussie ! Bienvenue !');
-
-      // 8. home.tsx lira AsyncStorage comme profile.tsx — aucun param a passer
+      await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
+      showMessage('success', 'Connexion Google réussie ! Bienvenue !');
       setTimeout(() => router.replace('/home'), 800);
 
     } catch (error: any) {
-      sidRef.current = null;
-      showMessage('error', error.message || 'Impossible de se connecter avec Google');
+      showMessage('error', error.message || 'Impossible de finaliser la connexion Google');
       setLoading(false);
     }
   };
@@ -493,9 +461,9 @@ export default function LoginPage() {
       </View>
 
       <TouchableOpacity
-        style={styles.googleButton}
+        style={[styles.googleButton, !request && styles.googleButtonDisabled]}
         onPress={handleGoogleSignin}
-        disabled={loading}
+        disabled={loading || !request}
         activeOpacity={0.8}
       >
         <Image
@@ -542,9 +510,7 @@ export default function LoginPage() {
           <View style={styles.loadingOverlay}>
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color="#8A2BE2" />
-              <Text style={styles.loadingText}>
-                {sidRef.current ? 'Connexion Google en cours...' : 'Chargement...'}
-              </Text>
+              <Text style={styles.loadingText}>Chargement...</Text>
             </View>
           </View>
         )}
@@ -829,8 +795,9 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
   },
-  googleLogo:       { width: 22, height: 22, marginRight: 12 },
-  googleButtonText: { fontSize: 16, color: '#333', fontWeight: '600' },
+  googleButtonDisabled: { opacity: 0.5 },
+  googleLogo:           { width: 22, height: 22, marginRight: 12 },
+  googleButtonText:     { fontSize: 16, color: '#333', fontWeight: '600' },
   statusMessageContainer: {
     position: 'absolute', top: 50, left: 20, right: 20,
     flexDirection: 'row', alignItems: 'center', padding: 15,
