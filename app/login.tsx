@@ -1,6 +1,4 @@
-import * as Crypto from 'expo-crypto'; 
-// 👈 LA LIGNE MAGIQUE POUR CORRIGER LE BUG CRYPTO
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -30,7 +28,6 @@ WebBrowser.maybeCompleteAuthSession();
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-// Récupération dynamique via process.env (comme configuré dans ton app.json)
 const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
@@ -71,7 +68,10 @@ export default function LoginPage() {
   // Génère automatiquement redirect_uri et code_verifier
   // =====================================================
 
-  const redirectUri = AuthSession.makeRedirectUri(); // Laisse Expo gérer l'URL (auth.expo.io)
+  const redirectUri = AuthSession.makeRedirectUri({
+    scheme: 'harmonia',
+    path:   'login',
+  });
 
   const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
 
@@ -105,6 +105,7 @@ export default function LoginPage() {
 
   // =====================================================
   // TRAITEMENT DE LA RÉPONSE GOOGLE
+  // Déclenché automatiquement quand Google redirige vers l'app
   // =====================================================
 
   useEffect(() => {
@@ -118,6 +119,7 @@ export default function LoginPage() {
         return;
       }
 
+      // Envoyer le code au backend pour échange
       exchangeGoogleCode(code, codeVerifier);
 
     } else if (response?.type === 'error') {
@@ -143,7 +145,7 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // MESSAGES ET DATES
+  // MESSAGES
   // =====================================================
 
   const showMessage = (type: MessageType, text: string) => {
@@ -156,6 +158,10 @@ export default function LoginPage() {
     }
     setStatusMessage({ type, text, visible: true });
   };
+
+  // =====================================================
+  // DATE
+  // =====================================================
 
   const formatDateDisplay = (date: Date): string => {
     const day   = date.getDate().toString().padStart(2, '0');
@@ -177,7 +183,7 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // ACTIONS API (Signup, Verify, Login, Reset, Google)
+  // INSCRIPTION
   // =====================================================
 
   const handleSignup = async () => {
@@ -204,6 +210,8 @@ export default function LoginPage() {
           showMessage('error', chk.registrations_message || 'Les inscriptions sont actuellement fermees.');
           return;
         }
+      } else {
+        showMessage('error', 'Impossible de verifier les inscriptions.'); return;
       }
     } catch {
       showMessage('error', 'Impossible de joindre le serveur.'); return;
@@ -236,6 +244,10 @@ export default function LoginPage() {
     }
   };
 
+  // =====================================================
+  // VERIFICATION EMAIL
+  // =====================================================
+
   const handleVerifySignup = async () => {
     setLoading(true);
     showMessage('info', 'Verification en cours...');
@@ -260,6 +272,10 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  // =====================================================
+  // CONNEXION
+  // =====================================================
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -290,6 +306,10 @@ export default function LoginPage() {
     }
   };
 
+  // =====================================================
+  // MOT DE PASSE OUBLIE
+  // =====================================================
+
   const handleRequestReset = async () => {
     if (!email.trim()) {
       showMessage('error', 'Veuillez entrer votre email'); return;
@@ -317,6 +337,17 @@ export default function LoginPage() {
     }
   };
 
+  // =====================================================
+  // GOOGLE SIGNIN — Nouveau flux PKCE
+  //
+  // 1. promptAsync() ouvre Google dans un Chrome Custom Tab (Android)
+  //    ou SFSafariViewController (iOS) — l'app ne quitte jamais
+  // 2. Google redirige vers harmoniaworld://login avec ?code=xxx
+  // 3. expo-auth-session intercepte automatiquement le deep link
+  // 4. Le useEffect sur [response] se déclenche avec le code
+  // 5. On envoie le code au backend via exchangeGoogleCode()
+  // =====================================================
+
   const handleGoogleSignin = async () => {
     if (!request) {
       showMessage('error', 'Google Auth non prêt — réessayez dans un instant');
@@ -325,7 +356,12 @@ export default function LoginPage() {
     setLoading(true);
     showMessage('info', 'Ouverture de Google...');
     await promptAsync();
+    // La suite est gérée dans useEffect [response]
   };
+
+  // =====================================================
+  // ÉCHANGE CODE → SESSION (étapes 4 à 11 du flux)
+  // =====================================================
 
   const exchangeGoogleCode = async (code: string, codeVerifier: string) => {
     showMessage('info', 'Vérification en cours...');
@@ -343,7 +379,9 @@ export default function LoginPage() {
 
       const data = await response.json();
 
-      if (!response.ok) throw new Error(data.error || 'Échec de la connexion Google');
+      if (!response.ok) {
+        throw new Error(data.error || 'Échec de la connexion Google');
+      }
 
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
       showMessage('success', 'Connexion Google réussie ! Bienvenue !');
@@ -356,7 +394,7 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // RENDU DES ÉLÉMENTS SPÉCIFIQUES
+  // DATE PICKER
   // =====================================================
 
   const onDateChange = (event: any, selectedDate?: Date) => {
@@ -410,6 +448,10 @@ export default function LoginPage() {
     );
   };
 
+  // =====================================================
+  // BOUTON GOOGLE
+  // =====================================================
+
   const renderGoogleButton = () => (
     <>
       <View style={styles.dividerContainer}>
@@ -434,7 +476,7 @@ export default function LoginPage() {
   );
 
   // =====================================================
-  // RENDU PRINCIPAL
+  // RENDU
   // =====================================================
 
   return (
@@ -485,6 +527,7 @@ export default function LoginPage() {
 
           <View style={styles.card}>
 
+            {/* ==================== CONNEXION ==================== */}
             {mode === 'login' && (
               <>
                 <Text style={styles.title}>Connexion</Text>
@@ -542,6 +585,7 @@ export default function LoginPage() {
               </>
             )}
 
+            {/* ==================== INSCRIPTION ==================== */}
             {mode === 'signup' && (
               <>
                 <Text style={styles.title}>Inscription</Text>
@@ -623,6 +667,7 @@ export default function LoginPage() {
               </>
             )}
 
+            {/* ==================== VERIFICATION INSCRIPTION ==================== */}
             {mode === 'verify-signup' && (
               <>
                 <Ionicons name="mail-open-outline" size={60} color="#8A2BE2" style={{ alignSelf: 'center', marginBottom: 20 }} />
@@ -654,6 +699,7 @@ export default function LoginPage() {
               </>
             )}
 
+            {/* ==================== MOT DE PASSE OUBLIE ==================== */}
             {mode === 'reset' && (
               <>
                 <Ionicons name="key-outline" size={60} color="#FF0080" style={{ alignSelf: 'center', marginBottom: 20 }} />
