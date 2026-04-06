@@ -38,7 +38,7 @@ import AsyncStorage           from '@react-native-async-storage/async-storage';
     init.headers = {
       ...authHeader,        // 1. token de session (si disponible)
       ...init.headers,      // 2. headers explicites de l'appelant (priorité sur authHeader)
-      'x-api-key': process.env.EXPO_PUBLIC_API_KEY || '',  // 3. toujours présent
+      'x-api-key': process.env.MOBILE_API_KEY || '',  // 3. toujours présent
     };
 
     return originalFetch(input, init);
