@@ -69,7 +69,7 @@ export default function LoginPage() {
   // =====================================================
 
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'harmoniaworld',
+    scheme: 'harmonia',
     path:   'login',
   });
 
