@@ -1,4 +1,5 @@
-import 'expo-crypto'; // 👈 LA LIGNE MAGIQUE POUR CORRIGER LE BUG CRYPTO
+import * as Crypto from 'expo-crypto'; 
+// 👈 LA LIGNE MAGIQUE POUR CORRIGER LE BUG CRYPTO
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
