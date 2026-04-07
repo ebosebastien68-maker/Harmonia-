@@ -14,9 +14,9 @@ import { useRouter }      from 'expo-router';
 import AsyncStorage       from '@react-native-async-storage/async-storage';
 import * as ImagePicker   from 'expo-image-picker';
 import DateTimePicker     from '@react-native-community/datetimepicker';
-import * as Haptics       from 'expo-haptics';
-import { Video, ResizeMode } from 'expo-av';
-
+import * as Haptics from 'expo-haptics';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { Audio } from 'expo-audio';
 import CommentsModal from '../components/CommentsModal';
 import LikersModal   from '../components/LikersModal';
 import EditPostModal from '../components/EditPostModal';
