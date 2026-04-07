@@ -43,7 +43,10 @@
       "lang": "fr"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-asset",
+      "expo-audio",
+      "expo-video"
     ],
     "extra": {
       "eas": {
