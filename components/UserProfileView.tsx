@@ -10,6 +10,8 @@ import {
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics       from 'expo-haptics';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { Audio } from 'expo-audio';
 
 import CommentsModal from './CommentsModal';
 import LikersModal   from './LikersModal';
