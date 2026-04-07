@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import { Ionicons }       from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Video, Audio, ResizeMode } from 'expo-av';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { Audio } from 'expo-audio';
 import * as Haptics   from 'expo-haptics';
 import AsyncStorage   from '@react-native-async-storage/async-storage';
 
