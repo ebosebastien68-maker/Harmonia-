@@ -6,40 +6,39 @@ import AsyncStorage           from '@react-native-async-storage/async-storage';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PATCH FETCH GLOBAL — iOS · Android · Web
-//
-// Injecte automatiquement sur chaque requête fetch :
-//   • x-api-key     : clé API du backend (variable d'env EXPO_PUBLIC_API_KEY)
-//   • Authorization : Bearer <access_token> lu dans AsyncStorage (harmonia_session)
-//
-// Règles :
-//   • Le token est lu à chaque appel → toujours à jour après login / logout
-//   • Si pas de session → Authorization omis, aucun crash
-//   • Les headers explicites passés dans fetch() ont toujours la priorité
-//   • Sur web : AsyncStorage est émulé via localStorage par Expo → même API
 // ══════════════════════════════════════════════════════════════════════════════
 (() => {
   const originalFetch = global.fetch;
 
   global.fetch = async (input: any, init: any = {}) => {
     let authHeader: Record<string, string> = {};
+    
+    const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : '';
+    const isGoogleAuth = urlStr.includes('accounts.google.com');
 
-    try {
-      const raw = await AsyncStorage.getItem('harmonia_session');
-      if (raw) {
-        const session = JSON.parse(raw);
-        if (session?.access_token) {
-          authHeader = { Authorization: `Bearer ${session.access_token}` };
+    if (!isGoogleAuth) {
+      try {
+        const raw = await AsyncStorage.getItem('harmonia_session');
+        if (raw) {
+          const session = JSON.parse(raw);
+          if (session?.access_token) {
+            authHeader = { Authorization: `Bearer ${session.access_token}` };
+          }
         }
+      } catch {
+        // Session illisible ou AsyncStorage indisponible → on continue sans token
       }
-    } catch {
-      // Session illisible ou AsyncStorage indisponible → on continue sans token
     }
 
     init.headers = {
-      ...authHeader,        // 1. token de session (si disponible)
-      ...init.headers,      // 2. headers explicites de l'appelant (priorité sur authHeader)
-      'x-api-key': process.env.MOBILE_API_KEY || '',  // 3. toujours présent
+      ...authHeader,        // 1. token de session (si disponible et non bloqué)
+      ...init.headers,      // 2. headers explicites de l'appelant
     };
+
+    // 3. Injection de x-api-key uniquement si ce n'est pas une requête d'auth Google
+    if (!isGoogleAuth && process.env.MOBILE_API_KEY) {
+      (init.headers as Record<string, string>)['x-api-key'] = process.env.MOBILE_API_KEY;
+    }
 
     return originalFetch(input, init);
   };
@@ -48,11 +47,6 @@ import AsyncStorage           from '@react-native-async-storage/async-storage';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PATCH ANIMATED — Web uniquement
-//
-// Certaines libs tierces (LinearGradient, RefreshControl…) passent
-// useNativeDriver: true sur web → warning + blocage JS.
-// Ce bloc force useNativeDriver: false uniquement sur web.
-// Sur iOS / Android : aucun effet.
 // ══════════════════════════════════════════════════════════════════════════════
 if (Platform.OS === 'web') {
   const patch = (config: any) =>
