@@ -28,7 +28,8 @@ WebBrowser.maybeCompleteAuthSession();
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
+// Clé de cache AsyncStorage pour le Google Client ID
+const GOOGLE_CLIENT_ID_CACHE_KEY = 'harmonia_google_client_id';
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -63,9 +64,14 @@ export default function LoginPage() {
   const [showPassword,     setShowPassword]     = useState(false);
   const [pendingEmail,     setPendingEmail]     = useState('');
 
+  // ── Google Client ID chargé dynamiquement depuis le backend ──────────────
+  const [googleClientId, setGoogleClientId] = useState<string>('');
+
   // =====================================================
   // EXPO AUTH SESSION — PKCE Google
-  // Génère automatiquement redirect_uri et code_verifier
+  // clientId vaut '' tant que le fetch n'est pas terminé.
+  // useAuthRequest retourne request=null dans ce cas,
+  // ce qui désactive naturellement le bouton Google.
   // =====================================================
 
   const redirectUri = AuthSession.makeRedirectUri({
@@ -77,11 +83,11 @@ export default function LoginPage() {
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
-      clientId:            GOOGLE_CLIENT_ID,
+      clientId:     googleClientId,
       redirectUri,
-      scopes:              ['openid', 'profile', 'email'],
-      usePKCE:             true,
-      responseType:        AuthSession.ResponseType.Code,
+      scopes:       ['openid', 'profile', 'email'],
+      usePKCE:      true,
+      responseType: AuthSession.ResponseType.Code,
     },
     discovery
   );
@@ -105,7 +111,6 @@ export default function LoginPage() {
 
   // =====================================================
   // TRAITEMENT DE LA RÉPONSE GOOGLE
-  // Déclenché automatiquement quand Google redirige vers l'app
   // =====================================================
 
   useEffect(() => {
@@ -119,7 +124,6 @@ export default function LoginPage() {
         return;
       }
 
-      // Envoyer le code au backend pour échange
       exchangeGoogleCode(code, codeVerifier);
 
     } else if (response?.type === 'error') {
@@ -132,15 +136,68 @@ export default function LoginPage() {
     }
   }, [response]);
 
+  // =====================================================
+  // CHECK SESSION EXISTANTE + FETCH GOOGLE CLIENT ID
+  // =====================================================
+
   const checkExistingSession = async () => {
     try {
+      // 1. Vérifier session existante
       const raw = await AsyncStorage.getItem('harmonia_session');
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed?.access_token) router.replace('/home');
+        if (parsed?.access_token) {
+          router.replace('/home');
+          return;
+        }
       }
     } catch {
       console.log('No existing session');
+    }
+
+    // 2. Charger le Google Client ID (cache d'abord, sinon fetch)
+    await loadGoogleClientId();
+  };
+
+  // =====================================================
+  // CHARGEMENT DU GOOGLE CLIENT ID
+  // Cache AsyncStorage → sinon appel backend → mise en cache
+  // =====================================================
+
+  const loadGoogleClientId = async () => {
+    try {
+      // Lire depuis le cache
+      const cached = await AsyncStorage.getItem(GOOGLE_CLIENT_ID_CACHE_KEY);
+      if (cached) {
+        setGoogleClientId(cached);
+        console.log('[loadGoogleClientId] Chargé depuis le cache');
+        return;
+      }
+
+      // Pas de cache → fetch backend
+      console.log('[loadGoogleClientId] Fetch depuis le backend...');
+      const res = await fetch(API_BASE, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'get-google-client-id' }),
+      });
+
+      if (!res.ok) {
+        console.error('[loadGoogleClientId] Erreur HTTP:', res.status);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.clientId) {
+        // Stocker en cache puis mettre à jour le state
+        await AsyncStorage.setItem(GOOGLE_CLIENT_ID_CACHE_KEY, data.clientId);
+        setGoogleClientId(data.clientId);
+        console.log('[loadGoogleClientId] Chargé depuis le backend et mis en cache');
+      }
+    } catch (err: any) {
+      console.error('[loadGoogleClientId] Impossible de charger le Google Client ID:', err.message);
+      // Le bouton Google reste désactivé (googleClientId reste '')
     }
   };
 
@@ -338,14 +395,8 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // GOOGLE SIGNIN — Nouveau flux PKCE
-  //
-  // 1. promptAsync() ouvre Google dans un Chrome Custom Tab (Android)
-  //    ou SFSafariViewController (iOS) — l'app ne quitte jamais
-  // 2. Google redirige vers harmoniaworld://login avec ?code=xxx
-  // 3. expo-auth-session intercepte automatiquement le deep link
-  // 4. Le useEffect sur [response] se déclenche avec le code
-  // 5. On envoie le code au backend via exchangeGoogleCode()
+  // GOOGLE SIGNIN — Flux PKCE
+  // Le bouton est désactivé si request=null (googleClientId pas encore chargé)
   // =====================================================
 
   const handleGoogleSignin = async () => {
@@ -360,7 +411,7 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // ÉCHANGE CODE → SESSION (étapes 4 à 11 du flux)
+  // ÉCHANGE CODE → SESSION
   // =====================================================
 
   const exchangeGoogleCode = async (code: string, codeVerifier: string) => {
@@ -450,6 +501,7 @@ export default function LoginPage() {
 
   // =====================================================
   // BOUTON GOOGLE
+  // Désactivé si googleClientId pas encore chargé (request=null)
   // =====================================================
 
   const renderGoogleButton = () => (
@@ -461,7 +513,7 @@ export default function LoginPage() {
       </View>
 
       <TouchableOpacity
-        style={[styles.googleButton, !request && styles.googleButtonDisabled]}
+        style={[styles.googleButton, (!request || loading) && styles.googleButtonDisabled]}
         onPress={handleGoogleSignin}
         disabled={loading || !request}
         activeOpacity={0.8}
@@ -823,3 +875,4 @@ const styles = StyleSheet.create({
   },
   loadingText: { marginTop: 15, fontSize: 16, color: '#333', fontWeight: '600' },
 });
+
