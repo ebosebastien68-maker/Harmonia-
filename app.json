@@ -46,7 +46,8 @@
       "expo-router",
       "expo-asset",
       "expo-audio",
-      "expo-video"
+      "expo-video",
+      "@react-native-google-signin/google-signin"
     ],
     "extra": {
       "eas": {
