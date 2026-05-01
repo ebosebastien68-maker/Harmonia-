@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -18,26 +18,38 @@ import AsyncStorage       from '@react-native-async-storage/async-storage';
 import { Ionicons }       from '@expo/vector-icons';
 import DateTimePicker     from '@react-native-community/datetimepicker';
 import * as Haptics       from 'expo-haptics';
-import * as WebBrowser    from 'expo-web-browser';
-import * as AuthSession   from 'expo-auth-session';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import HarmoniaLogo       from '../components/HarmoniaLogo';
-
-// Nécessaire pour que le modal Google se ferme correctement sur mobile
-WebBrowser.maybeCompleteAuthSession();
 
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-// Clé de cache AsyncStorage pour le Google Client ID
-const GOOGLE_CLIENT_ID_CACHE_KEY = 'harmonia_google_client_id';
+// =====================================================
+// CONFIGURATION GOOGLE SIGN-IN NATIVE
+// =====================================================
 
-type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup';
+const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
+
+GoogleSignin.configure({
+  webClientId: GOOGLE_CLIENT_ID_WEB,
+  offlineAccess: false,
+});
+
+type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup' | 'confirm-google';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
 
 interface StatusMessage {
   type:    MessageType;
   text:    string;
   visible: boolean;
+}
+
+interface GooglePendingInfo {
+  idToken: string;
+  name:    string;
+  email:   string;
+  photo:   string;
 }
 
 // =====================================================
@@ -64,33 +76,7 @@ export default function LoginPage() {
   const [showPassword,     setShowPassword]     = useState(false);
   const [pendingEmail,     setPendingEmail]     = useState('');
 
-  // ── Google Client ID chargé dynamiquement depuis le backend ──────────────
-  const [googleClientId, setGoogleClientId] = useState<string>('');
-
-  // =====================================================
-  // EXPO AUTH SESSION — PKCE Google
-  // clientId vaut '' tant que le fetch n'est pas terminé.
-  // useAuthRequest retourne request=null dans ce cas,
-  // ce qui désactive naturellement le bouton Google.
-  // =====================================================
-
-  const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'harmonia',
-    path:   'login',
-  });
-
-  const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
-
-  const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    {
-      clientId:     googleClientId,
-      redirectUri,
-      scopes:       ['openid', 'profile', 'email'],
-      usePKCE:      true,
-      responseType: AuthSession.ResponseType.Code,
-    },
-    discovery
-  );
+  const [googlePendingInfo, setGooglePendingInfo] = useState<GooglePendingInfo | null>(null);
 
   // =====================================================
   // INITIALISATION
@@ -110,94 +96,20 @@ export default function LoginPage() {
   }, [statusMessage.visible]);
 
   // =====================================================
-  // TRAITEMENT DE LA RÉPONSE GOOGLE
-  // =====================================================
-
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const { code } = response.params;
-      const codeVerifier = request?.codeVerifier;
-
-      if (!code || !codeVerifier) {
-        showMessage('error', 'Code ou verifier manquant — réessayez');
-        setLoading(false);
-        return;
-      }
-
-      exchangeGoogleCode(code, codeVerifier);
-
-    } else if (response?.type === 'error') {
-      showMessage('error', 'Erreur Google — réessayez');
-      setLoading(false);
-
-    } else if (response?.type === 'cancel' || response?.type === 'dismiss') {
-      showMessage('warning', 'Connexion Google annulée');
-      setLoading(false);
-    }
-  }, [response]);
-
-  // =====================================================
-  // CHECK SESSION EXISTANTE + FETCH GOOGLE CLIENT ID
+  // CHECK SESSION EXISTANTE
   // =====================================================
 
   const checkExistingSession = async () => {
     try {
-      // 1. Vérifier session existante
       const raw = await AsyncStorage.getItem('harmonia_session');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed?.access_token) {
           router.replace('/home');
-          return;
         }
       }
     } catch {
       console.log('No existing session');
-    }
-
-    // 2. Charger le Google Client ID (cache d'abord, sinon fetch)
-    await loadGoogleClientId();
-  };
-
-  // =====================================================
-  // CHARGEMENT DU GOOGLE CLIENT ID
-  // Cache AsyncStorage → sinon appel backend → mise en cache
-  // =====================================================
-
-  const loadGoogleClientId = async () => {
-    try {
-      // Lire depuis le cache
-      const cached = await AsyncStorage.getItem(GOOGLE_CLIENT_ID_CACHE_KEY);
-      if (cached) {
-        setGoogleClientId(cached);
-        console.log('[loadGoogleClientId] Chargé depuis le cache');
-        return;
-      }
-
-      // Pas de cache → fetch backend
-      console.log('[loadGoogleClientId] Fetch depuis le backend...');
-      const res = await fetch(API_BASE, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'get-google-client-id' }),
-      });
-
-      if (!res.ok) {
-        console.error('[loadGoogleClientId] Erreur HTTP:', res.status);
-        return;
-      }
-
-      const data = await res.json();
-
-      if (data.clientId) {
-        // Stocker en cache puis mettre à jour le state
-        await AsyncStorage.setItem(GOOGLE_CLIENT_ID_CACHE_KEY, data.clientId);
-        setGoogleClientId(data.clientId);
-        console.log('[loadGoogleClientId] Chargé depuis le backend et mis en cache');
-      }
-    } catch (err: any) {
-      console.error('[loadGoogleClientId] Impossible de charger le Google Client ID:', err.message);
-      // Le bouton Google reste désactivé (googleClientId reste '')
     }
   };
 
@@ -395,48 +307,67 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // GOOGLE SIGNIN — Flux PKCE
-  // Le bouton est désactivé si request=null (googleClientId pas encore chargé)
+  // GOOGLE SIGNIN NATIVE
   // =====================================================
 
   const handleGoogleSignin = async () => {
-    if (!request) {
-      showMessage('error', 'Google Auth non prêt — réessayez dans un instant');
-      return;
+    try {
+      setLoading(true);
+      await GoogleSignin.hasPlayServices();
+      const userInfo = await GoogleSignin.signIn();
+      
+      if (!userInfo.idToken) {
+        throw new Error("Token d'authentification Google manquant");
+      }
+
+      setGooglePendingInfo({
+        idToken: userInfo.idToken,
+        name:    userInfo.user.name || '',
+        email:   userInfo.user.email,
+        photo:   userInfo.user.photo || ''
+      });
+      
+      setMode('confirm-google');
+
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        showMessage('warning', 'Connexion Google annulée');
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        showMessage('info', 'Connexion Google déjà en cours');
+      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        showMessage('error', 'Les services Google Play ne sont pas disponibles');
+      } else {
+        showMessage('error', error.message || 'Erreur lors de la connexion Google');
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(true);
-    showMessage('info', 'Ouverture de Google...');
-    await promptAsync();
-    // La suite est gérée dans useEffect [response]
   };
 
-  // =====================================================
-  // ÉCHANGE CODE → SESSION
-  // =====================================================
-
-  const exchangeGoogleCode = async (code: string, codeVerifier: string) => {
-    showMessage('info', 'Vérification en cours...');
+  const handleConfirmGoogle = async () => {
+    if (!googlePendingInfo?.idToken) return;
+    setLoading(true);
+    showMessage('info', 'Certification de votre identité...');
+    
     try {
       const response = await fetch(API_BASE, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action:        'google-exchange',
-          code,
-          code_verifier: codeVerifier,
-          redirect_uri:  redirectUri,
+          action:   'verify-google-token',
+          id_token: googlePendingInfo.idToken,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Échec de la connexion Google');
+        throw new Error(data.error || 'Échec de la validation Google côté serveur');
       }
 
       await AsyncStorage.setItem('harmonia_session', JSON.stringify(data.session));
-      showMessage('success', 'Connexion Google réussie ! Bienvenue !');
-      setTimeout(() => router.replace('/home'), 800);
+      showMessage('success', `Bienvenue, ${googlePendingInfo.name} !`);
+      setTimeout(() => router.replace('/home'), 1000);
 
     } catch (error: any) {
       showMessage('error', error.message || 'Impossible de finaliser la connexion Google');
@@ -501,7 +432,6 @@ export default function LoginPage() {
 
   // =====================================================
   // BOUTON GOOGLE
-  // Désactivé si googleClientId pas encore chargé (request=null)
   // =====================================================
 
   const renderGoogleButton = () => (
@@ -513,9 +443,9 @@ export default function LoginPage() {
       </View>
 
       <TouchableOpacity
-        style={[styles.googleButton, (!request || loading) && styles.googleButtonDisabled]}
+        style={[styles.googleButton, loading && styles.googleButtonDisabled]}
         onPress={handleGoogleSignin}
-        disabled={loading || !request}
+        disabled={loading}
         activeOpacity={0.8}
       >
         <Image
@@ -784,6 +714,46 @@ export default function LoginPage() {
                 <TouchableOpacity onPress={() => setMode('login')} style={styles.linkButton} disabled={loading}>
                   <Text style={styles.linkText}>
                     <Text style={styles.linkBold}>Retour a la connexion</Text>
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* ==================== CONFIRMATION GOOGLE ==================== */}
+            {mode === 'confirm-google' && googlePendingInfo && (
+              <>
+                {googlePendingInfo.photo ? (
+                  <Image 
+                    source={{ uri: googlePendingInfo.photo }} 
+                    style={{ width: 80, height: 80, borderRadius: 40, alignSelf: 'center', marginBottom: 20 }} 
+                  />
+                ) : (
+                  <Ionicons name="person-circle-outline" size={80} color="#8A2BE2" style={{ alignSelf: 'center', marginBottom: 20 }} />
+                )}
+                
+                <Text style={styles.title}>Confirmer l'identité</Text>
+                <Text style={styles.subtitle}>
+                  Continuer en tant que {'\n'}
+                  <Text style={{ fontWeight: 'bold', color: '#333' }}>{googlePendingInfo.name}</Text> {'\n'}
+                  ({googlePendingInfo.email}) ?
+                </Text>
+
+                <TouchableOpacity onPress={handleConfirmGoogle} disabled={loading} activeOpacity={0.8}>
+                  <LinearGradient colors={['#11998e', '#38ef7d']} style={styles.primaryButton}>
+                    <Text style={styles.buttonText}>Continuer</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  onPress={() => {
+                    setMode('login');
+                    setGooglePendingInfo(null);
+                  }} 
+                  style={styles.linkButton} 
+                  disabled={loading}
+                >
+                  <Text style={styles.linkText}>
+                    <Text style={styles.linkBold}>Annuler</Text>
                   </Text>
                 </TouchableOpacity>
               </>
