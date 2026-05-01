@@ -88,7 +88,8 @@ export default function LoginPage() {
 
   // =====================================================
   // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
-  // usePKCE: false est crucial pour éviter l'erreur code_challenge_method
+  // usePKCE: false et extraParams avec nonce sont obligatoires
+  // pour le flux id_token de Google.
   // =====================================================
 
   const redirectUri = AuthSession.makeRedirectUri({
@@ -105,6 +106,9 @@ export default function LoginPage() {
       scopes: ['openid', 'profile', 'email'],
       responseType: AuthSession.ResponseType.IdToken,
       usePKCE: false,
+      extraParams: {
+        nonce: Math.random().toString(36).substring(2, 15),
+      },
     },
     discovery
   );
@@ -902,4 +906,3 @@ const styles = StyleSheet.create({
   },
   loadingText: { marginTop: 15, fontSize: 16, color: '#333', fontWeight: '600' },
 });
-
