@@ -90,10 +90,17 @@ export default function LoginPage() {
   // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
   // =====================================================
 
+  const redirectUri = AuthSession.makeRedirectUri({
+    scheme: 'harmonia',
+    path: 'login',
+  });
+
   const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
+  
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
       clientId: GOOGLE_CLIENT_ID_WEB,
+      redirectUri,
       scopes: ['openid', 'profile', 'email'],
       responseType: AuthSession.ResponseType.IdToken,
     },
