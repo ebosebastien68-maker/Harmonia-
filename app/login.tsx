@@ -88,6 +88,7 @@ export default function LoginPage() {
 
   // =====================================================
   // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
+  // usePKCE: false est crucial pour éviter l'erreur code_challenge_method
   // =====================================================
 
   const redirectUri = AuthSession.makeRedirectUri({
@@ -103,6 +104,7 @@ export default function LoginPage() {
       redirectUri,
       scopes: ['openid', 'profile', 'email'],
       responseType: AuthSession.ResponseType.IdToken,
+      usePKCE: false,
     },
     discovery
   );
@@ -112,7 +114,6 @@ export default function LoginPage() {
       const idToken = response.params.id_token;
       if (idToken) {
         try {
-          // Décodage basique du JWT pour le web
           const base64Url = idToken.split('.')[1];
           const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
           const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
@@ -376,7 +377,6 @@ export default function LoginPage() {
       return;
     }
 
-    // Flux Natif Mobile
     try {
       setLoading(true);
       await GoogleSignin.hasPlayServices();
@@ -575,7 +575,6 @@ export default function LoginPage() {
 
           <View style={styles.card}>
 
-            {/* ==================== CONNEXION ==================== */}
             {mode === 'login' && (
               <>
                 <Text style={styles.title}>Connexion</Text>
@@ -633,7 +632,6 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* ==================== INSCRIPTION ==================== */}
             {mode === 'signup' && (
               <>
                 <Text style={styles.title}>Inscription</Text>
@@ -715,7 +713,6 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* ==================== VERIFICATION INSCRIPTION ==================== */}
             {mode === 'verify-signup' && (
               <>
                 <Ionicons name="mail-open-outline" size={60} color="#8A2BE2" style={{ alignSelf: 'center', marginBottom: 20 }} />
@@ -747,7 +744,6 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* ==================== MOT DE PASSE OUBLIE ==================== */}
             {mode === 'reset' && (
               <>
                 <Ionicons name="key-outline" size={60} color="#FF0080" style={{ alignSelf: 'center', marginBottom: 20 }} />
@@ -785,7 +781,6 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* ==================== CONFIRMATION GOOGLE ==================== */}
             {mode === 'confirm-google' && googlePendingInfo && (
               <>
                 {googlePendingInfo.photo ? (
@@ -831,10 +826,6 @@ export default function LoginPage() {
     </KeyboardAvoidingView>
   );
 }
-
-// =====================================================
-// STYLES
-// =====================================================
 
 const styles = StyleSheet.create({
   container:          { flex: 1 },
