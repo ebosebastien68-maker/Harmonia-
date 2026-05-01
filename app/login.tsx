@@ -19,22 +19,30 @@ import { Ionicons }       from '@expo/vector-icons';
 import DateTimePicker     from '@react-native-community/datetimepicker';
 import * as Haptics       from 'expo-haptics';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import * as WebBrowser    from 'expo-web-browser';
+import * as AuthSession   from 'expo-auth-session';
 import HarmoniaLogo       from '../components/HarmoniaLogo';
+
+if (Platform.OS === 'web') {
+  WebBrowser.maybeCompleteAuthSession();
+}
 
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
 // =====================================================
-// CONFIGURATION GOOGLE SIGN-IN NATIVE
+// CONFIGURATION GOOGLE SIGN-IN (HYBRIDE)
 // =====================================================
 
 const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
 
-GoogleSignin.configure({
-  webClientId: GOOGLE_CLIENT_ID_WEB,
-  offlineAccess: false,
-});
+if (Platform.OS !== 'web') {
+  GoogleSignin.configure({
+    webClientId: GOOGLE_CLIENT_ID_WEB,
+    offlineAccess: false,
+  });
+}
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup' | 'confirm-google';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -77,6 +85,50 @@ export default function LoginPage() {
   const [pendingEmail,     setPendingEmail]     = useState('');
 
   const [googlePendingInfo, setGooglePendingInfo] = useState<GooglePendingInfo | null>(null);
+
+  // =====================================================
+  // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
+  // =====================================================
+
+  const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: GOOGLE_CLIENT_ID_WEB,
+      scopes: ['openid', 'profile', 'email'],
+      responseType: AuthSession.ResponseType.IdToken,
+    },
+    discovery
+  );
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && response?.type === 'success') {
+      const idToken = response.params.id_token;
+      if (idToken) {
+        try {
+          // Décodage basique du JWT pour le web
+          const base64Url = idToken.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          }).join(''));
+          const decoded = JSON.parse(jsonPayload);
+          
+          setGooglePendingInfo({
+            idToken: idToken,
+            name:    decoded.name || '',
+            email:   decoded.email || '',
+            photo:   decoded.picture || ''
+          });
+          setMode('confirm-google');
+        } catch (e) {
+          setGooglePendingInfo({ idToken, name: 'Utilisateur', email: '', photo: '' });
+          setMode('confirm-google');
+        }
+      }
+    } else if (Platform.OS === 'web' && response?.type === 'error') {
+      showMessage('error', 'Connexion Google web échouée');
+    }
+  }, [response]);
 
   // =====================================================
   // INITIALISATION
@@ -307,10 +359,17 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // GOOGLE SIGNIN NATIVE
+  // GOOGLE SIGNIN (GESTION MOBILE ET WEB)
   // =====================================================
 
   const handleGoogleSignin = async () => {
+    if (Platform.OS === 'web') {
+      if (!request) return;
+      promptAsync();
+      return;
+    }
+
+    // Flux Natif Mobile
     try {
       setLoading(true);
       await GoogleSignin.hasPlayServices();
