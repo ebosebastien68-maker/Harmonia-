@@ -30,10 +30,6 @@ if (Platform.OS === 'web') {
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
-// =====================================================
-// CONFIGURATION GOOGLE SIGN-IN (HYBRIDE)
-// =====================================================
-
 const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
 
@@ -60,10 +56,6 @@ interface GooglePendingInfo {
   photo:   string;
 }
 
-// =====================================================
-// COMPOSANT PRINCIPAL
-// =====================================================
-
 export default function LoginPage() {
   const router = useRouter();
 
@@ -86,11 +78,8 @@ export default function LoginPage() {
 
   const [googlePendingInfo, setGooglePendingInfo] = useState<GooglePendingInfo | null>(null);
 
-  // =====================================================
-  // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
-  // usePKCE: false et extraParams avec nonce sont obligatoires
-  // pour le flux id_token de Google.
-  // =====================================================
+  // Génération stable du nonce pour éviter la boucle infinie de re-renders
+  const [nonce] = useState(() => Math.random().toString(36).substring(2, 15));
 
   const redirectUri = AuthSession.makeRedirectUri({
     scheme: 'harmonia',
@@ -106,9 +95,7 @@ export default function LoginPage() {
       scopes: ['openid', 'profile', 'email'],
       responseType: AuthSession.ResponseType.IdToken,
       usePKCE: false,
-      extraParams: {
-        nonce: Math.random().toString(36).substring(2, 15),
-      },
+      extraParams: { nonce },
     },
     discovery
   );
@@ -142,10 +129,6 @@ export default function LoginPage() {
     }
   }, [response]);
 
-  // =====================================================
-  // INITIALISATION
-  // =====================================================
-
   useEffect(() => {
     checkExistingSession();
   }, []);
@@ -158,10 +141,6 @@ export default function LoginPage() {
       return () => clearTimeout(timer);
     }
   }, [statusMessage.visible]);
-
-  // =====================================================
-  // CHECK SESSION EXISTANTE
-  // =====================================================
 
   const checkExistingSession = async () => {
     try {
@@ -177,10 +156,6 @@ export default function LoginPage() {
     }
   };
 
-  // =====================================================
-  // MESSAGES
-  // =====================================================
-
   const showMessage = (type: MessageType, text: string) => {
     if (Platform.OS !== 'web') {
       Haptics.notificationAsync(
@@ -191,10 +166,6 @@ export default function LoginPage() {
     }
     setStatusMessage({ type, text, visible: true });
   };
-
-  // =====================================================
-  // DATE
-  // =====================================================
 
   const formatDateDisplay = (date: Date): string => {
     const day   = date.getDate().toString().padStart(2, '0');
@@ -214,10 +185,6 @@ export default function LoginPage() {
     const date = new Date(dateString);
     return date instanceof Date && !isNaN(date.getTime());
   };
-
-  // =====================================================
-  // INSCRIPTION
-  // =====================================================
 
   const handleSignup = async () => {
     if (!email.trim() || !password.trim() || !nom.trim() || !prenom.trim()) {
@@ -277,10 +244,6 @@ export default function LoginPage() {
     }
   };
 
-  // =====================================================
-  // VERIFICATION EMAIL
-  // =====================================================
-
   const handleVerifySignup = async () => {
     setLoading(true);
     showMessage('info', 'Verification en cours...');
@@ -305,10 +268,6 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
-
-  // =====================================================
-  // CONNEXION
-  // =====================================================
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -339,10 +298,6 @@ export default function LoginPage() {
     }
   };
 
-  // =====================================================
-  // MOT DE PASSE OUBLIE
-  // =====================================================
-
   const handleRequestReset = async () => {
     if (!email.trim()) {
       showMessage('error', 'Veuillez entrer votre email'); return;
@@ -369,10 +324,6 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
-
-  // =====================================================
-  // GOOGLE SIGNIN (GESTION MOBILE ET WEB)
-  // =====================================================
 
   const handleGoogleSignin = async () => {
     if (Platform.OS === 'web') {
@@ -445,10 +396,6 @@ export default function LoginPage() {
     }
   };
 
-  // =====================================================
-  // DATE PICKER
-  // =====================================================
-
   const onDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate) setDateNaissance(selectedDate);
@@ -500,10 +447,6 @@ export default function LoginPage() {
     );
   };
 
-  // =====================================================
-  // BOUTON GOOGLE
-  // =====================================================
-
   const renderGoogleButton = () => (
     <>
       <View style={styles.dividerContainer}>
@@ -526,10 +469,6 @@ export default function LoginPage() {
       </TouchableOpacity>
     </>
   );
-
-  // =====================================================
-  // RENDU
-  // =====================================================
 
   return (
     <KeyboardAvoidingView
