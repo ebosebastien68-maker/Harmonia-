@@ -20,6 +20,7 @@ import DateTimePicker     from '@react-native-community/datetimepicker';
 import * as Haptics       from 'expo-haptics';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import HarmoniaLogo       from '../components/HarmoniaLogo';
+import { supabase }       from '../supabase';
 
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
@@ -31,10 +32,12 @@ const API_BASE = `${WS_BASE}/auth`;
 const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
 
-GoogleSignin.configure({
-  webClientId: GOOGLE_CLIENT_ID_WEB,
-  offlineAccess: false,
-});
+if (Platform.OS !== 'web') {
+  GoogleSignin.configure({
+    webClientId: GOOGLE_CLIENT_ID_WEB,
+    offlineAccess: false,
+  });
+}
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup' | 'confirm-google';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -307,35 +310,48 @@ export default function LoginPage() {
   };
 
   // =====================================================
-  // GOOGLE SIGNIN NATIVE
+  // GOOGLE SIGNIN (NATIVE + WEB)
   // =====================================================
 
   const handleGoogleSignin = async () => {
     try {
       setLoading(true);
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      
-      if (!userInfo.idToken) {
-        throw new Error("Token d'authentification Google manquant");
+
+      if (Platform.OS === 'web') {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+        });
+        
+        if (error) throw error;
+      } else {
+        await GoogleSignin.hasPlayServices();
+        const userInfo = await GoogleSignin.signIn();
+        
+        if (!userInfo.idToken) {
+          throw new Error("Token d'authentification Google manquant");
+        }
+
+        setGooglePendingInfo({
+          idToken: userInfo.idToken,
+          name:    userInfo.user.name || '',
+          email:   userInfo.user.email,
+          photo:   userInfo.user.photo || ''
+        });
+        
+        setMode('confirm-google');
       }
 
-      setGooglePendingInfo({
-        idToken: userInfo.idToken,
-        name:    userInfo.user.name || '',
-        email:   userInfo.user.email,
-        photo:   userInfo.user.photo || ''
-      });
-      
-      setMode('confirm-google');
-
     } catch (error: any) {
-      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-        showMessage('warning', 'Connexion Google annulée');
-      } else if (error.code === statusCodes.IN_PROGRESS) {
-        showMessage('info', 'Connexion Google déjà en cours');
-      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        showMessage('error', 'Les services Google Play ne sont pas disponibles');
+      if (Platform.OS !== 'web') {
+        if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+          showMessage('warning', 'Connexion Google annulée');
+        } else if (error.code === statusCodes.IN_PROGRESS) {
+          showMessage('info', 'Connexion Google déjà en cours');
+        } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+          showMessage('error', 'Les services Google Play ne sont pas disponibles');
+        } else {
+          showMessage('error', error.message || 'Erreur lors de la connexion Google');
+        }
       } else {
         showMessage('error', error.message || 'Erreur lors de la connexion Google');
       }
