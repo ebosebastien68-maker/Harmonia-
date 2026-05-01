@@ -18,7 +18,6 @@ import AsyncStorage       from '@react-native-async-storage/async-storage';
 import { Ionicons }       from '@expo/vector-icons';
 import DateTimePicker     from '@react-native-community/datetimepicker';
 import * as Haptics       from 'expo-haptics';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import HarmoniaLogo       from '../components/HarmoniaLogo';
 import { supabase }       from '../supabase';
 
@@ -26,13 +25,20 @@ const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
 // =====================================================
-// CONFIGURATION GOOGLE SIGN-IN NATIVE
+// CONFIGURATION GOOGLE SIGN-IN NATIVE (EXCLUSIVEMENT MOBILE)
 // =====================================================
 
 const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
 
+let GoogleSignin: any;
+let statusCodes: any;
+
 if (Platform.OS !== 'web') {
+  const GSignIn = require('@react-native-google-signin/google-signin');
+  GoogleSignin = GSignIn.GoogleSignin;
+  statusCodes  = GSignIn.statusCodes;
+
   GoogleSignin.configure({
     webClientId: GOOGLE_CLIENT_ID_WEB,
     offlineAccess: false,
@@ -343,11 +349,11 @@ export default function LoginPage() {
 
     } catch (error: any) {
       if (Platform.OS !== 'web') {
-        if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        if (error.code === statusCodes?.SIGN_IN_CANCELLED) {
           showMessage('warning', 'Connexion Google annulée');
-        } else if (error.code === statusCodes.IN_PROGRESS) {
+        } else if (error.code === statusCodes?.IN_PROGRESS) {
           showMessage('info', 'Connexion Google déjà en cours');
-        } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        } else if (error.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
           showMessage('error', 'Les services Google Play ne sont pas disponibles');
         } else {
           showMessage('error', error.message || 'Erreur lors de la connexion Google');
