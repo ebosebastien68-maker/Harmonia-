@@ -34,16 +34,18 @@ const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.
 let GoogleSignin: any;
 let statusCodes: any;
 
-if (Platform.OS !== 'web') {
-  const GSignIn = require('@react-native-google-signin/google-signin');
-  GoogleSignin = GSignIn.GoogleSignin;
-  statusCodes  = GSignIn.statusCodes;
+const initGoogle = async () => {
+  if (Platform.OS !== 'web') {
+    const GSignIn = await import('@react-native-google-signin/google-signin');
+    GoogleSignin = GSignIn.GoogleSignin;
+    statusCodes  = GSignIn.statusCodes;
 
-  GoogleSignin.configure({
-    webClientId: GOOGLE_CLIENT_ID_WEB,
-    offlineAccess: false,
-  });
-}
+    GoogleSignin.configure({
+      webClientId: GOOGLE_CLIENT_ID_WEB,
+      offlineAccess: false,
+    });
+  }
+};
 
 type AuthMode    = 'login' | 'signup' | 'reset' | 'verify-signup' | 'confirm-google';
 type MessageType = 'success' | 'error' | 'info' | 'warning';
@@ -92,6 +94,7 @@ export default function LoginPage() {
   // =====================================================
 
   useEffect(() => {
+    initGoogle();
     checkExistingSession();
   }, []);
 
@@ -330,6 +333,9 @@ export default function LoginPage() {
         
         if (error) throw error;
       } else {
+        if (!GoogleSignin) {
+           throw new Error("Module GoogleSignin non initialisé");
+        }
         await GoogleSignin.hasPlayServices();
         const userInfo = await GoogleSignin.signIn();
         
@@ -349,11 +355,11 @@ export default function LoginPage() {
 
     } catch (error: any) {
       if (Platform.OS !== 'web') {
-        if (error.code === statusCodes?.SIGN_IN_CANCELLED) {
+        if (statusCodes && error.code === statusCodes.SIGN_IN_CANCELLED) {
           showMessage('warning', 'Connexion Google annulée');
-        } else if (error.code === statusCodes?.IN_PROGRESS) {
+        } else if (statusCodes && error.code === statusCodes.IN_PROGRESS) {
           showMessage('info', 'Connexion Google déjà en cours');
-        } else if (error.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
+        } else if (statusCodes && error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
           showMessage('error', 'Les services Google Play ne sont pas disponibles');
         } else {
           showMessage('error', error.message || 'Erreur lors de la connexion Google');
