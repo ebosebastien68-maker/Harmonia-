@@ -30,6 +30,10 @@ if (Platform.OS === 'web') {
 const WS_BASE  = 'https://eueke282zksk1zki18susjdksisk18sj.onrender.com';
 const API_BASE = `${WS_BASE}/auth`;
 
+// =====================================================
+// CONFIGURATION GOOGLE SIGN-IN (HYBRIDE)
+// =====================================================
+
 const GOOGLE_CLIENT_ID_WEB     = '492467723054-m39j327gd1bjr0ipqqdo6ejglrgu69gc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_ID_ANDROID = '492467723054-u1duqlk51tnnf80uilf1jpn8li8s1hop.apps.googleusercontent.com';
 
@@ -56,6 +60,10 @@ interface GooglePendingInfo {
   photo:   string;
 }
 
+// =====================================================
+// COMPOSANT PRINCIPAL
+// =====================================================
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -78,8 +86,12 @@ export default function LoginPage() {
 
   const [googlePendingInfo, setGooglePendingInfo] = useState<GooglePendingInfo | null>(null);
 
-  // Génération stable du nonce pour éviter la boucle infinie de re-renders
   const [nonce] = useState(() => Math.random().toString(36).substring(2, 15));
+
+  // =====================================================
+  // EXPO AUTH SESSION (POUR LE WEB UNIQUEMENT)
+  // Flux intact pour ne pas casser le web
+  // =====================================================
 
   const redirectUri = AuthSession.makeRedirectUri({
     scheme: 'harmonia',
@@ -128,6 +140,10 @@ export default function LoginPage() {
       showMessage('error', 'Connexion Google web échouée');
     }
   }, [response]);
+
+  // =====================================================
+  // INITIALISATION & CHECK SESSION
+  // =====================================================
 
   useEffect(() => {
     checkExistingSession();
@@ -185,6 +201,10 @@ export default function LoginPage() {
     const date = new Date(dateString);
     return date instanceof Date && !isNaN(date.getTime());
   };
+
+  // =====================================================
+  // ACTIONS AUTHENTIFICATION CLASSIQUE
+  // =====================================================
 
   const handleSignup = async () => {
     if (!email.trim() || !password.trim() || !nom.trim() || !prenom.trim()) {
@@ -325,6 +345,11 @@ export default function LoginPage() {
     }
   };
 
+  // =====================================================
+  // GOOGLE SIGNIN (GESTION MOBILE ET WEB)
+  // Mise à jour ciblée pour la v13 (response.type & response.data)
+  // =====================================================
+
   const handleGoogleSignin = async () => {
     if (Platform.OS === 'web') {
       if (!request) return;
@@ -335,22 +360,34 @@ export default function LoginPage() {
     try {
       setLoading(true);
       await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
       
-      if (!userInfo.idToken) {
-        throw new Error("Token d'authentification Google manquant");
+      // On caste en 'any' temporairement pour éviter les conflits stricts de TypeScript
+      // avec les nouvelles interfaces de la version 13.
+      const response: any = await GoogleSignin.signIn();
+      
+      if (response.type === 'success') {
+        const userInfo = response.data;
+        
+        if (!userInfo.idToken) {
+          throw new Error("Token d'authentification Google manquant dans la réponse");
+        }
+
+        setGooglePendingInfo({
+          idToken: userInfo.idToken,
+          name:    userInfo.user?.name || '',
+          email:   userInfo.user?.email || '',
+          photo:   userInfo.user?.photo || ''
+        });
+        
+        setMode('confirm-google');
+      } else if (response.type === 'cancelled') {
+        showMessage('warning', 'Connexion Google annulée');
+      } else {
+        showMessage('error', 'La connexion Google n\'a pas pu aboutir');
       }
 
-      setGooglePendingInfo({
-        idToken: userInfo.idToken,
-        name:    userInfo.user.name || '',
-        email:   userInfo.user.email,
-        photo:   userInfo.user.photo || ''
-      });
-      
-      setMode('confirm-google');
-
     } catch (error: any) {
+      // Conservation du catch historique pour les anciennes erreurs potentielles
       if (error.code === statusCodes.SIGN_IN_CANCELLED) {
         showMessage('warning', 'Connexion Google annulée');
       } else if (error.code === statusCodes.IN_PROGRESS) {
@@ -395,6 +432,10 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  // =====================================================
+  // DATE PICKER & UI GOOGLE
+  // =====================================================
 
   const onDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
@@ -469,6 +510,10 @@ export default function LoginPage() {
       </TouchableOpacity>
     </>
   );
+
+  // =====================================================
+  // RENDU
+  // =====================================================
 
   return (
     <KeyboardAvoidingView
