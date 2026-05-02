@@ -1,4 +1,4 @@
-import { Stack }             from 'expo-router';
+import { Stack }              from 'expo-router';
 import { useEffect }          from 'react';
 import { Animated, Platform } from 'react-native';
 import * as Notifications     from 'expo-notifications';
@@ -34,11 +34,6 @@ import AsyncStorage           from '@react-native-async-storage/async-storage';
       ...authHeader,        // 1. token de session (si disponible et non bloqué)
       ...init.headers,      // 2. headers explicites de l'appelant
     };
-
-    // 3. Injection de x-api-key uniquement si ce n'est pas une requête d'auth Google
-    if (!isGoogleAuth && process.env.MOBILE_API_KEY) {
-      (init.headers as Record<string, string>)['x-api-key'] = process.env.MOBILE_API_KEY;
-    }
 
     return originalFetch(input, init);
   };
